@@ -6,7 +6,7 @@ This project is a collection of libraries, curently written in zig, for game dev
 ## libs
 
 - ecs
-  - An entity component system library
+  - An entity component system
   - Archetype based
   - Type erasure
     - Runtime entities
