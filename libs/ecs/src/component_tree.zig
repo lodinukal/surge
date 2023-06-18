@@ -1,6 +1,11 @@
 const std = @import("std");
 
 const Composition = @import("composition.zig").Composition;
+const common = @import("common.zig");
+
+const assert = common.assert;
+const err = common.err;
+const Error = common.Error;
 
 // intended to be created once
 // very inefficient
@@ -63,18 +68,13 @@ const ComponentTree = struct {
         };
     }
 
-    fn sortComponents(context: @TypeOf({}), a: Component, b: Component) bool {
-        _ = context;
-        return a.id < b.id;
-    }
-
     // will allocate
     pub fn buildCompositionPath(
         self: *ComponentTree,
         components: []Component,
         composition: *Composition,
     ) !u32 {
-        std.sort.pdq(Component, components, {}, sortComponents);
+        std.sort.pdq(Component, components, {}, Component.lessThan);
         // always will be the id node
         var parent_node: *Node = &self.nodes.items[0];
         var parent_node_idx: usize = 0;
@@ -116,7 +116,7 @@ const ComponentTree = struct {
         self: *ComponentTree,
         components: []Component,
     ) !?*Composition {
-        std.sort.pdq(Component, components, {}, sortComponents);
+        std.sort.pdq(Component, components, {}, Component.lessThan);
         var parent_node: *Node = &self.nodes.items[0];
         for (components) |component| {
             var found = false;
@@ -135,22 +135,22 @@ const ComponentTree = struct {
         return parent_node.archetyped;
     }
 
-    fn _print(self: *ComponentTree, nodes: std.ArrayListUnmanaged(u32), level: u32) void {
-        for (nodes.items) |node_idx| {
-            var node: Node = self.nodes.items[node_idx];
-            for (0..level) |_| {
-                std.debug.print("  ", .{});
-            }
-            const node_post = if (node.archetyped != null) " (archetyped)" else "";
-            std.debug.print("node: {}{s}\n", .{ node.component.id, node_post });
-            self._print(node.children, level + 1);
-        }
-    }
+    // fn _print(self: *ComponentTree, nodes: std.ArrayListUnmanaged(u32), level: u32) void {
+    //     for (nodes.items) |node_idx| {
+    //         var node: Node = self.nodes.items[node_idx];
+    //         for (0..level) |_| {
+    //             std.debug.print("  ", .{});
+    //         }
+    //         const node_post = if (node.archetyped != null) " (archetyped)" else "";
+    //         std.debug.print("node: {}{s}\n", .{ node.component.id, node_post });
+    //         self._print(node.children, level + 1);
+    //     }
+    // }
 
-    pub fn print(self: *ComponentTree) void {
-        std.debug.print("ComponentTree:\n", .{});
-        self._print(self.nodes.items[0].children, 0);
-    }
+    // pub fn print(self: *ComponentTree) void {
+    //     std.debug.print("ComponentTree:\n", .{});
+    //     self._print(self.nodes.items[0].children, 0);
+    // }
 };
 
 const EntityId = u32;
@@ -162,6 +162,22 @@ const IdComponent = Component{
 pub const Component = packed struct(u64) {
     id: u32,
     type_size: u32,
+
+    pub fn order(context: void, a: Component, b: Component) std.math.Order {
+        _ = context;
+        if (a.id < b.id) {
+            return .lt;
+        } else if (a.id > b.id) {
+            return .gt;
+        } else {
+            return .eq;
+        }
+    }
+
+    pub fn lessThan(context: void, a: Component, b: Component) bool {
+        _ = context;
+        return a.id < b.id;
+    }
 };
 
 test "composition_tree" {
@@ -218,23 +234,66 @@ test "composition_tree" {
     try composition_c.ensureCapacity(allocator_comp, ensure_cap);
     _ = try tree.buildCompositionPath(&composition_path_c, &composition_c);
 
-    tree.print();
-
-    std.debug.print("composition_tree\n    long: {}B\n    comp: {}B\n", .{
-        arena_long.queryCapacity(),
-        arena_comp.queryCapacity(),
-    });
-
     // entities
-    var data_a = [_]u8{ 1, 1, 0, 0, 1 };
+    var data_a = [_]u8{ 50, 0, 0, 0, 1 };
     var a_slot_comp = try tree.followCompositionPath(&composition_path_a);
     var a_row = try a_slot_comp.?.addRow(allocator_comp);
     a_slot_comp.?.setRow(a_row, &data_a);
 
-    var view = try a_slot_comp.?.getComponentIterator(a_comp);
-    while (view.next()) |row| {
-        std.debug.print("a: {}\n", .{std.mem.bytesAsSlice(A, row.data)[0]});
+    var data_b = [_]u8{ 2, 1, 0, 0, 0 };
+    var b_slot_comp = try tree.followCompositionPath(&composition_path_a);
+    var b_row = try b_slot_comp.?.addRow(allocator_comp);
+    b_slot_comp.?.setRow(b_row, &data_b);
+
+    var data_c = [_]u8{ 3, 0, 0, 0, 0 };
+    var c_slot_comp = try tree.followCompositionPath(&composition_path_a);
+    var c_row = try c_slot_comp.?.addRow(allocator_comp);
+    c_slot_comp.?.setRow(c_row, &data_c);
+
+    var multi_iter_1 = try composition_a.getMultiComponentIterator(
+        allocator_long,
+        .{ a_comp, b_comp },
+    );
+    defer multi_iter_1.deinit(allocator_long);
+
+    var idx: usize = 0;
+    while (multi_iter_1.next()) |view| : (idx += 1) {
+        var component_a = rco(A, view[0]);
+        var component_b = rco(B, view[1]);
+        component_a.*.x += 10;
+        component_b.* = .{ .x = false };
     }
 
-    std.debug.print("{any}\n", .{composition_c.components[2]});
+    var multi_iter_2 = try composition_a.getMultiComponentIterator(
+        allocator_long,
+        .{ a_comp, b_comp },
+    );
+    defer multi_iter_2.deinit(allocator_long);
+
+    idx = 0;
+    while (multi_iter_2.next()) |view| : (idx += 1) {
+        var component_b = rco(B, view[1]);
+        try std.testing.expectEqual(component_b.x, false);
+    }
+
+    // std.debug.print("composition_tree\n    long: {}B\n    comp: {}B\n", .{
+    //     arena_long.queryCapacity(),
+    //     arena_comp.queryCapacity(),
+    // });
 }
+
+pub fn reinterpretComponentOne(
+    comptime T: type,
+    data: []u8,
+) *align(1) T {
+    return &(reinterpretComponent(T, data)[0]);
+}
+pub const rco = reinterpretComponentOne;
+
+pub fn reinterpretComponent(
+    comptime T: type,
+    data: []u8,
+) []align(1) T {
+    return std.mem.bytesAsSlice(T, data);
+}
+pub const rc = reinterpretComponent;
