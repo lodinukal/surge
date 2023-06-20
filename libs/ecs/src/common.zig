@@ -7,3 +7,4 @@ pub const err = std.log.err;
 pub const Error = error{
     ComponentNotFound,
 };
+pub const EntityId = u32;

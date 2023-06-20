@@ -11,5 +11,4 @@ This project is a collection of libraries, curently written in zig, for game dev
   - Type erasure
     - Runtime entities
   - Allocator support (you don't have to use the heap)
-  - Relatively lightweight
-    - 8 bytes + 8 bytes per component on each archetype (could be improved)
+  - Very memory lightweight

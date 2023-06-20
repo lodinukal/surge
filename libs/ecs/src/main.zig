@@ -1,8 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
 
-pub const composition = @import("composition.zig");
-pub const component_tree = @import("component_tree.zig");
+pub const Composition = @import("composition.zig");
+pub const composition_storage = @import("composition_storage.zig");
 
 export fn add(a: i32, b: i32) i32 {
     return a + b;

@@ -7,11 +7,10 @@ const assert = common.assert;
 const err = common.err;
 const Error = common.Error;
 
-const component_tree = @import("component_tree.zig");
-const Component = component_tree.Component;
+const Component = @import("component_registry.zig").Component;
 
 pub const Composition = struct {
-    components: []Component,
+    components: []const Component,
     data: [][*]u8,
     len: u32 = 0,
     entity_size: u32 = 0,
@@ -19,7 +18,7 @@ pub const Composition = struct {
 
     pub fn init(
         allocator: std.mem.Allocator,
-        components: []Component,
+        components: []const Component,
     ) !Composition {
         var data = try allocator.alloc([*]u8, components.len);
         for (components, 0..) |_, component_idx| {
@@ -34,7 +33,7 @@ pub const Composition = struct {
         };
     }
 
-    fn getComponentsSize(components: []Component) u32 {
+    fn getComponentsSize(components: []const Component) u32 {
         var total_entity_size: u32 = 0;
         for (components) |component| {
             total_entity_size += component.type_size;
@@ -93,21 +92,22 @@ pub const Composition = struct {
         }
     }
 
-    pub fn getMultiComponentIterator(
+    pub fn getComponentIterator(
         self: *Composition,
         allocator: std.mem.Allocator,
         components: anytype,
-    ) !MultiComponentIterator {
-        return try MultiComponentIterator.init(self, components, allocator);
+    ) !ComponentIterator {
+        return try ComponentIterator.init(self, components, allocator);
     }
 
-    pub const MultiComponentIterator = struct {
+    pub const ComponentIterator = struct {
         composition: *Composition,
-        iterators: []Composition.ComponentIterator,
+        buffers: [][]u8,
         out_cache: [][]u8,
+        components: []const Component,
         idx: usize = 0,
 
-        pub fn init(composition: *Composition, components: anytype, allocator: std.mem.Allocator) !MultiComponentIterator {
+        pub fn init(composition: *Composition, components: anytype, allocator: std.mem.Allocator) !ComponentIterator {
             // check if the composition has all the components
             inline for (components) |find_component| {
                 if (!composition.hasComponent(find_component)) {
@@ -121,88 +121,85 @@ pub const Composition = struct {
 
             const Components = comptime @TypeOf(components);
             const component_count = comptime @typeInfo(Components).Struct.fields.len;
-            const iterator_data = try allocator.alloc(Composition.ComponentIterator, component_count);
+            const buffer_data = try allocator.alloc([]u8, component_count);
+            const components_converted = try allocator.alloc(Component, component_count);
 
             inline for (0..component_count) |idx| {
-                iterator_data[idx] = try composition.getComponentIterator(components[idx]);
+                buffer_data[idx] = try composition.getComponentBuffer(components[idx]);
+                components_converted[idx] = composition.components[idx];
             }
 
-            return MultiComponentIterator{
+            return ComponentIterator{
                 .composition = composition,
-                .iterators = iterator_data,
+                .buffers = buffer_data,
                 .out_cache = try allocator.alloc([]u8, component_count),
+                .components = components_converted,
                 .idx = 0,
             };
         }
 
-        pub fn deinit(self: *MultiComponentIterator, allocator: std.mem.Allocator) void {
-            allocator.free(self.iterators);
+        pub fn deinit(self: *ComponentIterator, allocator: std.mem.Allocator) void {
+            allocator.free(self.out_cache);
+            allocator.free(self.buffers);
+            allocator.free(self.components);
         }
 
-        pub fn next(self: *MultiComponentIterator) ?[][]u8 {
+        pub fn next(self: *ComponentIterator) ?RowComponents {
             if (self.done()) {
                 return null;
             }
+
+            const idx = self.idx;
+            self.idx += 1;
 
             var out = self.out_cache;
-            for (self.iterators, 0..) |*it, iterator_idx| {
-                var component = it.next(false).?.data;
-                out[iterator_idx] = component;
+            for (self.buffers, 0..) |it, buffer_idx| {
+                const component = self.components[buffer_idx];
+                out[buffer_idx] = it[(idx * component.type_size)..][0..component.type_size];
             }
 
-            return out;
-        }
-
-        pub fn done(self: *MultiComponentIterator) bool {
-            for (self.iterators) |it| {
-                if (it.done()) {
-                    return true;
-                }
-            }
-            return false;
-        }
-    };
-
-    pub fn getComponentIterator(self: *Composition, component: Component) !ComponentIterator {
-        return ComponentIterator.init(self, component);
-    }
-
-    pub const ComponentIterator = struct {
-        composition: *Composition,
-        buffer: []u8,
-        index: u32,
-        component: Component,
-
-        pub fn init(composition: *Composition, component: Component) !ComponentIterator {
-            return ComponentIterator{
-                .composition = composition,
-                .buffer = try composition.getComponentBuffer(component),
-                .index = 0,
-                .component = component,
+            return RowComponents{
+                .composition = self.composition,
+                .row = idx,
+                .components = out,
             };
         }
 
-        fn RowComponentPair(comptime readonly: bool) type {
-            return struct {
-                row: u32,
-                data: if (readonly) []const u8 else []u8,
-            };
-        }
+        pub const RowComponents = struct {
+            composition: *Composition,
+            row: usize,
+            components: [][]u8,
 
-        pub fn next(self: *ComponentIterator, comptime readonly: bool) ?RowComponentPair(readonly) {
-            if (self.done()) {
-                return null;
+            pub fn getComponent(
+                self: *const RowComponents,
+                comptime T: type,
+                component: Component,
+            ) !*align(1) T {
+                const component_data = try self.getComponentRaw(component);
+                return &std.mem.bytesAsSlice(T, component_data)[0];
             }
-            const pair = RowComponentPair(readonly){
-                .row = self.index,
-                .data = self.buffer[(self.index * self.component.type_size)..][0..self.component.type_size],
-            };
-            self.index += 1;
-            return pair;
-        }
+
+            pub fn getConstComponent(
+                self: *const RowComponents,
+                comptime T: type,
+                component: Component,
+            ) !*align(1) const T {
+                return self.getComponent(T, component)[0];
+            }
+
+            pub fn getComponentRaw(
+                self: *const RowComponents,
+                component: Component,
+            ) ![]u8 {
+                const component_order = self.composition.getComponentOrder(
+                    component,
+                ) orelse return Error.ComponentNotFound;
+                return self.components[component_order];
+            }
+        };
 
         pub fn done(self: *const ComponentIterator) bool {
-            return self.index >= self.composition.len;
+            return self.idx >= self.composition.len;
         }
     };
 
@@ -289,21 +286,37 @@ test "add_remove_iterator" {
 
     // three components
     try testing.expectEqual(comp.len, 3);
-    var view = try comp.getComponentIterator(components[0]);
-    try testing.expectEqualSlices(u8, &[_]u8{ 4, 3, 6 }, view.next(true).?.data);
-    try testing.expectEqualSlices(u8, &[_]u8{ 4, 8, 2 }, view.next(true).?.data);
+    var view = try comp.getComponentIterator(allocator, .{components[0]});
+    try testing.expectEqualSlices(
+        u8,
+        &[_]u8{ 4, 3, 6 },
+        view.next().?.components[0],
+    );
+    try testing.expectEqualSlices(
+        u8,
+        &[_]u8{ 4, 8, 2 },
+        view.next().?.components[0],
+    );
     try testing.expect(view.done() == false);
-    try testing.expectEqualSlices(u8, &[_]u8{ 5, 3, 2 }, view.next(true).?.data);
+    try testing.expectEqualSlices(
+        u8,
+        &[_]u8{ 5, 3, 2 },
+        view.next().?.components[0],
+    );
     try testing.expect(view.done() == true);
-    try testing.expect(view.next(true) == null);
+    try testing.expect(view.next() == null);
 
     comp.removeRow(row1);
     comp.removeRow(row2);
     try testing.expectEqual(comp.len, 1);
-    view = try comp.getComponentIterator(components[0]);
-    try testing.expectEqualSlices(u8, &[_]u8{ 5, 3, 2 }, view.next(true).?.data);
+    view = try comp.getComponentIterator(allocator, .{components[0]});
+    try testing.expectEqualSlices(
+        u8,
+        &[_]u8{ 5, 3, 2 },
+        view.next().?.components[0],
+    );
     try testing.expect(view.done() == true);
-    try testing.expect(view.next(true) == null);
+    try testing.expect(view.next() == null);
 
     // std.debug.print("add_remove_iterator: memory usage: {}B\n", .{arena.queryCapacity()});
 }
