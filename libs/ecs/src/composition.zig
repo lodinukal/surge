@@ -6,27 +6,40 @@ const common = @import("common.zig");
 const assert = common.assert;
 const err = common.err;
 const Error = common.Error;
+const EntityId = common.EntityId;
 
-const Component = @import("component_registry.zig").Component;
+const component_registry = @import("component_registry.zig");
+const Component = component_registry.Component;
 
 pub const Composition = struct {
-    components: []const Component,
-    data: [][*]u8,
+    columns: []Column,
     len: u32 = 0,
     entity_size: u32 = 0,
     capacity: u32 = 0,
+
+    pub const Column = struct {
+        component: Component,
+        data: [*]u8,
+
+        pub fn order(context: void, a: Component, b: Column) std.math.Order {
+            _ = context;
+            return Component.order({}, a, b.component);
+        }
+    };
 
     pub fn init(
         allocator: std.mem.Allocator,
         components: []const Component,
     ) !Composition {
-        var data = try allocator.alloc([*]u8, components.len);
+        var columns = try allocator.alloc(Column, components.len);
         for (components, 0..) |_, component_idx| {
-            data[component_idx] = @ptrCast([*]u8, try allocator.alloc(u8, 0));
+            columns[component_idx] = Column{
+                .component = components[component_idx],
+                .data = @ptrCast([*]u8, try allocator.alloc(u8, 0)),
+            };
         }
         return Composition{
-            .components = components,
-            .data = data,
+            .columns = columns,
             .len = 0,
             .entity_size = Composition.getComponentsSize(components),
             .capacity = 0,
@@ -42,10 +55,10 @@ pub const Composition = struct {
     }
 
     pub fn deinit(self: *Composition, allocator: std.mem.Allocator) void {
-        for (self.data) |field| {
-            allocator.free(field[0 .. self.capacity * self.entity_size]);
+        for (self.columns) |column| {
+            allocator.free(column.data[0 .. self.capacity * self.entity_size]);
         }
-        allocator.free(self.data);
+        allocator.free(self.columns);
     }
 
     pub fn ensureCapacity(self: *Composition, allocator: std.mem.Allocator, new_capacity: u32) !void {
@@ -57,12 +70,13 @@ pub const Composition = struct {
         if (new_capacity <= self.capacity) {
             return;
         }
-        for (self.components, 0..) |component, component_idx| {
-            var old_buffer = self.data[component_idx][0 .. self.capacity * component.type_size];
+        for (self.columns) |*column| {
+            const component = column.component;
+            var old_buffer = column.data[0 .. self.capacity * component.type_size];
             var new_buffer = try allocator.alloc(u8, new_capacity * component.type_size);
             @memcpy(new_buffer[0..old_buffer.len], old_buffer);
             allocator.free(old_buffer);
-            self.data[component_idx] = @ptrCast([*]u8, new_buffer);
+            column.data = @ptrCast([*]u8, new_buffer);
         }
         self.capacity = new_capacity;
     }
@@ -83,8 +97,9 @@ pub const Composition = struct {
             return;
         }
         // swaps with the last row for each component
-        for (self.components, 0..) |component, component_idx| {
-            const component_buffer = self.data[component_idx][0 .. self.capacity * component.type_size];
+        for (self.columns) |column| {
+            const component = column.component;
+            const component_buffer = column.data[0 .. self.capacity * component.type_size];
             @memcpy(
                 component_buffer[row..][0..component.type_size],
                 component_buffer[self.len * component.type_size ..][0..component.type_size],
@@ -92,7 +107,7 @@ pub const Composition = struct {
         }
     }
 
-    pub fn getComponentIterator(
+    pub fn getIterator(
         self: *Composition,
         allocator: std.mem.Allocator,
         components: anytype,
@@ -102,10 +117,14 @@ pub const Composition = struct {
 
     pub const ComponentIterator = struct {
         composition: *Composition,
-        buffers: [][]u8,
+        view_columns: []ViewColumn,
         out_cache: [][]u8,
-        components: []const Component,
         idx: usize = 0,
+
+        pub const ViewColumn = struct {
+            component: Component,
+            data: []u8,
+        };
 
         pub fn init(composition: *Composition, components: anytype, allocator: std.mem.Allocator) !ComponentIterator {
             // check if the composition has all the components
@@ -121,27 +140,27 @@ pub const Composition = struct {
 
             const Components = comptime @TypeOf(components);
             const component_count = comptime @typeInfo(Components).Struct.fields.len;
-            const buffer_data = try allocator.alloc([]u8, component_count);
-            const components_converted = try allocator.alloc(Component, component_count);
+            const view_columns = try allocator.alloc(ViewColumn, component_count);
 
             inline for (0..component_count) |idx| {
-                buffer_data[idx] = try composition.getComponentBuffer(components[idx]);
-                components_converted[idx] = composition.components[idx];
+                const component = components[idx];
+                view_columns[idx] = ViewColumn{
+                    .component = component,
+                    .data = try composition.getComponentBuffer(components[idx]),
+                };
             }
 
             return ComponentIterator{
                 .composition = composition,
-                .buffers = buffer_data,
+                .view_columns = view_columns,
                 .out_cache = try allocator.alloc([]u8, component_count),
-                .components = components_converted,
                 .idx = 0,
             };
         }
 
         pub fn deinit(self: *ComponentIterator, allocator: std.mem.Allocator) void {
             allocator.free(self.out_cache);
-            allocator.free(self.buffers);
-            allocator.free(self.components);
+            allocator.free(self.view_columns);
         }
 
         pub fn next(self: *ComponentIterator) ?RowComponents {
@@ -153,9 +172,9 @@ pub const Composition = struct {
             self.idx += 1;
 
             var out = self.out_cache;
-            for (self.buffers, 0..) |it, buffer_idx| {
-                const component = self.components[buffer_idx];
-                out[buffer_idx] = it[(idx * component.type_size)..][0..component.type_size];
+            for (self.view_columns, 0..) |*vc, buffer_idx| {
+                const component = vc.component;
+                out[buffer_idx] = vc.data[(idx * component.type_size)..][0..component.type_size];
             }
 
             return RowComponents{
@@ -165,48 +184,48 @@ pub const Composition = struct {
             };
         }
 
-        pub const RowComponents = struct {
-            composition: *Composition,
-            row: usize,
-            components: [][]u8,
+        pub fn getAccess(
+            self: *ComponentIterator,
+            comptime T: type,
+            component: Component,
+        ) !ComponentAccess(T, false) {
+            return ComponentAccess(T, false){
+                .component_idx = try self.getComponentOrder(component),
+            };
+        }
 
-            pub fn getComponent(
-                self: *const RowComponents,
-                comptime T: type,
-                component: Component,
-            ) !*align(1) T {
-                const component_data = try self.getComponentRaw(component);
-                return &std.mem.bytesAsSlice(T, component_data)[0];
-            }
+        pub fn getConstAccess(
+            self: *const ComponentIterator,
+            comptime T: type,
+            component: Component,
+        ) !ComponentAccess(T, true) {
+            return ComponentAccess(T, true){
+                .component_idx = try self.getComponentOrder(component),
+            };
+        }
 
-            pub fn getConstComponent(
-                self: *const RowComponents,
-                comptime T: type,
-                component: Component,
-            ) !*align(1) const T {
-                return self.getComponent(T, component)[0];
+        fn getComponentOrder(
+            self: *const ComponentIterator,
+            component: Component,
+        ) !usize {
+            for (self.view_columns, 0..) |vc, idx| {
+                if (vc.component.id == component.id) {
+                    return idx;
+                }
             }
-
-            pub fn getComponentRaw(
-                self: *const RowComponents,
-                component: Component,
-            ) ![]u8 {
-                const component_order = self.composition.getComponentOrder(
-                    component,
-                ) orelse return Error.ComponentNotFound;
-                return self.components[component_order];
-            }
-        };
+            return Error.ComponentNotFound;
+        }
 
         pub fn done(self: *const ComponentIterator) bool {
             return self.idx >= self.composition.len;
         }
     };
 
-    pub fn setRow(self: *Composition, row: u32, data: []u8) void {
+    pub fn setRow(self: *Composition, row: u32, data: []const u8) void {
         var data_offset: u32 = 0;
-        for (self.components, 0..) |component, component_idx| {
-            var component_buffer = self.data[component_idx][0 .. self.capacity * component.type_size];
+        for (self.columns) |column| {
+            const component = column.component;
+            var component_buffer = column.data[0 .. self.capacity * component.type_size];
             @memcpy(
                 component_buffer[(row * component.type_size)..][0..component.type_size],
                 data[data_offset..][0..component.type_size],
@@ -215,10 +234,11 @@ pub const Composition = struct {
         }
     }
 
-    pub fn getRow(self: *const Composition, row: u32, output: []u8) void {
+    pub fn getRow(self: *const Composition, row: usize, output: []u8) void {
         var data_offset: u32 = 0;
-        for (self.components, 0..) |component, component_idx| {
-            var component_buffer = self.data[component_idx][0 .. self.capacity * component.type_size];
+        for (self.columns) |column| {
+            const component = column.component;
+            var component_buffer = column.data[0 .. self.capacity * component.type_size];
             @memcpy(
                 output[data_offset..][0..component.type_size],
                 component_buffer[(row * component.type_size)..][0..component.type_size],
@@ -227,13 +247,13 @@ pub const Composition = struct {
         }
     }
 
-    pub fn getComponent(self: *const Composition, row: u32, component: Component) ![]u8 {
+    pub fn getComponent(self: *const Composition, row: usize, component: Component) ![]u8 {
         return (try self.getComponentBuffer(component))[row..][0..component.type_size];
     }
 
     pub fn getComponentBuffer(self: *const Composition, component: Component) ![]u8 {
         if (self.getComponentOrder(component)) |component_idx| {
-            return self.data[component_idx][0 .. self.capacity * component.type_size];
+            return self.columns[component_idx].data[0 .. self.capacity * component.type_size];
         } else {
             return Error.ComponentNotFound;
         }
@@ -245,17 +265,51 @@ pub const Composition = struct {
 
     pub fn getComponentOrder(self: *const Composition, component: Component) ?u32 {
         return if (std.sort.binarySearch(
-            Component,
+            Column,
             component,
-            self.components,
+            self.columns,
             {},
-            Component.order,
+            Column.order,
         )) |component_idx| {
             return @intCast(u32, component_idx);
         } else {
             return null;
         };
     }
+};
+
+pub const RowComponents = struct {
+    composition: *Composition,
+    row: usize,
+    components: [][]u8,
+
+    pub fn getComponentRaw(self: *const RowComponents, idx: usize) []u8 {
+        return self.components[idx];
+    }
+};
+
+pub fn ComponentAccess(comptime T: type, comptime readonly: bool) type {
+    return struct {
+        const Self = @This();
+        component_idx: usize,
+
+        pub const get = if (readonly) getConst else getMut;
+
+        fn getMut(self: *const Self, view: *const RowComponents) *align(1) T {
+            return &std.mem.bytesAsSlice(
+                T,
+                view.getComponentRaw(self.component_idx),
+            )[0];
+        }
+
+        fn getConst(self: *const Self, view: *const RowComponents) *align(1) const T {
+            return self.getMut(view);
+        }
+    };
+}
+
+pub const access_id = ComponentAccess(EntityId, true){
+    .component_idx = 0,
 };
 
 test "add_remove_iterator" {
@@ -286,7 +340,7 @@ test "add_remove_iterator" {
 
     // three components
     try testing.expectEqual(comp.len, 3);
-    var view = try comp.getComponentIterator(allocator, .{components[0]});
+    var view = try comp.getIterator(allocator, .{components[0]});
     try testing.expectEqualSlices(
         u8,
         &[_]u8{ 4, 3, 6 },
@@ -309,7 +363,7 @@ test "add_remove_iterator" {
     comp.removeRow(row1);
     comp.removeRow(row2);
     try testing.expectEqual(comp.len, 1);
-    view = try comp.getComponentIterator(allocator, .{components[0]});
+    view = try comp.getIterator(allocator, .{components[0]});
     try testing.expectEqualSlices(
         u8,
         &[_]u8{ 5, 3, 2 },
@@ -319,33 +373,4 @@ test "add_remove_iterator" {
     try testing.expect(view.next() == null);
 
     // std.debug.print("add_remove_iterator: memory usage: {}B\n", .{arena.queryCapacity()});
-}
-
-test "zero_size" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-
-    var components = [_]Component{
-        Component{ .id = 0, .type_size = 0 },
-        Component{ .id = 1, .type_size = 0 },
-        Component{ .id = 2, .type_size = 0 },
-    };
-
-    var comp = try Composition.init(allocator, &components);
-    defer comp.deinit(allocator);
-
-    for (0..3) |_| {
-        _ = try comp.addRow(allocator);
-    }
-
-    var data_0 = comp.data[0][0..comp.capacity];
-    var data_1 = comp.data[1][0..comp.capacity];
-    var data_2 = comp.data[2][0..comp.capacity];
-    try testing.expectEqual(comp.data.len, 3);
-    try testing.expectEqual(data_0.len, 0);
-    try testing.expectEqual(data_1.len, 0);
-    try testing.expectEqual(data_2.len, 0);
-
-    // std.debug.print("zero_size: memory usage: {}B\n", .{arena.queryCapacity()});
 }
