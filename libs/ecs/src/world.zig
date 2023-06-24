@@ -177,6 +177,11 @@ pub const World = struct {
     pub fn removeComponent(self: *World, entity: EntityId, comptime ComponentType: type) !void {
         const ref: *EntityReference = &self.entities.items[entity];
         const current_composition: *Composition = try self.getCompositionFromIndex(ref.composition_idx);
+        const remove_component = try self.registry.registerTypeComponent(ComponentType);
+
+        if (!current_composition.hasComponent(remove_component)) {
+            return Error.ComponentNotFound;
+        }
 
         const last_removed = current_composition.removeRow(ref.row_idx);
         if (last_removed) |last| {
@@ -190,11 +195,10 @@ pub const World = struct {
         var scratch = [_]u8{0} ** 256;
         var fba = std.heap.FixedBufferAllocator.init(&scratch);
         const scratch_alloc = fba.allocator();
-        const remove_component = try self.registry.registerTypeComponent(ComponentType);
         // from 1 to skip the entity id component
-        var new_components = try scratch_alloc.alloc(Component, current_composition.components.len - 1);
+        var new_components = try scratch_alloc.alloc(Component, current_composition.components.len - 2);
         var idx: u32 = 0;
-        for (current_composition.components) |component| {
+        for (current_composition.components[1..]) |component| {
             if (component.id != remove_component.id) {
                 new_components[idx] = component;
                 idx += 1;

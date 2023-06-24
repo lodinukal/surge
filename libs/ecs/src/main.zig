@@ -44,7 +44,7 @@ test "composition_storage" {
 
     const use_ent2 = e1[6];
     try world.setComponent(use_ent2, B, B{ .x = true });
-    try world.removeComponent(use_ent2, B);
+    try world.removeComponent(use_ent2, A);
 
     var composition_1: *Composition = world.composition_storage.map.entries.get(1).value.?;
     const components_1 = (try composition_1.sliceComponent(A, a_comp))[0..composition_1.len];
