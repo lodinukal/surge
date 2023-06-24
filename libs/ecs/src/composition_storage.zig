@@ -4,6 +4,7 @@ const composition_ns = @import("composition.zig");
 const Composition = composition_ns.Composition;
 
 const component_registry = @import("component_registry.zig");
+const ComponentRegistry = component_registry.ComponentRegistry;
 const Component = component_registry.Component;
 const id_component = component_registry.id_component;
 
@@ -28,7 +29,6 @@ pub const CompositionStorage = struct {
             .allocator = allocator,
             .map = std.AutoArrayHashMapUnmanaged(u64, ?*Composition){},
         };
-        _ = try self.addComposition(&base_slice);
         return self;
     }
 
@@ -48,19 +48,32 @@ pub const CompositionStorage = struct {
         self.map.deinit(self.allocator);
     }
 
-    // will allocate
     pub fn addComposition(
         self: *CompositionStorage,
+        registry: *ComponentRegistry,
+        components: anytype,
+    ) !CompositionReference {
+        const translated = try registry.registerTypeComponentTuple(components);
+        return try self.addRawComposition(translated);
+    }
+
+    pub fn getComposition(
+        self: *const CompositionStorage,
+        registry: *ComponentRegistry,
+        components: anytype,
+    ) !?CompositionReference {
+        const translated = try registry.registerTypeComponentTuple(components);
+        return try self.getRawComposition(translated);
+    }
+
+    pub fn addRawComposition(
+        self: *CompositionStorage,
         components: []const Component,
-    ) !*Composition {
-        const ordered_components = try self.allocator.dupe(Component, components);
-        const components_hash = CompositionStorage.getComponentsHash(ordered_components);
-        self.allocator.destroy(ordered_components);
+    ) !CompositionReference {
+        const components_hash = CompositionStorage.getComponentsHash(components);
 
         var gop = try self.map.getOrPut(self.allocator, components_hash);
-        if (gop.found_existing) {
-            return gop.value_ptr.*.?;
-        } else {
+        if (gop.found_existing) {} else {
             const composition = try self.allocator.create(Composition);
             const use_slice = try std.mem.concat(
                 self.allocator,
@@ -69,21 +82,36 @@ pub const CompositionStorage = struct {
             );
             composition.* = try Composition.init(self.allocator, use_slice);
             gop.value_ptr.* = composition;
-            return composition;
         }
+
+        return CompositionReference{
+            .hash = components_hash,
+            .idx = @intCast(u16, gop.index),
+            .composition = gop.value_ptr.*.?,
+        };
     }
 
-    pub fn getComposition(
+    pub fn getRawComposition(
         self: *const CompositionStorage,
         components: []Component,
-    ) !?*Composition {
+    ) !?CompositionReference {
         const components_hash = CompositionStorage.getComponentsHash(components);
 
         var gop = try self.map.get(self.allocator, components_hash);
         if (gop.found_existing) {
-            return gop.value_ptr;
+            return CompositionReference{
+                .hash = components_hash,
+                .idx = @intCast(u16, self.map.getIndex(components_hash).?),
+                .composition = gop.value_ptr,
+            };
         } else {
             return null;
         }
     }
+
+    pub const CompositionReference = struct {
+        hash: u64,
+        idx: u16,
+        composition: *Composition,
+    };
 };

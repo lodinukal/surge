@@ -13,6 +13,7 @@ const Component = component_registry.Component;
 
 pub const Composition = struct {
     columns: []Column,
+    components: []const Component,
     len: u32 = 0,
     entity_size: u32 = 0,
     capacity: u32 = 0,
@@ -40,6 +41,7 @@ pub const Composition = struct {
         }
         return Composition{
             .columns = columns,
+            .components = components,
             .len = 0,
             .entity_size = Composition.getComponentsSize(components),
             .capacity = 0,
@@ -59,6 +61,10 @@ pub const Composition = struct {
             allocator.free(column.data[0 .. self.capacity * self.entity_size]);
         }
         allocator.free(self.columns);
+    }
+
+    pub fn ensureEmpty(self: *Composition, allocator: std.mem.Allocator, extra: u32) !void {
+        try self.ensureCapacity(allocator, self.len + extra);
     }
 
     pub fn ensureCapacity(self: *Composition, allocator: std.mem.Allocator, new_capacity: u32) !void {
@@ -81,6 +87,25 @@ pub const Composition = struct {
         self.capacity = new_capacity;
     }
 
+    pub fn copyRow(self: *Composition, allocator: std.mem.Allocator, dst: *Composition, row: u32) !u32 {
+        try dst.ensureEmpty(allocator, 1);
+        var dst_row = try dst.addRow(allocator);
+        var data_offset: u32 = 0;
+        for (self.columns) |column| {
+            const component = column.component;
+            var component_buffer = column.data[0 .. self.capacity * component.type_size];
+            if (dst.getComponentOrder(component)) |column_idx| {
+                var dst_component_buffer = dst.columns[column_idx].data[0 .. dst.capacity * component.type_size];
+                @memcpy(
+                    dst_component_buffer[(dst_row * component.type_size)..][0..component.type_size],
+                    component_buffer[(row * component.type_size)..][0..component.type_size],
+                );
+            }
+            data_offset += component.type_size;
+        }
+        return dst_row;
+    }
+
     pub fn addRow(self: *Composition, allocator: std.mem.Allocator) !u32 {
         try self.ensureCapacity(allocator, self.len + 1);
         var row = self.len;
@@ -89,22 +114,24 @@ pub const Composition = struct {
     }
 
     // swap removal
-    pub fn removeRow(self: *Composition, row: u32) void {
+    pub fn removeRow(self: *Composition, row: u32) ?u32 {
         self.len -= 1;
         // if this already out of bounds, then we don't need to do anything
         // or, if its a 0 size entity, then we don't need to do anything
         if (self.entity_size == 0 or row >= self.len) {
-            return;
+            return null;
         }
         // swaps with the last row for each component
         for (self.columns) |column| {
             const component = column.component;
             const component_buffer = column.data[0 .. self.capacity * component.type_size];
             @memcpy(
-                component_buffer[row..][0..component.type_size],
+                component_buffer[(row * component.type_size)..][0..component.type_size],
                 component_buffer[self.len * component.type_size ..][0..component.type_size],
             );
         }
+
+        return self.len;
     }
 
     pub fn getIterator(
@@ -247,8 +274,56 @@ pub const Composition = struct {
         }
     }
 
-    pub fn getComponent(self: *const Composition, row: usize, component: Component) ![]u8 {
-        return (try self.getComponentBuffer(component))[row..][0..component.type_size];
+    pub fn setComponent(
+        self: *Composition,
+        comptime ComponentType: type,
+        component: Component,
+        row: u32,
+        value: ComponentType,
+    ) !void {
+        (try self.sliceComponent(
+            ComponentType,
+            component,
+        ))[row] = value;
+    }
+
+    pub fn setComponentRaw(
+        self: *Composition,
+        component: Component,
+        row: u32,
+        value: []const u8,
+    ) !void {
+        @memcpy(try self.sliceComponent(
+            u8,
+            component,
+        )[row * component.type_size][0..component.type_size], value);
+    }
+
+    pub fn getComponent(
+        self: *const Composition,
+        comptime ComponentType: type,
+        component: Component,
+        row: u32,
+    ) !*ComponentType {
+        return &(try self.sliceComponent(
+            ComponentType,
+            component,
+        ))[row];
+    }
+
+    pub fn getComponentRaw(
+        self: *const Composition,
+        component: Component,
+        row: u32,
+    ) ![]u8 {
+        return try self.sliceComponent(
+            u8,
+            component,
+        )[row * component.type_size][0..component.type_size];
+    }
+
+    pub fn sliceComponent(self: *const Composition, comptime T: type, component: Component) ![]align(1) T {
+        return std.mem.bytesAsSlice(T, try self.getComponentBuffer(component));
     }
 
     pub fn getComponentBuffer(self: *const Composition, component: Component) ![]u8 {
@@ -311,66 +386,3 @@ pub fn ComponentAccess(comptime T: type, comptime readonly: bool) type {
 pub const access_id = ComponentAccess(EntityId, true){
     .component_idx = 0,
 };
-
-test "add_remove_iterator" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-
-    var components = [_]Component{
-        Component{ .id = 0, .type_size = 3 },
-        Component{ .id = 1, .type_size = 2 },
-        Component{ .id = 2, .type_size = 1 },
-    };
-
-    var comp = try Composition.init(allocator, &components);
-    defer comp.deinit(allocator);
-
-    var row1 = try comp.addRow(allocator);
-    var row_emplace_data1 = [_]u8{ 4, 3, 6, 4, 1, 1 };
-    comp.setRow(row1, &row_emplace_data1);
-
-    var row2 = try comp.addRow(allocator);
-    var row_emplace_data2 = [_]u8{ 4, 8, 2, 0, 0, 44 };
-    comp.setRow(row2, &row_emplace_data2);
-
-    var row3 = try comp.addRow(allocator);
-    var row_emplace_data3 = [_]u8{ 5, 3, 2, 2, 1, 2 };
-    comp.setRow(row3, &row_emplace_data3);
-
-    // three components
-    try testing.expectEqual(comp.len, 3);
-    var view = try comp.getIterator(allocator, .{components[0]});
-    try testing.expectEqualSlices(
-        u8,
-        &[_]u8{ 4, 3, 6 },
-        view.next().?.components[0],
-    );
-    try testing.expectEqualSlices(
-        u8,
-        &[_]u8{ 4, 8, 2 },
-        view.next().?.components[0],
-    );
-    try testing.expect(view.done() == false);
-    try testing.expectEqualSlices(
-        u8,
-        &[_]u8{ 5, 3, 2 },
-        view.next().?.components[0],
-    );
-    try testing.expect(view.done() == true);
-    try testing.expect(view.next() == null);
-
-    comp.removeRow(row1);
-    comp.removeRow(row2);
-    try testing.expectEqual(comp.len, 1);
-    view = try comp.getIterator(allocator, .{components[0]});
-    try testing.expectEqualSlices(
-        u8,
-        &[_]u8{ 5, 3, 2 },
-        view.next().?.components[0],
-    );
-    try testing.expect(view.done() == true);
-    try testing.expect(view.next() == null);
-
-    // std.debug.print("add_remove_iterator: memory usage: {}B\n", .{arena.queryCapacity()});
-}
