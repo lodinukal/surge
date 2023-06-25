@@ -5,7 +5,7 @@ const common = @import("common.zig");
 const assert = common.assert;
 const err = common.err;
 const Error = common.Error;
-const scratch = common.scratch;
+const ScratchSpace = common.ScratchSpace;
 
 const component_registry = @import("component_registry.zig");
 const composition_storage = @import("composition_storage.zig");
@@ -131,7 +131,8 @@ pub const World = struct {
         // 1. creating new composition
         const add_component = try self.registry.registerTypeComponent(T);
         // from 1 to skip the entity id component
-        var new_components = try std.mem.concat(scratch(256), Component, &[_][]const Component{
+        var scratch = (ScratchSpace(256){}).init();
+        var new_components = try std.mem.concat(scratch.allocator(), Component, &[_][]const Component{
             current_composition.components[1..current_composition.components.len],
             &[_]Component{add_component},
         });
@@ -156,7 +157,8 @@ pub const World = struct {
         }
 
         // 2. creating new composition
-        var new_components = try scratch(256).alloc(Component, current_composition.components.len - 2);
+        var scratch = (ScratchSpace(256){}).init();
+        var new_components = scratch.allocator().alloc(Component, current_composition.components.len - 2);
         var idx: u32 = 0;
         // from 1 to skip the entity id component
         for (current_composition.components[1..]) |component| {
