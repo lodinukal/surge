@@ -1,20 +1,16 @@
 const std = @import("std");
 const testing = std.testing;
 
-pub const common = @import("common.zig");
+const common = @import("common.zig");
 
 pub const EntityId = common.EntityId;
 
-pub const component_registry = @import("component_registry.zig");
+const component_registry = @import("component_registry.zig");
 pub const Component = component_registry.Component;
 
 pub const id_component = component_registry.id_component;
 pub const Composition = @import("composition.zig").Composition;
 pub const World = @import("world.zig").World;
-
-export fn add(a: i32, b: i32) i32 {
-    return a + b;
-}
 
 test "composition_storage" {
     var buffer_a = [_]u8{0} ** (1024 * 20);
@@ -74,5 +70,5 @@ test "composition_storage" {
     try testing.expectEqual(@intCast(usize, 1), components_3.len);
 
     // print memory usage
-    std.debug.print("arena: {}\n", .{arena.queryCapacity()});
+    // std.debug.print("arena: {}\n", .{arena.queryCapacity()});
 }

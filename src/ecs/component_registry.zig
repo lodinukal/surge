@@ -1,9 +1,11 @@
 const std = @import("std");
 
+const proj_common = @import("../core/common.zig");
 const common = @import("common.zig");
 
-const assert = common.assert;
-const err = common.err;
+const assert = proj_common.assert;
+const err = proj_common.err;
+
 const Error = common.Error;
 
 pub const ComponentRegistry = struct {

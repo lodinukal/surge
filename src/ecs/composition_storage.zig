@@ -8,10 +8,11 @@ const ComponentRegistry = component_registry.ComponentRegistry;
 const Component = component_registry.Component;
 const id_component = component_registry.id_component;
 
+const proj_common = @import("../core/common.zig");
 const common = @import("common.zig");
 
-const assert = common.assert;
-const err = common.err;
+const assert = proj_common.assert;
+const err = proj_common.err;
 const Error = common.Error;
 const EntityId = common.EntityId;
 

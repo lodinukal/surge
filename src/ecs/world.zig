@@ -1,11 +1,13 @@
 const std = @import("std");
 
+const proj_common = @import("../core/common.zig");
 const common = @import("common.zig");
+
+const ScratchSpace = proj_common.ScratchSpace;
 
 const assert = common.assert;
 const err = common.err;
 const Error = common.Error;
-const ScratchSpace = common.ScratchSpace;
 
 const component_registry = @import("component_registry.zig");
 const composition_storage = @import("composition_storage.zig");

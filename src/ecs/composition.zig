@@ -1,10 +1,11 @@
 const std = @import("std");
 const testing = std.testing;
 
+const proj_common = @import("../core/common.zig");
 const common = @import("common.zig");
 
-const assert = common.assert;
-const err = common.err;
+const assert = proj_common.assert;
+const err = proj_common.err;
 const Error = common.Error;
 const EntityId = common.EntityId;
 
@@ -316,10 +317,10 @@ pub const Composition = struct {
         component: Component,
         row: u32,
     ) ![]align(1) const u8 {
-        return try self.sliceComponent(
+        return (try self.sliceComponent(
             u8,
             component,
-        )[row * component.type_size][0..component.type_size];
+        ))[row * component.type_size ..][0..component.type_size];
     }
 
     pub fn sliceComponent(self: *const Composition, comptime T: type, component: Component) ![]align(1) T {

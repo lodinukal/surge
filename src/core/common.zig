@@ -1,13 +1,7 @@
 const std = @import("std");
-const builtin = @import("builtin");
 
 pub const assert = std.debug.assert;
 pub const err = std.log.err;
-
-pub const Error = error{
-    ComponentNotFound,
-};
-pub const EntityId = u32;
 
 pub fn ScratchSpace(comptime len: usize) type {
     return struct {
@@ -24,3 +18,13 @@ pub fn ScratchSpace(comptime len: usize) type {
         }
     };
 }
+
+const math = @import("math.zig");
+
+pub const Point2 = math.Point2;
+pub const Point3 = math.Point3;
+
+pub const Point2i = math.Point2i;
+pub const Point3i = math.Point3i;
+pub const Point2f = math.Point2f;
+pub const Point3f = math.Point3f;
