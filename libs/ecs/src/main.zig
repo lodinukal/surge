@@ -6,6 +6,7 @@ pub const common = @import("common.zig");
 pub const EntityId = common.EntityId;
 
 pub const component_registry = @import("component_registry.zig");
+pub const Component = component_registry.Component;
 
 pub const id_component = component_registry.id_component;
 pub const Composition = @import("composition.zig").Composition;
@@ -33,31 +34,45 @@ test "composition_storage" {
 
     var world = try World.init(allocator);
     const a_comp = try world.registerTypeComponent(A);
+    const b_comp = try world.registerTypeComponent(B);
+
+    var compose1 = try world.addComposition(.{A});
+    var compose2 = try world.addComposition(.{ A, B });
+    var compose3 = try world.addComposition(.{B});
 
     const e1 = try world.addManyEntities(10);
     inline for (e1, 0..) |e, i| {
+        _ = try world.transferEntity(compose1, e);
         try world.setComponent(e, A, A{ .x = i * 10 });
     }
 
     const use_ent1 = e1[5];
+    _ = try world.transferEntity(compose2, use_ent1);
     try world.setComponent(use_ent1, B, B{ .x = true });
 
     const use_ent2 = e1[6];
+    _ = try world.transferEntity(compose2, use_ent2);
     try world.setComponent(use_ent2, B, B{ .x = true });
-    try world.removeComponent(use_ent2, A);
+    _ = try world.transferEntity(compose3, use_ent2);
 
-    var composition_1: *Composition = world.composition_storage.map.entries.get(1).value.?;
-    const components_1 = (try composition_1.sliceComponent(A, a_comp))[0..composition_1.len];
-    try testing.expectEqual(components_1.len, 8);
+    const components_1 = (try compose1.composition.sliceComponent(
+        A,
+        a_comp,
+    ))[0..compose1.composition.len];
+    try testing.expectEqual(@intCast(usize, 8), components_1.len);
 
-    var composition_2: *Composition = world.composition_storage.map.entries.get(2).value.?;
-    const components_2 = (try composition_1.sliceComponent(B, a_comp))[0..composition_2.len];
-    try testing.expectEqual(components_2.len, 1);
+    const components_2 = (try compose2.composition.sliceComponent(
+        B,
+        b_comp,
+    ))[0..compose2.composition.len];
+    try testing.expectEqual(@intCast(usize, 1), components_2.len);
 
-    var composition_3: *Composition = world.composition_storage.map.entries.get(3).value.?;
-    const components_3 = (try composition_1.sliceComponent(B, a_comp))[0..composition_3.len];
-    try testing.expectEqual(components_3.len, 1);
+    const components_3 = (try compose3.composition.sliceComponent(
+        B,
+        b_comp,
+    ))[0..compose3.composition.len];
+    try testing.expectEqual(@intCast(usize, 1), components_3.len);
 
     // print memory usage
-    // std.debug.print("arena: {}\n", .{arena.queryCapacity()});
+    std.debug.print("arena: {}\n", .{arena.queryCapacity()});
 }

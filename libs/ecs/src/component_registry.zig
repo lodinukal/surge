@@ -25,13 +25,13 @@ pub const ComponentRegistry = struct {
     pub fn registerTypeComponentTuple(self: *ComponentRegistry, comptime components: anytype) ![]Component {
         const Components = comptime @TypeOf(components);
         const component_count = comptime @typeInfo(Components).Struct.fields.len;
-        var components_return: [component_count]Component = undefined;
+        var components_return = try self.allocator.alloc(Component, component_count);
 
         inline for (components, 0..) |ComponentType, component_idx| {
             components_return[component_idx] = try self.registerTypeComponent(ComponentType);
         }
 
-        return &components_return;
+        return components_return;
     }
 
     pub fn registerTypeComponent(self: *ComponentRegistry, comptime T: type) !Component {

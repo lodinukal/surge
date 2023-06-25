@@ -5,6 +5,7 @@ const common = @import("common.zig");
 const assert = common.assert;
 const err = common.err;
 const Error = common.Error;
+const scratch = common.scratch;
 
 const component_registry = @import("component_registry.zig");
 const composition_storage = @import("composition_storage.zig");
@@ -122,107 +123,145 @@ pub const World = struct {
         return result;
     }
 
-    // TODO: Abstract this logic into a `transferEntity` function to open avenues for optimization
-
-    pub fn setComponent(self: *World, entity: EntityId, comptime ComponentType: type, value: ComponentType) !void {
-        const ref: *EntityReference = &self.entities.items[entity];
+    // SLOW: DO NOT USE
+    pub fn addComponentWithComposition(self: *World, entity: EntityId, comptime T: type, value: T) !void {
+        const ref: *EntityReference = try self.getEntityReference(entity);
         const current_composition: *Composition = try self.getCompositionFromIndex(ref.composition_idx);
 
-        const last_removed = current_composition.removeRow(ref.row_idx);
-        if (last_removed) |last| {
-            const last_entity_index = (try current_composition.sliceComponent(
-                EntityId,
-                id_component,
-            ))[last];
-            self.entities.items[last_entity_index].row_idx = ref.row_idx;
-        }
-
-        var scratch = [_]u8{0} ** 256;
-        var fba = std.heap.FixedBufferAllocator.init(&scratch);
-        const scratch_alloc = fba.allocator();
-        const add_component = try self.registry.registerTypeComponent(ComponentType);
+        // 1. creating new composition
+        const add_component = try self.registry.registerTypeComponent(T);
         // from 1 to skip the entity id component
-        var new_components = try std.mem.concat(scratch_alloc, Component, &[_][]const Component{
+        var new_components = try std.mem.concat(scratch(256), Component, &[_][]const Component{
             current_composition.components[1..current_composition.components.len],
             &[_]Component{add_component},
         });
 
-        const next_composition_ref = try self.composition_storage.addRawComposition(
+        // 2. transfering entity to new composition
+        const dst_composition_ref = try self.composition_storage.addRawComposition(
             new_components,
         );
-        const next_composition = next_composition_ref.composition;
-        const next_row = try current_composition.copyRow(
-            self.allocator,
-            next_composition,
-            ref.row_idx,
-        );
-        ref.row_idx = next_row;
-        ref.composition_idx = next_composition_ref.idx;
-
-        try next_composition.setComponent(
-            EntityId,
-            id_component,
-            next_row,
-            entity,
-        );
-
-        try next_composition.setComponent(
-            ComponentType,
-            add_component,
-            next_row,
-            value,
-        );
+        _ = try self.transferEntity(dst_composition_ref, entity);
+        try self.setComponent(entity, T, value);
     }
 
-    pub fn removeComponent(self: *World, entity: EntityId, comptime ComponentType: type) !void {
-        const ref: *EntityReference = &self.entities.items[entity];
+    // SLOW: DO NOT USE
+    pub fn removeComponentWithComposition(self: *World, entity: EntityId, comptime T: type) !void {
+        const ref: *EntityReference = try self.getEntityReference(entity);
         const current_composition: *Composition = try self.getCompositionFromIndex(ref.composition_idx);
-        const remove_component = try self.registry.registerTypeComponent(ComponentType);
+        const remove_component = try self.registry.registerTypeComponent(T);
 
+        // 1. check
         if (!current_composition.hasComponent(remove_component)) {
             return Error.ComponentNotFound;
         }
 
-        const last_removed = current_composition.removeRow(ref.row_idx);
-        if (last_removed) |last| {
-            const last_entity_index = (try current_composition.sliceComponent(
-                EntityId,
-                id_component,
-            ))[last];
-            self.entities.items[last_entity_index].row_idx = ref.row_idx;
-        }
-
-        var scratch = [_]u8{0} ** 256;
-        var fba = std.heap.FixedBufferAllocator.init(&scratch);
-        const scratch_alloc = fba.allocator();
-        // from 1 to skip the entity id component
-        var new_components = try scratch_alloc.alloc(Component, current_composition.components.len - 2);
+        // 2. creating new composition
+        var new_components = try scratch(256).alloc(Component, current_composition.components.len - 2);
         var idx: u32 = 0;
+        // from 1 to skip the entity id component
         for (current_composition.components[1..]) |component| {
             if (component.id != remove_component.id) {
                 new_components[idx] = component;
                 idx += 1;
             }
         }
-
-        const next_composition_ref = try self.composition_storage.addRawComposition(
+        const dst_composition_ref = try self.composition_storage.addRawComposition(
             new_components,
         );
-        const next_composition = next_composition_ref.composition;
-        const next_row = try current_composition.copyRow(
-            self.allocator,
-            next_composition,
-            ref.row_idx,
-        );
-        ref.row_idx = next_row;
-        ref.composition_idx = next_composition_ref.idx;
 
-        try next_composition.setComponent(
+        // 3. transfering entity to new composition
+        _ = try self.transferEntity(dst_composition_ref, entity);
+    }
+
+    pub fn setComponent(self: *World, entity: EntityId, comptime T: type, value: T) !void {
+        const ref: *EntityReference = try self.getEntityReference(entity);
+        const self_composition: *Composition = try self.getCompositionFromIndex(ref.composition_idx);
+
+        try self.setComponentByRow(
+            ref.row_idx,
+            T,
+            value,
+            self_composition,
+        );
+    }
+
+    pub fn setComponentRaw(self: *World, entity: EntityId, t_component: Component, value: []const u8) !void {
+        const ref: *EntityReference = try self.getEntityReference(entity);
+        const self_composition: *Composition = try self.getCompositionFromIndex(ref.composition_idx);
+
+        try World.setComponentByRowRaw(
+            ref.row_idx,
+            t_component,
+            value,
+            self_composition,
+        );
+    }
+
+    fn setComponentByRow(
+        self: *World,
+        row_idx: u32,
+        comptime T: type,
+        value: T,
+        self_composition: *Composition,
+    ) !void {
+        const t_component = try self.registry.registerTypeComponent(T);
+
+        try World.setComponentByRowRaw(
+            row_idx,
+            t_component,
+            std.mem.asBytes(&value),
+            self_composition,
+        );
+    }
+
+    fn setComponentByRowRaw(
+        row_idx: u32,
+        t_component: Component,
+        value: []const u8,
+        self_composition: *Composition,
+    ) !void {
+        try self_composition.setComponentRaw(
+            t_component,
+            row_idx,
+            value,
+        );
+    }
+
+    pub fn transferEntity(self: *World, dst: CompositionStorage.CompositionReference, entity: EntityId) !u32 {
+        const entity_ref = try self.getEntityReference(entity);
+        const src_composition = try self.getCompositionFromIndex(entity_ref.composition_idx);
+
+        const last_removed = src_composition.removeRow(entity_ref.row_idx);
+        if (last_removed) |last| {
+            const last_entity = try src_composition.getComponent(
+                EntityId,
+                id_component,
+                last,
+            );
+            (try self.getEntityReference(last_entity.*)).row_idx = entity_ref.row_idx;
+        }
+
+        const dst_composition = dst.composition;
+        const dst_row = try src_composition.copyRow(
+            self.allocator,
+            dst_composition,
+            entity_ref.row_idx,
+        );
+        entity_ref.row_idx = dst_row;
+        entity_ref.composition_idx = dst.idx;
+
+        try dst_composition.setComponent(
             EntityId,
             id_component,
-            next_row,
+            dst_row,
             entity,
         );
+
+        return dst_row;
+    }
+
+    pub fn getEntityReference(self: *World, entity: EntityId) !*EntityReference {
+        return &self.entities.items[entity];
     }
 
     fn getCompositionFromIndex(self: *World, composition_idx: u16) !*Composition {

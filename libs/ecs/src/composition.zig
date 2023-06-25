@@ -293,10 +293,10 @@ pub const Composition = struct {
         row: u32,
         value: []const u8,
     ) !void {
-        @memcpy(try self.sliceComponent(
+        @memcpy((try self.sliceComponent(
             u8,
             component,
-        )[row * component.type_size][0..component.type_size], value);
+        ))[row * component.type_size ..][0..component.type_size], value);
     }
 
     pub fn getComponent(
@@ -304,7 +304,7 @@ pub const Composition = struct {
         comptime ComponentType: type,
         component: Component,
         row: u32,
-    ) !*ComponentType {
+    ) !*align(1) ComponentType {
         return &(try self.sliceComponent(
             ComponentType,
             component,
@@ -315,7 +315,7 @@ pub const Composition = struct {
         self: *const Composition,
         component: Component,
         row: u32,
-    ) ![]u8 {
+    ) ![]align(1) const u8 {
         return try self.sliceComponent(
             u8,
             component,
