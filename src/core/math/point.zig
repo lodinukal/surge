@@ -54,10 +54,24 @@ pub fn Point2(comptime T: type) type {
             };
         }
 
+        pub fn neg(self: Self) Self {
+            return Self{
+                .x = -self.x,
+                .y = -self.y,
+            };
+        }
+
         pub fn add(self: Self, other: Self) Self {
             return Self{
                 .x = self.x + other.x,
                 .y = self.y + other.y,
+            };
+        }
+
+        pub fn add_scalar(self: Self, other: T) Self {
+            return Self{
+                .x = self.x + other,
+                .y = self.y + other,
             };
         }
 
@@ -68,6 +82,13 @@ pub fn Point2(comptime T: type) type {
             };
         }
 
+        pub fn sub_scalar(self: Self, other: T) Self {
+            return Self{
+                .x = self.x - other,
+                .y = self.y - other,
+            };
+        }
+
         pub fn mul(self: Self, other: Self) Self {
             return Self{
                 .x = self.x * other.x,
@@ -75,10 +96,24 @@ pub fn Point2(comptime T: type) type {
             };
         }
 
+        pub fn mul_scalar(self: Self, other: T) Self {
+            return Self{
+                .x = self.x * other,
+                .y = self.y * other,
+            };
+        }
+
         pub fn div(self: Self, other: Self) Self {
             return Self{
                 .x = @divFloor(self.x, other.x),
                 .y = @divFloor(self.y, other.y),
+            };
+        }
+
+        pub fn div_scalar(self: Self, other: T) Self {
+            return Self{
+                .x = @divFloor(self.x, other),
+                .y = @divFloor(self.y, other),
             };
         }
 
@@ -182,11 +217,27 @@ pub fn Point3(comptime T: type) type {
             };
         }
 
+        pub fn neg(self: Self) Self {
+            return Self{
+                .x = -self.x,
+                .y = -self.y,
+                .z = -self.z,
+            };
+        }
+
         pub fn add(self: Self, other: Self) Self {
             return Self{
                 .x = self.x + other.x,
                 .y = self.y + other.y,
                 .z = self.z + other.z,
+            };
+        }
+
+        pub fn add_scalar(self: Self, other: T) Self {
+            return Self{
+                .x = self.x + other,
+                .y = self.y + other,
+                .z = self.z + other,
             };
         }
 
@@ -198,6 +249,14 @@ pub fn Point3(comptime T: type) type {
             };
         }
 
+        pub fn sub_scalar(self: Self, other: T) Self {
+            return Self{
+                .x = self.x - other,
+                .y = self.y - other,
+                .z = self.z - other,
+            };
+        }
+
         pub fn mul(self: Self, other: Self) Self {
             return Self{
                 .x = self.x * other.x,
@@ -206,11 +265,27 @@ pub fn Point3(comptime T: type) type {
             };
         }
 
+        pub fn mul_scalar(self: Self, other: T) Self {
+            return Self{
+                .x = self.x * other,
+                .y = self.y * other,
+                .z = self.z * other,
+            };
+        }
+
         pub fn div(self: Self, other: Self) Self {
             return Self{
                 .x = @divFloor(self.x, other.x),
                 .y = @divFloor(self.y, other.y),
                 .z = @divFloor(self.z, other.z),
+            };
+        }
+
+        pub fn div_scalar(self: Self, other: T) Self {
+            return Self{
+                .x = @divFloor(self.x, other),
+                .y = @divFloor(self.y, other),
+                .z = @divFloor(self.z, other),
             };
         }
 
