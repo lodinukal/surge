@@ -13,6 +13,8 @@ pub fn main() !void {
     var y = core.Point2f{ .x = 20, .y = 20 };
 
     std.debug.print("sub! {}\n", .{y.sub(x)});
+
+    std.debug.print("mouse_state {}\n", .{plat.mouse.getMouseButtonState()});
 }
 
 test "run all tests" {
