@@ -48,7 +48,7 @@ pub const ComponentRegistry = struct {
 
     fn typeUnique(comptime T: type) usize {
         _ = T;
-        return @ptrToInt(&struct {
+        return @intFromPtr(&struct {
             const x: u32 = 0;
         }.x);
     }

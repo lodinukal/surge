@@ -55,19 +55,19 @@ test "composition_storage" {
         A,
         a_comp,
     ))[0..compose1.composition.len];
-    try testing.expectEqual(@intCast(usize, 8), components_1.len);
+    try testing.expectEqual(@as(usize, @intCast(8)), components_1.len);
 
     const components_2 = (try compose2.composition.sliceComponent(
         B,
         b_comp,
     ))[0..compose2.composition.len];
-    try testing.expectEqual(@intCast(usize, 1), components_2.len);
+    try testing.expectEqual(@as(usize, @intCast(1)), components_2.len);
 
     const components_3 = (try compose3.composition.sliceComponent(
         B,
         b_comp,
     ))[0..compose3.composition.len];
-    try testing.expectEqual(@intCast(usize, 1), components_3.len);
+    try testing.expectEqual(@as(usize, @intCast(1)), components_3.len);
 
     // print memory usage
     // std.debug.print("arena: {}\n", .{arena.queryCapacity()});

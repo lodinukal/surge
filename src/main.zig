@@ -12,7 +12,7 @@ pub fn main() !void {
     var x = core.Point2f{ .x = 15, .y = 15 };
     var y = core.Point2f{ .x = 20, .y = 20 };
 
-    std.debug.print("cross! {}\n", .{y.sub(x)});
+    std.debug.print("sub! {}\n", .{y.sub(x)});
 }
 
 test "run all tests" {

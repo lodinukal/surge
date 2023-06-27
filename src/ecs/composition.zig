@@ -37,7 +37,7 @@ pub const Composition = struct {
         for (components, 0..) |_, component_idx| {
             columns[component_idx] = Column{
                 .component = components[component_idx],
-                .data = @ptrCast([*]u8, try allocator.alloc(u8, 0)),
+                .data = @as([*]u8, @ptrCast(try allocator.alloc(u8, 0))),
             };
         }
         return Composition{
@@ -83,7 +83,7 @@ pub const Composition = struct {
             var new_buffer = try allocator.alloc(u8, new_capacity * component.type_size);
             @memcpy(new_buffer[0..old_buffer.len], old_buffer);
             allocator.free(old_buffer);
-            column.data = @ptrCast([*]u8, new_buffer);
+            column.data = @as([*]u8, @ptrCast(new_buffer));
         }
         self.capacity = new_capacity;
     }
@@ -347,7 +347,7 @@ pub const Composition = struct {
             {},
             Column.order,
         )) |component_idx| {
-            return @intCast(u32, component_idx);
+            return @as(u32, @intCast(component_idx));
         } else {
             return null;
         };

@@ -11,7 +11,7 @@ pub fn Point2(comptime T: type) type {
             if (comptime is_floating_point) {
                 return @sqrt(self.x * self.x + self.y * self.y);
             } else {
-                return @sqrt(@intToFloat(f32, self.x * self.x + self.y * self.y));
+                return @sqrt(@as(f32, @floatFromInt(self.x * self.x + self.y * self.y)));
             }
         }
 
@@ -21,8 +21,8 @@ pub fn Point2(comptime T: type) type {
                 .x = self.x / mag,
                 .y = self.y / mag,
             } else Self{
-                .x = @floatToInt(T, @intToFloat(f32, self.x) / mag),
-                .y = @floatToInt(T, @intToFloat(f32, self.y) / mag),
+                .x = @as(T, @intFromFloat(@as(f32, @floatFromInt(self.x)) / mag)),
+                .y = @as(T, @intFromFloat(@as(f32, @floatFromInt(self.y)) / mag)),
             };
         }
 
@@ -30,12 +30,12 @@ pub fn Point2(comptime T: type) type {
             return if (comptime is_floating_point) {
                 return self.x * other.x + self.y * other.y;
             } else {
-                return @intToFloat(
+                return @as(
                     f32,
-                    self.x * other.x,
-                ) + @intToFloat(
+                    @floatFromInt(self.x * other.x),
+                ) + @as(
                     f32,
-                    self.y * other.y,
+                    @floatFromInt(self.y * other.y),
                 );
             };
         }
@@ -44,12 +44,12 @@ pub fn Point2(comptime T: type) type {
             return if (comptime is_floating_point) {
                 return self.x * other.y - self.y * other.x;
             } else {
-                return @intToFloat(
+                return @as(
                     f32,
-                    self.x * other.y,
-                ) - @intToFloat(
+                    @floatFromInt(self.x * other.y),
+                ) - @as(
                     f32,
-                    self.y * other.x,
+                    @floatFromInt(self.y * other.x),
                 );
             };
         }
@@ -88,24 +88,24 @@ pub fn Point2(comptime T: type) type {
                 true => {
                     switch (other_is_floating_point) {
                         true => return Point2(U){
-                            .x = @floatCast(U, self.x),
-                            .y = @floatCast(U, self.y),
+                            .x = @as(U, @floatCast(self.x)),
+                            .y = @as(U, @floatCast(self.y)),
                         },
                         false => return Point2(U){
-                            .x = @floatToInt(U, @intToFloat(f32, self.x)),
-                            .y = @floatToInt(U, @intToFloat(f32, self.y)),
+                            .x = @as(U, @intFromFloat(@as(f32, @floatFromInt(self.x)))),
+                            .y = @as(U, @intFromFloat(@as(f32, @floatFromInt(self.y)))),
                         },
                     }
                 },
                 false => {
                     switch (other_is_floating_point) {
                         true => return Point2(U){
-                            .x = @intToFloat(f32, self.x),
-                            .y = @intToFloat(f32, self.y),
+                            .x = @as(f32, @floatFromInt(self.x)),
+                            .y = @as(f32, @floatFromInt(self.y)),
                         },
                         false => return Point2(U){
-                            .x = @intCast(U, self.x),
-                            .y = @intCast(U, self.y),
+                            .x = @as(U, @intCast(self.x)),
+                            .y = @as(U, @intCast(self.y)),
                         },
                     }
                 },
@@ -117,15 +117,15 @@ pub fn Point2(comptime T: type) type {
 test "point2(i8) -> point2(i32)" {
     const p = Point2(i8){ .x = 1, .y = 2 };
     const p2 = p.convert_to(i32);
-    try std.testing.expectEqual(@intCast(i32, 1), p2.x);
-    try std.testing.expectEqual(@intCast(i32, 2), p2.y);
+    try std.testing.expectEqual(@as(i32, @intCast(1)), p2.x);
+    try std.testing.expectEqual(@as(i32, @intCast(2)), p2.y);
 }
 
 test "point2(i8) -> point2(f32)" {
     const p = Point2(i8){ .x = 1, .y = 2 };
     const p2 = p.convert_to(f32);
-    try std.testing.expectEqual(@intToFloat(f32, 1), p2.x);
-    try std.testing.expectEqual(@intToFloat(f32, 2), p2.y);
+    try std.testing.expectEqual(@as(f32, @floatFromInt(1)), p2.x);
+    try std.testing.expectEqual(@as(f32, @floatFromInt(2)), p2.y);
 }
 
 pub fn Point3(comptime T: type) type {
@@ -140,7 +140,7 @@ pub fn Point3(comptime T: type) type {
             if (comptime is_floating_point) {
                 return @sqrt(self.x * self.x + self.y * self.y + self.z * self.z);
             } else {
-                return @sqrt(@intToFloat(f32, self.x * self.x + self.y * self.y + self.z * self.z));
+                return @sqrt(@as(f32, @floatFromInt(self.x * self.x + self.y * self.y + self.z * self.z)));
             }
         }
 
@@ -151,9 +151,9 @@ pub fn Point3(comptime T: type) type {
                 .y = self.y / mag,
                 .z = self.z / mag,
             } else Self{
-                .x = @floatToInt(T, @intToFloat(f32, self.x) / mag),
-                .y = @floatToInt(T, @intToFloat(f32, self.y) / mag),
-                .z = @floatToInt(T, @intToFloat(f32, self.z) / mag),
+                .x = @as(T, @intFromFloat(@as(f32, @floatFromInt(self.x)) / mag)),
+                .y = @as(T, @intFromFloat(@as(f32, @floatFromInt(self.y)) / mag)),
+                .z = @as(T, @intFromFloat(@as(f32, @floatFromInt(self.z)) / mag)),
             };
         }
 
@@ -161,15 +161,15 @@ pub fn Point3(comptime T: type) type {
             return if (comptime is_floating_point) {
                 return self.x * other.x + self.y * other.y + self.z * other.z;
             } else {
-                return @intToFloat(
+                return @as(
                     f32,
-                    self.x * other.x,
-                ) + @intToFloat(
+                    @floatFromInt(self.x * other.x),
+                ) + @as(
                     f32,
-                    self.y * other.y,
-                ) + @intToFloat(
+                    @floatFromInt(self.y * other.y),
+                ) + @as(
                     f32,
-                    self.z * other.z,
+                    @floatFromInt(self.z * other.z),
                 );
             };
         }
@@ -220,28 +220,28 @@ pub fn Point3(comptime T: type) type {
                 true => {
                     switch (other_is_floating_point) {
                         true => return Point3(U){
-                            .x = @floatCast(U, self.x),
-                            .y = @floatCast(U, self.y),
-                            .z = @floatCast(U, self.z),
+                            .x = @as(U, @floatCast(self.x)),
+                            .y = @as(U, @floatCast(self.y)),
+                            .z = @as(U, @floatCast(self.z)),
                         },
                         false => return Point3(U){
-                            .x = @floatToInt(U, @intToFloat(f32, self.x)),
-                            .y = @floatToInt(U, @intToFloat(f32, self.y)),
-                            .z = @floatToInt(U, @intToFloat(f32, self.z)),
+                            .x = @as(U, @intFromFloat(@as(f32, @floatFromInt(self.x)))),
+                            .y = @as(U, @intFromFloat(@as(f32, @floatFromInt(self.y)))),
+                            .z = @as(U, @intFromFloat(@as(f32, @floatFromInt(self.z)))),
                         },
                     }
                 },
                 false => {
                     switch (other_is_floating_point) {
                         true => return Point3(U){
-                            .x = @intToFloat(f32, self.x),
-                            .y = @intToFloat(f32, self.y),
-                            .z = @intToFloat(f32, self.z),
+                            .x = @as(f32, @floatFromInt(self.x)),
+                            .y = @as(f32, @floatFromInt(self.y)),
+                            .z = @as(f32, @floatFromInt(self.z)),
                         },
                         false => return Point3(U){
-                            .x = @intCast(U, self.x),
-                            .y = @intCast(U, self.y),
-                            .z = @intCast(U, self.z),
+                            .x = @as(U, @intCast(self.x)),
+                            .y = @as(U, @intCast(self.y)),
+                            .z = @as(U, @intCast(self.z)),
                         },
                     }
                 },
@@ -253,17 +253,17 @@ pub fn Point3(comptime T: type) type {
 test "point3(i8) -> point3(i32)" {
     const p = Point3(i8){ .x = 1, .y = 2, .z = 3 };
     const p2 = p.convert_to(i32);
-    try std.testing.expectEqual(@intCast(i32, 1), p2.x);
-    try std.testing.expectEqual(@intCast(i32, 2), p2.y);
-    try std.testing.expectEqual(@intCast(i32, 3), p2.z);
+    try std.testing.expectEqual(@as(i32, @intCast(1)), p2.x);
+    try std.testing.expectEqual(@as(i32, @intCast(2)), p2.y);
+    try std.testing.expectEqual(@as(i32, @intCast(3)), p2.z);
 }
 
 test "point3(i8) -> point3(f32)" {
     const p = Point3(i8){ .x = 1, .y = 2, .z = 3 };
     const p2 = p.convert_to(f32);
-    try std.testing.expectEqual(@intToFloat(f32, 1), p2.x);
-    try std.testing.expectEqual(@intToFloat(f32, 2), p2.y);
-    try std.testing.expectEqual(@intToFloat(f32, 3), p2.z);
+    try std.testing.expectEqual(@as(f32, @floatFromInt(1)), p2.x);
+    try std.testing.expectEqual(@as(f32, @floatFromInt(2)), p2.y);
+    try std.testing.expectEqual(@as(f32, @floatFromInt(3)), p2.z);
 }
 
 pub const Point2i = Point2(i32);

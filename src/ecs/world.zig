@@ -115,7 +115,7 @@ pub const World = struct {
             ref.composition_idx = 0;
             ref.row_idx = row_idx;
 
-            const eid = @intCast(EntityId, entity_id);
+            const eid = @as(EntityId, @intCast(entity_id));
             result[idx] = eid;
 
             try null_composition.setComponent(EntityId, id_component, row_idx, eid);

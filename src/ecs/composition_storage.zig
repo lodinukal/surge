@@ -87,7 +87,7 @@ pub const CompositionStorage = struct {
 
         return CompositionReference{
             .hash = components_hash,
-            .idx = @intCast(u16, gop.index),
+            .idx = @as(u16, @intCast(gop.index)),
             .composition = gop.value_ptr.*.?,
         };
     }
@@ -102,7 +102,7 @@ pub const CompositionStorage = struct {
         if (gop.found_existing) {
             return CompositionReference{
                 .hash = components_hash,
-                .idx = @intCast(u16, self.map.getIndex(components_hash).?),
+                .idx = @as(u16, @intCast(self.map.getIndex(components_hash).?)),
                 .composition = gop.value_ptr,
             };
         } else {
