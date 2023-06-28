@@ -14,7 +14,7 @@ pub fn main() !void {
 
     std.debug.print("sub! {}\n", .{y.sub(x)});
 
-    std.debug.print("mouse_state {}\n", .{plat.mouse.getMouseButtonState()});
+    std.debug.print("display_count: {}\n", .{plat.display.getDisplayCount()});
 }
 
 test "run all tests" {
