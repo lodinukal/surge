@@ -12,6 +12,14 @@ const platform_window = switch (builtin.os.tag) {
 
 pub const WindowHandle = u32;
 
+pub fn init() !void {
+    return try platform_window.init();
+}
+
+pub fn deinit() void {
+    return platform_window.deinit();
+}
+
 pub const WindowCreateInfo = struct {
     title: []const u8,
     rect: common.Rect2i,

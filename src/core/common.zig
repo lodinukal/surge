@@ -21,13 +21,13 @@ pub fn ScratchSpace(comptime len: usize) type {
 
 const point = @import("math/point.zig");
 
-pub const Point2 = point.Point2;
-pub const Point3 = point.Point3;
+pub const Vec2 = point.Vec2;
+pub const Vec3 = point.Vec3;
 
-pub const Point2i = point.Point2i;
-pub const Point3i = point.Point3i;
-pub const Point2f = point.Point2f;
-pub const Point3f = point.Point3f;
+pub const Vec2i = point.Vec2i;
+pub const Vec3i = point.Vec3i;
+pub const Vec2f = point.Vec2f;
+pub const Vec3f = point.Vec3f;
 
 const rect = @import("math/rect.zig");
 
@@ -38,3 +38,7 @@ pub const Rect2i = rect.Rect2i;
 pub const Rect3i = rect.Rect3i;
 pub const Rect2f = rect.Rect2f;
 pub const Rect3f = rect.Rect3f;
+
+pub inline fn clamp(x: anytype, min: @TypeOf(x), max: @TypeOf(x)) @TypeOf(x) {
+    return @min(@max(x, min), max);
+}

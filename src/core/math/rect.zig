@@ -5,10 +5,14 @@ const point = @import("point.zig");
 pub fn Rect2(comptime T: type) type {
     return struct {
         const Self = @This();
-        const U = point.Point2(T);
+        const U = point.Vec2(T);
         const is_floating_point = U.is_floating_point;
         position: U,
         size: U,
+
+        pub fn zero() Self {
+            return Self{ .position = U.zero(), .size = U.zero() };
+        }
 
         pub fn from_components(position: U, size: U) Self {
             return Self{ .position = position, .size = size };
@@ -52,16 +56,24 @@ pub fn Rect2(comptime T: type) type {
                 return Self{ .position = U{ .x = 0, .y = 0 }, .size = U{ .x = 0, .y = 0 } };
             }
         }
+
+        pub fn eql(self: Self, other: Self) bool {
+            return self.position.eql(other.position) and self.size.eql(other.size);
+        }
     };
 }
 
 pub fn Rect3(comptime T: type) type {
     return struct {
         const Self = @This();
-        const U = point.Point3(T);
+        const U = point.Vec3(T);
         const is_floating_point = U.is_floating_point;
         position: U,
         size: U,
+
+        pub fn zero() Self {
+            return Self{ .position = U.zero(), .size = U.zero() };
+        }
 
         pub fn from_components(position: U, size: U) Self {
             return Self{ .position = position, .size = size };
@@ -110,6 +122,10 @@ pub fn Rect3(comptime T: type) type {
                 return Self{ .position = U{ .x = 0, .y = 0, .z = 0 }, .size = U{ .x = 0, .y = 0, .z = 0 } };
             }
         }
+
+        pub fn eql(self: Self, other: Self) bool {
+            return self.position.eql(other.position) and self.size.eql(other.size);
+        }
     };
 }
 
@@ -122,8 +138,8 @@ pub const Rect3i = Rect3(i32);
 test "rect" {
     std.testing.refAllDeclsRecursive(@This());
 
-    const rect = Rect2f.from_components(point.Point2f{ .x = 0, .y = 0 }, point.Point2f{ .x = 10, .y = 10 });
+    const rect = Rect2f.from_components(point.Vec2f{ .x = 0, .y = 0 }, point.Vec2f{ .x = 10, .y = 10 });
     try std.testing.expectEqual(@as(f32, @floatCast(100.0)), rect.area());
-    try std.testing.expectEqual(point.Point2f{ .x = 5, .y = 5 }, rect.get_center());
-    try std.testing.expect(rect.contains(point.Point2f{ .x = 5, .y = 5 }));
+    try std.testing.expectEqual(point.Vec2f{ .x = 5, .y = 5 }, rect.get_center());
+    try std.testing.expect(rect.contains(point.Vec2f{ .x = 5, .y = 5 }));
 }

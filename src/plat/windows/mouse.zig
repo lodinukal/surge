@@ -12,11 +12,11 @@ pub fn getMouseMode() mouse.MouseMode {
     return mouse.MouseMode.confined;
 }
 
-pub fn warpMouse(position: common.Point2i) void {
+pub fn warpMouse(position: common.Vec2i) void {
     std.debug.print("windows: warp mouse to {}!\n", .{position});
 }
-pub fn getMousePosition() common.Point2i {
-    return common.Point2i{ .x = 0, .y = 0 };
+pub fn getMousePosition() common.Vec2i {
+    return common.Vec2i{ .x = 0, .y = 0 };
 }
 pub fn getMouseButtonState() input_enums.MouseButtonState {
     return input_enums.MouseButtonState{};

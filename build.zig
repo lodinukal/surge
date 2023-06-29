@@ -24,6 +24,11 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    exe.addIncludePath("src/c");
+    if (target.isWindows()) {
+        exe.linkSystemLibraryName("Imm32");
+        exe.linkSystemLibraryName("Gdi32");
+    }
     // exe.addSystemIncludePath("");
     // exe.linkLibC();
 

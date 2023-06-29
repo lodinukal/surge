@@ -17,10 +17,10 @@ pub fn getMouseMode() MouseMode {
     return platform_mouse.getMouseMode();
 }
 
-pub fn warpMouse(position: common.Point2i) void {
+pub fn warpMouse(position: common.Vec2i) void {
     platform_mouse.warpMouse(position);
 }
-pub fn getMousePosition() common.Point2i {
+pub fn getMousePosition() common.Vec2i {
     return platform_mouse.getMousePosition();
 }
 pub fn getMouseButtonState() input_enums.MouseButtonState {

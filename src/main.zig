@@ -7,14 +7,23 @@ const plat = @import("plat/main.zig");
 const World = ecs.World;
 
 pub fn main() !void {
-    plat.mouse.setMouseMode(plat.mouse.MouseMode.confined);
+    try plat.window.init();
+    defer plat.window.deinit();
 
-    var x = core.Point2f{ .x = 15, .y = 15 };
-    var y = core.Point2f{ .x = 20, .y = 20 };
+    var ci = plat.window.WindowCreateInfo{
+        .title = "8man",
+        .mode = .windowed,
+        .rect = core.Rect2i.from_components(
+            core.Vec2i.zero(),
+            core.Vec2i.init(800, 600),
+        ),
+        .flags = .{},
+    };
+    var window = try plat.window.createWindow(ci);
 
-    std.debug.print("sub! {}\n", .{y.sub(x)});
+    while (true) {}
 
-    std.debug.print("display_count: {}\n", .{plat.display.getDisplayCount()});
+    _ = window;
 }
 
 test "run all tests" {
