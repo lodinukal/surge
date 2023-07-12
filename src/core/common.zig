@@ -7,7 +7,7 @@ pub fn assert(ok: bool, comptime format: []const u8, args: anytype) noreturn {
     }
 }
 pub const err = std.log.err;
-pub const panic = std.log.panic;
+pub const panic = std.debug.panic;
 
 pub fn ScratchSpace(comptime len: usize) type {
     return struct {
