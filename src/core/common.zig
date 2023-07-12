@@ -1,7 +1,13 @@
 const std = @import("std");
 
-pub const assert = std.debug.assert;
+pub fn assert(ok: bool, comptime format: []const u8, args: anytype) noreturn {
+    if (!ok) {
+        std.debug.panic(format, args);
+        unreachable;
+    }
+}
 pub const err = std.log.err;
+pub const panic = std.log.panic;
 
 pub fn ScratchSpace(comptime len: usize) type {
     return struct {
@@ -41,4 +47,8 @@ pub const Rect3f = rect.Rect3f;
 
 pub inline fn clamp(x: anytype, min: @TypeOf(x), max: @TypeOf(x)) @TypeOf(x) {
     return @min(@max(x, min), max);
+}
+
+pub inline fn bit(x: anytype, shift: anytype) @TypeOf(x) {
+    return x << shift;
 }
