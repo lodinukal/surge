@@ -943,7 +943,7 @@ pub fn deinit() void {
 }
 
 test "ref" {
-    @import("std").testing.refAllDeclsRecursive(@This());
+    std.testing.refAllDeclsRecursive(@This());
 }
 
 test "getName" {
@@ -980,6 +980,4 @@ test "pixel_format" {
 
     var pixel_format: *PixelFormat = try PixelFormat.fromFormat(allocator, Formats.xbgr4444);
     defer PixelFormat.deinit(pixel_format, allocator);
-
-    std.log.warn("{}", .{pixel_format});
 }

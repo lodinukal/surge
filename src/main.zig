@@ -3,7 +3,8 @@ const std = @import("std");
 const core = @import("core/common.zig");
 const ecs = @import("ecs/main.zig");
 
-const pixels = @import("platform/pixels.zig");
+const pixels = @import("video/pixels.zig");
+const video = @import("video/video.zig");
 
 const World = ecs.World;
 
@@ -14,13 +15,12 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
     _ = allocator;
-
-    const hdr_format = pixels.Formats.rgba8888;
-    const stringed = hdr_format.getName();
-    std.debug.print("hdr_format: {s}\n", .{stringed});
 }
 
 test {
-    std.testing.refAllDeclsRecursive(core);
-    std.testing.refAllDeclsRecursive(ecs);
+    std.testing.refAllDecls(core);
+    std.testing.refAllDecls(ecs);
+
+    std.testing.refAllDecls(pixels);
+    std.testing.refAllDecls(video);
 }
