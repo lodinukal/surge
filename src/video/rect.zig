@@ -52,7 +52,7 @@ pub const FPoint = struct {
         return p.x == other.x and p.y == other.y;
     }
 
-    pub fn getEnclosingRect(points: []FPoint, clipping: FRect) ?Rect {
+    pub fn getEnclosingRect(points: []FPoint, clipping: FRect) ?FRect {
         if (points.len == 0) {
             return null;
         }
@@ -151,13 +151,13 @@ pub const Rect = struct {
         const top = rect.y;
         const bottom = rect.y + rect.h;
 
-        const m = (p2.y - p1.y) / (p2.x - p1.x);
+        const m = @divTrunc(p2.y - p1.y, p2.x - p1.x);
         const b = p1.y - m * p1.x;
 
         const y1 = m * left + b;
         const y2 = m * right + b;
-        const x1 = (top - b) / m;
-        const x2 = (bottom - b) / m;
+        const x1 = @divTrunc(top - b, m);
+        const x2 = @divTrunc(bottom - b, m);
 
         return (y1 >= top and y1 <= bottom) or
             (y2 >= top and y2 <= bottom) or
@@ -249,3 +249,8 @@ pub const FRect = struct {
             (x2 >= left and x2 <= right);
     }
 };
+
+const std = @import("std");
+test "ref" {
+    std.testing.refAllDeclsRecursive(@This());
+}

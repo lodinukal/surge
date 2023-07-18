@@ -5,7 +5,7 @@ const rect = @import("rect.zig");
 pub const WindowHandle = struct {
     id: u32,
 
-    pub fn fromId(id: u32) !DisplayHandle {
+    pub fn fromId(id: u32) !WindowHandle {
         return .{ .id = id };
     }
 
@@ -48,7 +48,7 @@ pub const WindowHandle = struct {
         return false;
     }
 
-    pub fn getFullscreenMode(h: WindowHandle) !*const DisplayMode {
+    pub fn getFullscreenMode(h: WindowHandle) !?*const DisplayMode {
         _ = h;
         return null;
     }
