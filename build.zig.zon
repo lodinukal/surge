@@ -1,0 +1,10 @@
+.{
+    .name = "hotaru",
+    .version = "0.0.1",
+    .dependencies = .{
+        .win32 = .{
+            .url = "https://github.com/marlersoft/zigwin32/archive/007649ade45ffb544de3aafbb112de25064d3d92.tar.gz",
+            .hash = "122049417351e43711c5c4c783624ca16d38a938e9de6f94a2037b86fb1f57a07234",
+        },
+    },
+}

@@ -22,8 +22,15 @@ pub fn main() !void {
             defer allocator.free(name);
             std.debug.print("{s}\n", .{name});
         }
-        if (disp.getSize()) |size| {
-            std.debug.print("{d}x{d}\n", .{ size.width, size.height });
+        const modes = try disp.getVideoModes(allocator);
+        defer allocator.free(modes);
+        for (modes) |*mode| {
+            std.debug.print("    {d}x{d} {d}Hz\n", .{
+                mode.size.@"0",
+                mode.size.@"1",
+                mode.refresh_rate,
+            });
+            mode.deinit(allocator);
         }
     }
 }

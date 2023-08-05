@@ -24,11 +24,15 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    exe.addIncludePath("src/c");
+    exe.addIncludePath(std.Build.LazyPath.relative("./src/c"));
     if (target.isWindows()) {
+
         exe.linkSystemLibraryName("Imm32");
         exe.linkSystemLibraryName("Gdi32");
     }
+    const win32_dep = b.dependency("win32", .{});
+    const win32_module = win32_dep.module("zigwin32");
+    exe.addModule("win32", win32_module);
     // exe.addSystemIncludePath("");
     // exe.linkLibC();
 

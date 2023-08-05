@@ -1,16 +1,20 @@
 const std = @import("std");
-const c = @import("c.zig");
 
+const win32 = @import("win32");
 const common = @import("../../../core/common.zig");
 
 const dpi = @import("../../dpi.zig");
+
+const gdi = win32.graphics.gdi;
+const foundation = win32.foundation;
+const z32 = win32.zig;
 
 pub const VideoMode = struct {
     size: struct { u32, u32 },
     bit_depth: u16,
     refresh_rate: u32,
     monitor: DisplayHandle,
-    native_video_mode: *c.windows.DEVMODEW,
+    native_video_mode: *gdi.DEVMODEW,
 
     pub fn deinit(vm: *VideoMode, allocator: std.mem.Allocator) void {
         allocator.destroy(vm.native_video_mode);
@@ -33,9 +37,9 @@ pub const VideoMode = struct {
 };
 
 pub const DisplayHandle = struct {
-    native_handle: c.windows.HMONITOR,
+    native_handle: gdi.HMONITOR,
 
-    pub fn init(native_handle: c.windows.HMONITOR) DisplayHandle {
+    pub fn init(native_handle: gdi.HMONITOR) DisplayHandle {
         return DisplayHandle{ .native_handle = native_handle };
     }
 
@@ -46,21 +50,21 @@ pub const DisplayHandle = struct {
     }
 
     pub fn primary() DisplayHandle {
-        const origin = c.windows.POINT{ .x = 0, .y = 0 };
-        return DisplayHandle.init(c.windows.MonitorFromPoint(origin, c.windows.MONITOR_DEFAULTTOPRIMARY));
+        const origin = foundation.POINT{ .x = 0, .y = 0 };
+        return DisplayHandle.init(gdi.MonitorFromPoint(origin, gdi.MONITOR_DEFAULTTOPRIMARY));
     }
 
-    pub fn fromWindow(hwnd: c.windows.HWND) DisplayHandle {
-        return DisplayHandle.init(c.windows.MonitorFromWindow(hwnd, c.windows.MONITOR_DEFAULTTONEAREST));
+    pub fn fromWindow(hwnd: foundation.HWND) DisplayHandle {
+        return DisplayHandle.init(gdi.MonitorFromWindow(hwnd, gdi.MONITOR_DEFAULTTONEAREST));
     }
 
-    pub fn getInfo(handle: DisplayHandle) ?c.windows.MONITORINFOEXW {
-        var info = std.mem.zeroes(c.windows.MONITORINFOEXW);
-        info.unnamed_0.cbSize = @intCast(@sizeOf(c.windows.MONITORINFOEXW));
-        if (c.windows.GetMonitorInfoW(
+    pub fn getInfo(handle: DisplayHandle) ?gdi.MONITORINFOEXW {
+        var info = std.mem.zeroes(gdi.MONITORINFOEXW);
+        info.__AnonymousBase_winuser_L13571_C43.cbSize = @intCast(@sizeOf(gdi.MONITORINFOEXW));
+        if (gdi.GetMonitorInfoW(
             handle.native_handle,
             @ptrCast(&info),
-        ) == c.windows.TRUE) {
+        ) == z32.TRUE) {
             return info;
         }
         return null;
@@ -87,14 +91,14 @@ pub const DisplayHandle = struct {
     pub inline fn getRefreshRate(handle: DisplayHandle) ?u32 {
         if (handle.getInfo()) |info| {
             const device_name = info.szDevice;
-            var mode = std.mem.zeroes(c.windows.DEVMODEW);
-            mode.dmSize = @intCast(c.windows.sizeof(c.windows.DEVMODEW));
-            if (c.windows.EnumDisplaySettingsExW(
+            var mode = std.mem.zeroes(gdi.DEVMODEW);
+            mode.dmSize = @intCast(@sizeOf(gdi.DEVMODEW));
+            if (gdi.EnumDisplaySettingsExW(
                 &device_name,
-                c.windows.ENUM_CURRENT_SETTINGS,
+                gdi.ENUM_CURRENT_SETTINGS,
                 &mode,
                 0,
-            ) == c.windows.TRUE) {
+            ) == z32.TRUE) {
                 return mode.dmDisplayFrequency * 1000;
             }
         }
@@ -121,7 +125,7 @@ pub const DisplayHandle = struct {
                 MonitorDpiType.EffectiveDpi,
                 &x,
                 &y,
-            ) == c.windows.S_OK) {
+            ) == foundation.S_OK) {
                 return x;
             }
         }
@@ -131,20 +135,78 @@ pub const DisplayHandle = struct {
     pub inline fn getScaleFactor(handle: DisplayHandle) ?f64 {
         return dpiToScaleFactor(handle.getDpi() orelse 96);
     }
+
+    pub inline fn getVideoModes(handle: DisplayHandle, allocator: std.mem.Allocator) ![]VideoMode {
+        var modes = std.AutoArrayHashMap(VideoMode, @TypeOf({})).init(allocator);
+        defer modes.deinit();
+        var index: usize = 0;
+
+        var temp_device_name: [33]u16 = undefined;
+        temp_device_name[32] = 0;
+
+        while (true) {
+            const monitor_info = handle.getInfo() orelse break;
+            const device_name = monitor_info.szDevice;
+            @memcpy(temp_device_name[0..32], &device_name);
+            var mode = std.mem.zeroes(gdi.DEVMODEW);
+            mode.dmSize = @intCast(@sizeOf(gdi.DEVMODEW));
+            @setRuntimeSafety(false);
+            if (gdi.EnumDisplaySettingsExW(
+                @ptrCast(&device_name),
+                @enumFromInt(index),
+                &mode,
+                0,
+            ) != z32.TRUE) {
+                break;
+            }
+            index += 1;
+
+            const REQUIRED_FIELDS = gdi.DM_PELSWIDTH |
+                gdi.DM_PELSHEIGHT |
+                gdi.DM_BITSPERPEL |
+                gdi.DM_DISPLAYFREQUENCY;
+            if ((mode.dmFields & REQUIRED_FIELDS) != REQUIRED_FIELDS) {
+                continue;
+            }
+            try modes.put(
+                VideoMode{
+                    .size = .{ mode.dmPelsWidth, mode.dmPelsHeight },
+                    .bit_depth = @intCast(mode.dmBitsPerPel),
+                    .refresh_rate = mode.dmDisplayFrequency,
+                    .monitor = handle,
+                    .native_video_mode = blk: {
+                        var x = try allocator.create(gdi.DEVMODEW);
+                        x.* = mode;
+                        break :blk x;
+                    },
+                },
+                {},
+            );
+        }
+
+        var result = std.ArrayList(VideoMode).init(allocator);
+
+        var iter = modes.iterator();
+        while (iter.next()) |entry| {
+            try result.append(entry.key_ptr.*);
+        }
+
+        return result.toOwnedSlice();
+    }
 };
 
 fn monitorCountEnumProc(
-    hmonitor: c.windows.HMONITOR,
-    hdc: c.windows.HDC,
-    placement: [*c]c.windows.RECT,
-    data: c.windows.LPARAM,
-) callconv(.C) c.windows.BOOL {
+    hmonitor: ?gdi.HMONITOR,
+    hdc: ?gdi.HDC,
+    placement: [*c]foundation.RECT,
+    data: foundation.LPARAM,
+) callconv(.C) foundation.BOOL {
     _ = hmonitor;
     _ = hdc;
     _ = placement;
     var count: *usize = @ptrFromInt(@as(usize, @intCast(data)));
     count.* += 1;
-    return c.windows.TRUE;
+    return z32.TRUE;
 }
 
 const MonitorData = struct {
@@ -153,22 +215,22 @@ const MonitorData = struct {
 };
 
 fn monitorEnumProc(
-    hmonitor: c.windows.HMONITOR,
-    hdc: c.windows.HDC,
-    placement: [*c]c.windows.RECT,
-    data: c.windows.LPARAM,
-) callconv(.C) c.windows.BOOL {
+    hmonitor: ?gdi.HMONITOR,
+    hdc: ?gdi.HDC,
+    placement: [*c]foundation.RECT,
+    data: foundation.LPARAM,
+) callconv(.C) foundation.BOOL {
     _ = placement;
     _ = hdc;
     var monitor_data: *MonitorData = @ptrFromInt(@as(usize, @intCast(data)));
-    monitor_data.data[monitor_data.index] = (DisplayHandle.init(hmonitor));
+    monitor_data.data[monitor_data.index] = (DisplayHandle.init(hmonitor.?));
     monitor_data.index += 1;
-    return c.windows.TRUE;
+    return z32.TRUE;
 }
 
 pub fn availableDisplays(allocator: std.mem.Allocator) ![]DisplayHandle {
     var count: usize = 0;
-    _ = c.windows.EnumDisplayMonitors(
+    _ = gdi.EnumDisplayMonitors(
         null,
         null,
         monitorCountEnumProc,
@@ -176,7 +238,7 @@ pub fn availableDisplays(allocator: std.mem.Allocator) ![]DisplayHandle {
     );
     var displays = try allocator.alloc(DisplayHandle, count);
     var monitor_data = MonitorData{ .data = displays };
-    _ = c.windows.EnumDisplayMonitors(
+    _ = gdi.EnumDisplayMonitors(
         null,
         null,
         monitorEnumProc,
@@ -195,11 +257,11 @@ const MonitorDpiType = enum(u8) {
     RawDpi = 2,
 };
 const GetDpiForMonitor = *fn (
-    hmonitor: c.windows.HMONITOR,
+    hmonitor: gdi.HMONITOR,
     dpi_type: MonitorDpiType,
     x: *u32,
     y: *u32,
-) callconv(.Win64) c.windows.HRESULT;
+) callconv(.Win64) foundation.HRESULT;
 
 fn getFunction(comptime T: type, comptime lib: []const u8, comptime name: [:0]const u8) ?T {
     var module = std.DynLib.open(lib) catch return null;
