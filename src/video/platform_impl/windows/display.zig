@@ -13,8 +13,27 @@ pub const VideoMode = struct {
     size: struct { u32, u32 },
     bit_depth: u16,
     refresh_rate: u32,
-    monitor: DisplayHandle,
+    display: DisplayHandle,
     native_video_mode: *gdi.DEVMODEW,
+
+    pub fn getSize(vm: *const VideoMode) dpi.PhysicalSize {
+        return dpi.PhysicalSize.init(
+            @intCast(vm.size.@"0"),
+            @intCast(vm.size.@"1"),
+        );
+    }
+
+    pub fn getBitDepth(vm: *const VideoMode) u16 {
+        return vm.bit_depth;
+    }
+
+    pub fn getRefreshRate(vm: *const VideoMode) u32 {
+        return vm.refresh_rate;
+    }
+
+    pub fn getDisplay(vm: *const VideoMode) DisplayHandle {
+        return vm.display;
+    }
 
     pub fn deinit(vm: *VideoMode, allocator: std.mem.Allocator) void {
         allocator.destroy(vm.native_video_mode);
@@ -31,7 +50,7 @@ pub const VideoMode = struct {
         hasher.update(std.mem.asBytes(vm.size));
         hasher.update(std.mem.asBytes(vm.bit_depth));
         hasher.update(std.mem.asBytes(vm.refresh_rate));
-        hasher.update(std.mem.asBytes(vm.monitor.hash()));
+        hasher.update(std.mem.asBytes(vm.display.hash()));
         return hasher.final();
     }
 };
@@ -52,6 +71,25 @@ pub const DisplayHandle = struct {
     pub fn primary() DisplayHandle {
         const origin = foundation.POINT{ .x = 0, .y = 0 };
         return DisplayHandle.init(gdi.MonitorFromPoint(origin, gdi.MONITOR_DEFAULTTOPRIMARY));
+    }
+
+    pub fn availableDisplays(allocator: std.mem.Allocator) ![]DisplayHandle {
+        var count: usize = 0;
+        _ = gdi.EnumDisplayMonitors(
+            null,
+            null,
+            monitorCountEnumProc,
+            @intCast(@intFromPtr(&count)),
+        );
+        var displays = try allocator.alloc(DisplayHandle, count);
+        var monitor_data = MonitorData{ .data = displays };
+        _ = gdi.EnumDisplayMonitors(
+            null,
+            null,
+            monitorEnumProc,
+            @intCast(@intFromPtr(&monitor_data)),
+        );
+        return displays;
     }
 
     pub fn fromWindow(hwnd: foundation.HWND) DisplayHandle {
@@ -173,7 +211,7 @@ pub const DisplayHandle = struct {
                     .size = .{ mode.dmPelsWidth, mode.dmPelsHeight },
                     .bit_depth = @intCast(mode.dmBitsPerPel),
                     .refresh_rate = mode.dmDisplayFrequency,
-                    .monitor = handle,
+                    .display = handle,
                     .native_video_mode = blk: {
                         var x = try allocator.create(gdi.DEVMODEW);
                         x.* = mode;
@@ -228,25 +266,6 @@ fn monitorEnumProc(
     return z32.TRUE;
 }
 
-pub fn availableDisplays(allocator: std.mem.Allocator) ![]DisplayHandle {
-    var count: usize = 0;
-    _ = gdi.EnumDisplayMonitors(
-        null,
-        null,
-        monitorCountEnumProc,
-        @intCast(@intFromPtr(&count)),
-    );
-    var displays = try allocator.alloc(DisplayHandle, count);
-    var monitor_data = MonitorData{ .data = displays };
-    _ = gdi.EnumDisplayMonitors(
-        null,
-        null,
-        monitorEnumProc,
-        @intCast(@intFromPtr(&monitor_data)),
-    );
-    return displays;
-}
-
 fn dpiToScaleFactor(indpi: u32) f64 {
     return @as(f64, @floatFromInt(indpi)) / 96.0;
 }
@@ -263,19 +282,17 @@ const GetDpiForMonitor = *fn (
     y: *u32,
 ) callconv(.Win64) foundation.HRESULT;
 
-fn getFunction(comptime T: type, comptime lib: []const u8, comptime name: [:0]const u8) ?T {
-    var module = std.DynLib.open(lib) catch return null;
-    defer module.close();
-    return module.lookup(T, name);
-}
-
 fn getFunctionWrap(comptime T: type, comptime lib: []const u8, comptime name: []const u8) type {
     const null_terminated = name ++ "0";
     return struct {
         cached: ?T = null,
 
         pub fn get(self: *@This()) ?T {
-            if (self.cached == null) self.cached = getFunction(T, lib, @ptrCast(null_terminated));
+            if (self.cached == null) {
+                var module = std.DynLib.open(lib) catch return null;
+                defer module.close();
+                self.cached = module.lookup(T, null_terminated);
+            }
             return self.cached;
         }
     };

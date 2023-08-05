@@ -3,7 +3,7 @@ const std = @import("std");
 const core = @import("core/common.zig");
 const ecs = @import("ecs/main.zig");
 
-const display = @import("video/platform_impl/windows/display.zig");
+const display = @import("video/display.zig");
 
 const World = ecs.World;
 
@@ -14,7 +14,7 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    const displays = try display.availableDisplays(allocator);
+    const displays = try display.DisplayHandle.availableDisplays(allocator);
     defer allocator.free(displays);
 
     for (displays) |disp| {
@@ -26,9 +26,9 @@ pub fn main() !void {
         defer allocator.free(modes);
         for (modes) |*mode| {
             std.debug.print("    {d}x{d} {d}Hz\n", .{
-                mode.size.@"0",
-                mode.size.@"1",
-                mode.refresh_rate,
+                mode.getSize().width,
+                mode.getSize().height,
+                mode.getRefreshRate(),
             });
             mode.deinit(allocator);
         }
