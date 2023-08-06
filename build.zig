@@ -16,7 +16,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const exe = b.addExecutable(.{
-        .name = "8man",
+        .name = "hotaru",
         .link_libc = true,
         // In this case the main source file is merely a path, however, in more
         // complicated build scripts, this could be a generated file.
@@ -26,13 +26,13 @@ pub fn build(b: *std.Build) void {
     });
     exe.addIncludePath(std.Build.LazyPath.relative("./src/c"));
     if (target.isWindows()) {
-
+        const win32_dep = b.dependency("win32", .{});
+        const win32_module = win32_dep.module("zigwin32");
+        exe.addModule("win32", win32_module);
         exe.linkSystemLibraryName("Imm32");
         exe.linkSystemLibraryName("Gdi32");
+        exe.linkSystemLibraryName("comctl32");
     }
-    const win32_dep = b.dependency("win32", .{});
-    const win32_module = win32_dep.module("zigwin32");
-    exe.addModule("win32", win32_module);
     // exe.addSystemIncludePath("");
     // exe.linkLibC();
 

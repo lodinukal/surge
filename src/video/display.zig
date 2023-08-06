@@ -1,10 +1,10 @@
 const std = @import("std");
 
-const platform = @import("./platform.zig");
+const platform = @import("./platform_impl/platform_impl.zig");
 const dpi = @import("dpi.zig");
 
-pub const PlatformVideoMode = platform.impl.display.VideoMode;
-pub const PlatformDisplayHandle = platform.impl.display.DisplayHandle;
+pub const PlatformVideoMode = platform.impl.VideoMode;
+pub const PlatformDisplayHandle = platform.impl.DisplayHandle;
 
 pub const VideoMode = struct {
     platform_video_mode: PlatformVideoMode,
@@ -76,7 +76,7 @@ pub const DisplayHandle = struct {
         return self.plaform_display_handle.getScaleFactor();
     }
 
-    pub fn getVideoModes(self: DisplayHandle, allocator:std.mem.Allocator) ![]VideoMode {
+    pub fn getVideoModes(self: DisplayHandle, allocator: std.mem.Allocator) ![]VideoMode {
         var modes = try self.plaform_display_handle.getVideoModes(allocator);
         defer allocator.free(modes);
 

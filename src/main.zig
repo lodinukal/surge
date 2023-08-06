@@ -4,6 +4,7 @@ const core = @import("core/common.zig");
 const ecs = @import("ecs/main.zig");
 
 const display = @import("video/display.zig");
+const icon = @import("video/platform_impl/windows/icon.zig");
 
 const World = ecs.World;
 
@@ -16,6 +17,9 @@ pub fn main() !void {
 
     const displays = try display.DisplayHandle.availableDisplays(allocator);
     defer allocator.free(displays);
+
+    var ico = try icon.WinIcon.fromDefaultResource(32512);
+    std.debug.print("ico: {d}\n", .{ico.handle});
 
     for (displays) |disp| {
         if (try disp.getName(allocator)) |name| {
