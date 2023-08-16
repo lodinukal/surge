@@ -545,27 +545,11 @@ pub const KeyLocation = enum {
     numpad,
 };
 
-pub const ModifiersState = enum(u32) {
-    shift = 0b100,
-    ctrl = 0b100 << 3,
-    alt = 0b100 << 6,
-    super = 0b100 << 9,
-
-    pub fn shift(mod: ModifiersState) bool {
-        return (mod & ModifiersState.shift) != 0;
-    }
-
-    pub fn ctrl(mod: ModifiersState) bool {
-        return (mod & ModifiersState.ctrl) != 0;
-    }
-
-    pub fn alt(mod: ModifiersState) bool {
-        return (mod & ModifiersState.alt) != 0;
-    }
-
-    pub fn super(mod: ModifiersState) bool {
-        return (mod & ModifiersState.super) != 0;
-    }
+pub const ModifiersState = packed struct {
+    shift: bool = false,
+    ctrl: bool = false,
+    alt: bool = false,
+    super: bool = false,
 };
 
 pub const ModifiersKeys = enum(u8) {
