@@ -2,12 +2,12 @@ const std = @import("std");
 
 const win32 = @import("win32");
 
-const icon = @import("icon.zig");
-pub const Icon = icon.WinIcon;
-
 const display = @import("display.zig");
 pub const VideoMode = display.VideoMode;
 pub const DisplayHandle = display.DisplayHandle;
+
+const icon = @import("icon.zig");
+pub const Icon = icon.WinIcon;
 
 extern const __ImageBase: win32.system.system_services.IMAGE_DOS_HEADER;
 
