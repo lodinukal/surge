@@ -15,7 +15,7 @@ pub fn getInstanceHandle() win32.foundation.HINSTANCE {
     return @ptrCast(&__ImageBase);
 }
 
-fn makeIntResource(i: u16) std.os.windows.PCWSTR {
+pub fn makeIntResource(i: u16) std.os.windows.PCWSTR {
     @setRuntimeSafety(false);
     return @ptrFromInt(i);
 }
