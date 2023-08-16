@@ -52,3 +52,22 @@ pub inline fn clamp(x: anytype, min: @TypeOf(x), max: @TypeOf(x)) @TypeOf(x) {
 pub inline fn bit(x: anytype, shift: anytype) @TypeOf(x) {
     return x << shift;
 }
+
+pub inline fn flagDiff(x: anytype, y: @TypeOf(x)) @TypeOf(x) {
+    const T = @TypeOf(x);
+    if (comptime !std.meta.trait.isPacked(T)) {
+        @compileError("diff only works on packed types");
+    }
+    const Backing = @typeInfo(T).Struct.backing_integer.?;
+    return @as(T, @bitCast(@as(Backing, @bitCast(x)) ^ @as(Backing, @bitCast(y))));
+}
+
+pub inline fn flagEmpty(x: anytype) bool {
+    const T = @TypeOf(x);
+    if (comptime !std.meta.trait.isPacked(T)) {
+        @compileError("isEmpty only works on packed types");
+    }
+
+    const Backing = @typeInfo(T).Struct.backing_integer.?;
+    return @as(Backing, @bitCast(x)) == 0;
+}
