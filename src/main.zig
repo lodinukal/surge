@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const core = @import("core/common.zig");
+const common = @import("core/common.zig");
 const ecs = @import("ecs/main.zig");
 
 const display = @import("video/display.zig");
@@ -40,6 +40,6 @@ pub fn main() !void {
 }
 
 test {
-    std.testing.refAllDecls(core);
+    std.testing.refAllDecls(common);
     std.testing.refAllDecls(ecs);
 }
