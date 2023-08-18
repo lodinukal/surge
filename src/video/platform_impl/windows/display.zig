@@ -1,5 +1,7 @@
 const std = @import("std");
 
+const windows_platform = @import("windows.zig");
+
 const win32 = @import("win32");
 const common = @import("../../../core/common.zig");
 
@@ -155,12 +157,12 @@ pub const DisplayHandle = struct {
     }
 
     pub inline fn getDpi(handle: DisplayHandle) ?u32 {
-        if (lazyGetDpiForMonitor.get()) |getDpiForMonitor| {
+        if (windows_platform.lazyGetDpiForMonitor.get()) |getDpiForMonitor| {
             var x: u32 = 0;
             var y: u32 = 0;
             if (getDpiForMonitor(
                 handle.native_handle,
-                MonitorDpiType.EffectiveDpi,
+                windows_platform.MonitorDpiType.EffectiveDpi,
                 &x,
                 &y,
             ) == foundation.S_OK) {
@@ -269,33 +271,3 @@ fn monitorEnumProc(
 fn dpiToScaleFactor(indpi: u32) f64 {
     return @as(f64, @floatFromInt(indpi)) / 96.0;
 }
-
-const MonitorDpiType = enum(u8) {
-    EffectiveDpi = 0,
-    AngularDpi = 1,
-    RawDpi = 2,
-};
-const GetDpiForMonitor = *fn (
-    hmonitor: gdi.HMONITOR,
-    dpi_type: MonitorDpiType,
-    x: *u32,
-    y: *u32,
-) callconv(.Win64) foundation.HRESULT;
-
-fn getFunctionWrap(comptime T: type, comptime lib: []const u8, comptime name: []const u8) type {
-    const null_terminated = name ++ "0";
-    return struct {
-        cached: ?T = null,
-
-        pub fn get(self: *@This()) ?T {
-            if (self.cached == null) {
-                var module = std.DynLib.open(lib) catch return null;
-                defer module.close();
-                self.cached = module.lookup(T, null_terminated);
-            }
-            return self.cached;
-        }
-    };
-}
-
-var lazyGetDpiForMonitor = getFunctionWrap(GetDpiForMonitor, "shcore.dll", "GetDpiForMonitor"){};

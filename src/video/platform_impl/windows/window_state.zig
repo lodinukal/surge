@@ -1,5 +1,8 @@
 const std = @import("std");
 
+const windows_platform = @import("windows.zig");
+const windows_util = @import("util.zig");
+
 const win32 = @import("win32");
 const common = @import("../../../core/common.zig");
 
@@ -146,6 +149,33 @@ pub const CursorFlags = packed struct {
     grabbed: bool = false,
     hidden: bool = false,
     in_window: bool = false,
+
+    pub fn refreshOsCursor(cf: CursorFlags, wnd: foundation.HWND) !void {
+        const client_rect = try windows_util.getWindowInnerRect(wnd);
+
+        if (windows_util.isWindowFocused(wnd)) {
+            const cursor_clip: ?foundation.RECT = if (cf.grabbed) client_rect else null;
+
+            const desktop_rect = windows_util.getDesktopRect();
+            const active_cursor_clip = try windows_util.getCursorClip();
+
+            const clip = if (std.mem.eql(foundation.RECT, desktop_rect, active_cursor_clip))
+                null
+            else
+                active_cursor_clip;
+
+            if (!std.mem.eql(foundation.RECT, cursor_clip, clip)) {
+                windows_util.setCursorClip(clip);
+            }
+        }
+
+        const cursor_in_client = cf.in_window;
+        if (cursor_in_client) {
+            windows_util.setCursorHidden(cf.hidden);
+        } else {
+            windows_util.setCursorHidden(false);
+        }
+    }
 };
 
 pub const WindowFlags = packed struct(u32) {
@@ -248,7 +278,7 @@ pub const WindowFlags = packed struct(u32) {
         wf = wf.mask();
         new = new.mask();
 
-        var diff = common.flagDiff(wf, new);
+        var diff: WindowFlags = common.flagDiff(wf, new);
 
         if (common.flagEmpty(diff)) {
             return;
@@ -265,6 +295,125 @@ pub const WindowFlags = packed struct(u32) {
             };
             wam.ShowWindow(wnd, flag);
         }
+
+        if (diff.always_on_top or diff.always_on_top) {
+            const insert_after: foundation.HWND = blk: {
+                if (new.always_on_top and !new.always_on_bottom) {
+                    break :blk wam.HWND_TOPMOST;
+                } else if (!new.always_on_top and new.always_on_bottom) {
+                    break :blk wam.HWND_BOTTOM;
+                } else if (!new.always_on_top and !new.always_on_bottom) {
+                    break :blk wam.HWND_NOTOPMOST;
+                } else {
+                    @panic("invalid window flags");
+                }
+            };
+            wam.SetWindowPos(
+                wnd,
+                insert_after,
+                0,
+                0,
+                0,
+                0,
+                wam.SWP_ASYNCWINDOWPOS | wam.SWP_NOMOVE | wam.SWP_NOSIZE | wam.SWP_NOACTIVATE,
+            );
+            wam.InvalidateRgn(wnd, 0, foundation.FALSE);
+        }
+
+        if (diff.maximized or new.maximized) {
+            wam.ShowWindow(wnd, if (new.maximized) wam.SW_MAXIMIZE else wam.SW_RESTORE);
+        }
+
+        if (diff.minimized) {
+            wam.ShowWindow(wnd, if (new.minimized) wam.SW_MINIMIZE else wam.SW_RESTORE);
+            diff.minimized = false;
+        }
+
+        if (diff.closable or new.closable) {
+            const flags = wam.MF_BYCOMMAND | (if (new.closable) wam.MF_ENABLED else wam.MF_DISABLED);
+            wam.EnableMenuItem(wam.GetSystemMenu(wnd, 0), wam.SC_CLOSE, flags);
+        }
+
+        if (!diff.visible) {
+            wam.ShowWindow(wnd, wam.SW_HIDE);
+        }
+
+        // we've modified minimized possibly, so we have to recheck
+        if (!common.flagEmpty(diff)) {
+            const styles = new.toWindowStyles();
+            const style = styles.@"1";
+            const style_ex = styles.@"2";
+
+            // wam.SendMessageW(wnd, )
+
+            if (!new.minimized) {
+                wam.SetWindowLongW(wnd, wam.GWL_STYLE, style);
+                wam.SetWindowLongW(wnd, wam.GWL_EXSTYLE, style_ex);
+            }
+
+            var flags = wam.SWP_NOZORDER | wam.SWP_NOMOVE | wam.SWP_NOSIZE | wam.SWP_FRAMECHANGED;
+
+            if (!new.exclusive_fullscreen and !new.borderless_fullscreen) {
+                flags |= wam.SWP_NOACTIVATE;
+            }
+
+            wam.SetWindowPos(wnd, 0, 0, 0, 0, 0, flags);
+            // SendMessageW
+        }
+    }
+
+    pub fn adjustRect(wf: WindowFlags, wnd: foundation.HWND, rect: *foundation.RECT) !foundation.RECT {
+        var style: u32 = @intCast(wam.GetWindowLongW(wnd, wam.GWL_STYLE));
+        const style_ex: u32 = @intCast(wam.GetWindowLongW(wnd, wam.GWL_EXSTYLE));
+
+        if (!wf.decorations) {
+            style &= !(wam.WS_CAPTION | wam.WS_SIZEBOX);
+        }
+
+        const b_menu = wam.GetMenu(wnd) != 0;
+        var ran = false;
+        if (windows_platform.lazyGetDpiForWindow.get()) |getDpiForWindow| {
+            if (windows_platform.AdjustWindowRectExForDpi.get()) |adjustWindowRectExForDpi| {
+                adjustWindowRectExForDpi(rect, style, b_menu, style_ex, getDpiForWindow(wnd));
+                ran = true;
+            }
+        }
+        if (!ran) {
+            wam.AdjustWindowRectEx(rect, style, b_menu, style_ex);
+        }
+
+        return rect.*;
+    }
+
+    pub fn adjustSize(wf: WindowFlags, wnd: foundation.HWND, size: dpi.PhysicalSize) dpi.PhysicalSize {
+        const width = size.width;
+        const height = size.height;
+        var rect = foundation.RECT{
+            .left = 0,
+            .top = 0,
+            .right = @intCast(width),
+            .bottom = @intCast(height),
+        };
+        rect = try wf.adjustRect(wnd, &rect);
+        const outer_x = std.math.absInt(rect.right - rect.left);
+        const outer_y = std.math.absInt(rect.bottom - rect.top);
+        return dpi.PhysicalSize.init(outer_x, outer_y);
+    }
+
+    pub fn setSize(wf: WindowFlags, wnd: foundation.HWND, size: dpi.PhysicalSize) void {
+        const result_size = wf.adjustSize(wnd, size);
+        const width = result_size.width;
+        const height = result_size.height;
+        wam.SetWindowPos(
+            wnd,
+            0,
+            0,
+            0,
+            @intCast(width),
+            @intCast(height),
+            wam.SWP_ASYNCWINDOWPOS | wam.SWP_NOZORDER | wam.SWP_NOREPOSITION | wam.SWP_NOMOVE | wam.SWP_NOACTIVATE,
+        );
+        wam.InvalidateRgn(wnd, 0, foundation.FALSE);
     }
 };
 
