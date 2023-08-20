@@ -1,6 +1,9 @@
 const std = @import("std");
 
 const windows_platform = @import("windows.zig");
+const windows_dpi = @import("dpi.zig");
+const windows_ime = @import("ime.zig");
+const windows_theme = @import("theme.zig");
 
 const win32 = @import("win32");
 const common = @import("../../../core/common.zig");
@@ -11,6 +14,7 @@ const dpi = @import("../../dpi.zig");
 const icon = @import("../../icon.zig");
 const window = @import("../../window.zig");
 
+const dwm = win32.graphics.dwm;
 const gdi = win32.graphics.gdi;
 const foundation = win32.foundation;
 const wam = win32.ui.windows_and_messaging;
@@ -28,8 +32,8 @@ pub const PlatformSpecificWindowAttributes = struct {
 };
 
 pub const WindowHandle = struct {
-    hwnd: foundation.HWND,
-    window_state: WindowState,
+    wnd: foundation.HWND,
+    window_state: windows_window_state.WindowState,
 
     pub fn init(
         window_attributes: window.WindowAttributes,
@@ -102,14 +106,77 @@ const WindowInitData = struct {
     window: ?WindowHandle,
     allocator: std.mem.Allocator,
 
-    pub fn createWindow(wid: *WindowInitData, wnd: foundation.HWND) WindowHandle {
-        _ = wid;
+    pub fn createWindow(wid: *const WindowInitData, wnd: foundation.HWND) WindowHandle {
         const digitiser: u32 = wam.GetSystemMetrics(wam.SM_DIGITIZER);
         if (digitiser & wam.NID_READY != 0) {
             wam.RegisterTouchWindow(wnd, wam.TWF_WANTPALM);
         }
 
-        // const dpi =
+        const wnd_dpi = windows_dpi.hwndDpi(wnd);
+        const scale_factor = windows_dpi.dpiToScaleFactor(wnd_dpi);
+
+        const current_theme = windows_theme.tryTheme(wnd, wid.attributes.preferred_theme);
+
+        const window_state = blk: {
+            const in_state = windows_window_state.WindowState.init(
+                &wid.attributes,
+                scale_factor,
+                current_theme,
+                wid.attributes.preferred_theme,
+            );
+            in_state.setWindowFlags(wnd, wid, struct {
+                pub fn set(passed_wid: *WindowInitData, wf: *windows_window_state.WindowFlags) void {
+                    wf.* = passed_wid.window_flags;
+                }
+            }.set);
+            break :blk in_state;
+        };
+
+        windows_dpi.enableNonClientDpiScaling(wnd);
+        windows_ime.ImeContext.setImeAllowed(wnd, false);
+        return WindowHandle{
+            .wnd = wnd,
+            .window_state = window_state,
+        };
+    }
+
+    pub fn createWindowData(wid: *const WindowInitData, wnd: *const WindowHandle) WindowData {
+        _ = wid;
+        return WindowData{
+            .window_state = wnd.window_state,
+        };
+    }
+
+    pub fn onNcCreate(wid: *WindowInitData, wnd: foundation.HWND) *WindowData {
+        const created_window = wid.createWindow(wnd);
+        const created_window_data = wid.createWindowData(&created_window);
+        wid.window = created_window;
+        const userdata = wid.allocator.create(WindowData);
+        userdata.* = created_window_data;
+        return userdata;
+    }
+
+    pub fn onCreate(wid: *WindowInitData) void {
+        const win = wid.window;
+        common.assert(win != null, "Window does not exist\n", .{});
+
+        if (wid.attributes.transparent and !wid.platform_attributes.no_redirection_bitmap) {
+            const region = gdi.CreateRectRgn(0, 0, -1, -1);
+            const bb = dwm.DWM_BLURBEHIND{
+                .dwFlags = dwm.DWM_BB_ENABLE | dwm.DWM_BB_BLURREGION,
+                .fEnable = true,
+                .hRgnBlur = region,
+                .fTransitionOnMaximized = z32.FALSE,
+            };
+            const hres = dwm.DwmEnableBlurBehindWindow(win.?.wnd, &bb);
+            if (hres < 0) {
+                common.err("Setting transparent window is failed, HRESULT: 0x{:X}", .{hres});
+            }
+            gdi.DeleteObject(region);
+        }
+
+        // TODO: Set properties of windows
+        //   win.?.(propset)
     }
 };
 
@@ -131,4 +198,6 @@ pub fn registerWindowClass(class_name: [*:0]const u16) void {
     wam.RegisterClassExW(*class);
 }
 
-const WindowState = struct {};
+const WindowData = struct {
+    window_state: windows_window_state.WindowState,
+};

@@ -12,6 +12,8 @@ pub const Icon = icon.WinIcon;
 const window = @import("window.zig");
 pub const PlatformSpecificWindowAttributes = window.PlatformSpecificWindowAttributes;
 
+const common = @import("../../../core/common.zig");
+
 extern const __ImageBase: win32.system.system_services.IMAGE_DOS_HEADER;
 
 pub fn getInstanceHandle() win32.foundation.HINSTANCE {
@@ -25,15 +27,22 @@ pub fn makeIntResource(i: u16) std.os.windows.PCWSTR {
 
 const gdi = win32.graphics.gdi;
 const foundation = win32.foundation;
+const hi_dpi = win32.ui.hi_dpi;
 
-pub const MonitorDpiType = enum(u8) {
-    EffectiveDpi = 0,
-    AngularDpi = 1,
-    RawDpi = 2,
-};
+pub fn getDllFunction(comptime T: type, comptime lib: []const u8, comptime name: []const u8) type {
+    const null_terminated = name ++ "0";
+    return common.Lazy(struct {
+        pub fn init() ?T {
+            var module = std.DynLib.open(lib) catch return null;
+            defer module.close();
+            return module.lookup(T, null_terminated);
+        }
+    }, ?T);
+}
+
 const GetDpiForMonitor = *fn (
     hmonitor: gdi.HMONITOR,
-    dpi_type: MonitorDpiType,
+    dpi_type: hi_dpi.MONITOR_DPI_TYPE,
     x: *u32,
     y: *u32,
 ) callconv(.Win64) foundation.HRESULT;
@@ -48,36 +57,52 @@ const AdjustWindowRectExForDpi = *fn (
     dpi: u32,
 ) callconv(.Win64) foundation.BOOL;
 
-fn getFunctionWrap(comptime T: type, comptime lib: []const u8, comptime name: []const u8) type {
-    const null_terminated = name ++ "0";
-    return struct {
-        cached: ?T = null,
+const SetProcessDpiAwarenessContext = *fn (
+    dpi_awareness_context: hi_dpi.DPI_AWARENESS_CONTEXT,
+) callconv(.Win64) foundation.BOOL;
 
-        pub fn get(self: *@This()) ?T {
-            if (self.cached == null) {
-                var module = std.DynLib.open(lib) catch return null;
-                defer module.close();
-                self.cached = module.lookup(T, null_terminated);
-            }
-            return self.cached;
-        }
-    };
-}
+const SetProcessDpiAwareness = *fn (
+    value: hi_dpi.PROCESS_DPI_AWARENESS,
+) callconv(.Win64) foundation.BOOL;
 
-pub var lazyGetDpiForMonitor = getFunctionWrap(
+const SetProcessDpiAware = *fn () callconv(.Win64) foundation.BOOL;
+
+const EnableNonClientDpiScaling = *fn (hwnd: foundation.HWND) callconv(.Win64) foundation.BOOL;
+
+pub var lazyGetDpiForMonitor = getDllFunction(
     GetDpiForMonitor,
     "shcore.dll",
     "GetDpiForMonitor",
 ){};
-pub var lazyGetDpiForWindow = getFunctionWrap(
+pub var lazyGetDpiForWindow = getDllFunction(
     GetDpiForWindow,
     "user32.dll",
     "GetDpiForWindow",
 ){};
-pub var lazyAdjustWindowRectExForDpi = getFunctionWrap(
+pub var lazyAdjustWindowRectExForDpi = getDllFunction(
     AdjustWindowRectExForDpi,
     "user32.dll",
     "AdjustWindowRectExForDpi",
+){};
+pub var lazySetProcessDpiAwarenessContext = getDllFunction(
+    SetProcessDpiAwarenessContext,
+    "user32.dll",
+    "SetProcessDpiAwarenessContext",
+){};
+pub var lazySetProcessDpiAwareness = getDllFunction(
+    SetProcessDpiAwareness,
+    "shcore.dll",
+    "SetProcessDpiAwareness",
+){};
+pub var lazySetProcessDpiAware = getDllFunction(
+    SetProcessDpiAware,
+    "user32.dll",
+    "SetProcessDpiAware",
+){};
+pub var lazyEnableNonClientDpiScaling = getDllFunction(
+    EnableNonClientDpiScaling,
+    "user32.dll",
+    "EnableNonClientDpiScaling",
 ){};
 
 test "ref" {

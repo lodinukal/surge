@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const windows_platform = @import("windows.zig");
+const windows_dpi = @import("dpi.zig");
 
 const win32 = @import("win32");
 const common = @import("../../../core/common.zig");
@@ -9,6 +10,7 @@ const dpi = @import("../../dpi.zig");
 
 const gdi = win32.graphics.gdi;
 const foundation = win32.foundation;
+const hi_dpi = win32.ui.hi_dpi;
 const z32 = win32.zig;
 
 pub const VideoMode = struct {
@@ -162,7 +164,7 @@ pub const DisplayHandle = struct {
             var y: u32 = 0;
             if (getDpiForMonitor(
                 handle.native_handle,
-                windows_platform.MonitorDpiType.EffectiveDpi,
+                hi_dpi.MDT_EFFECTIVE_DPI,
                 &x,
                 &y,
             ) == foundation.S_OK) {
@@ -173,7 +175,7 @@ pub const DisplayHandle = struct {
     }
 
     pub inline fn getScaleFactor(handle: DisplayHandle) ?f64 {
-        return dpiToScaleFactor(handle.getDpi() orelse 96);
+        return windows_dpi.dpiToScaleFactor(windows_dpi.getMonitorDpi(handle.native_handle) orelse 96);
     }
 
     pub inline fn getVideoModes(handle: DisplayHandle, allocator: std.mem.Allocator) ![]VideoMode {
@@ -266,8 +268,4 @@ fn monitorEnumProc(
     monitor_data.data[monitor_data.index] = (DisplayHandle.init(hmonitor.?));
     monitor_data.index += 1;
     return z32.TRUE;
-}
-
-fn dpiToScaleFactor(indpi: u32) f64 {
-    return @as(f64, @floatFromInt(indpi)) / 96.0;
 }

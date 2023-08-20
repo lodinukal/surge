@@ -92,16 +92,16 @@ pub const WindowState = struct {
         return ws.window_flags;
     }
 
-    pub fn setWindowFlags(ws: *WindowState, wnd: foundation.HWND, f: fn (*WindowFlags) void) void {
+    pub fn setWindowFlags(ws: *WindowState, wnd: foundation.HWND, ctx: anytype, f: fn (@TypeOf(ctx), *WindowFlags) void) void {
         const old_flags = ws.window_flags;
-        f(&ws.window_flags);
+        f(ctx, &ws.window_flags);
         const new_flags = ws.window_flags;
 
         old_flags.applyDiff(wnd, new_flags);
     }
 
-    pub fn setWindowFlagsInPlace(ws: *WindowState, f: fn (*WindowFlags) void) void {
-        f(&ws.window_flags);
+    pub fn setWindowFlagsInPlace(ws: *WindowState, ctx: anytype, f: fn (@TypeOf(ctx), *WindowFlags) void) void {
+        f(ctx, &ws.window_flags);
     }
 
     pub fn hasActiveFocus(ws: *const WindowState) bool {
@@ -135,9 +135,9 @@ pub const MouseProperties = struct {
         return mp.cursor_flags;
     }
 
-    pub fn setCursorFlags(mp: *MouseProperties, wnd: foundation.HWND, f: fn (*CursorFlags) void) !void {
+    pub fn setCursorFlags(mp: *MouseProperties, wnd: foundation.HWND, ctx: anytype, f: fn (@TypeOf(ctx), *CursorFlags) void) !void {
         const old_flags = mp.cursor_flags;
-        f(&mp.cursor_flags);
+        f(ctx, &mp.cursor_flags);
         try mp.cursor_flags.refreshOsCursor(wnd) catch |e| {
             mp.cursor_flags = old_flags;
             return e;
@@ -317,7 +317,7 @@ pub const WindowFlags = packed struct(u32) {
                 0,
                 wam.SWP_ASYNCWINDOWPOS | wam.SWP_NOMOVE | wam.SWP_NOSIZE | wam.SWP_NOACTIVATE,
             );
-            wam.InvalidateRgn(wnd, 0, foundation.FALSE);
+            wam.InvalidateRgn(wnd, 0, z32.FALSE);
         }
 
         if (diff.maximized or new.maximized) {
@@ -413,7 +413,7 @@ pub const WindowFlags = packed struct(u32) {
             @intCast(height),
             wam.SWP_ASYNCWINDOWPOS | wam.SWP_NOZORDER | wam.SWP_NOREPOSITION | wam.SWP_NOMOVE | wam.SWP_NOACTIVATE,
         );
-        wam.InvalidateRgn(wnd, 0, foundation.FALSE);
+        wam.InvalidateRgn(wnd, 0, z32.FALSE);
     }
 };
 
