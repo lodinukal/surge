@@ -2,8 +2,10 @@ const std = @import("std");
 
 const windows_platform = @import("windows.zig");
 const windows_dpi = @import("dpi.zig");
+const windows_event_loop = @import("event_loop.zig");
 const windows_ime = @import("ime.zig");
 const windows_theme = @import("theme.zig");
+const windows_util = @import("util.zig");
 
 const win32 = @import("win32");
 const common = @import("../../../core/common.zig");
@@ -31,15 +33,17 @@ pub const PlatformSpecificWindowAttributes = struct {
     decoration_shadow: bool = false,
 };
 
-pub const WindowHandle = struct {
+pub const Window = struct {
+    allocator: std.mem.Allocator,
     wnd: foundation.HWND,
     window_state: windows_window_state.WindowState,
+    window_state_mutex: std.Thread.Mutex = std.Thread.Mutex{},
 
     pub fn init(
         window_attributes: window.WindowAttributes,
         platform_attributes: PlatformSpecificWindowAttributes,
         allocator: std.mem.Allocator,
-    ) !WindowHandle {
+    ) !Window {
         const title = std.unicode.utf8ToUtf16LeWithNull(allocator, window_attributes.title);
         const class_name = std.unicode.utf8ToUtf16LeWithNull(allocator, platform_attributes.class_name);
         registerWindowClass(class_name);
@@ -97,16 +101,94 @@ pub const WindowHandle = struct {
 
         return data.window.?;
     }
+
+    pub fn deinit(w: *Window) void {
+        w.window_state_mutex.lock();
+        defer w.window_state_mutex.unlock();
+    }
+
+    pub fn getWindowState(w: *const Window) windows_window_state.WindowState {
+        w.window_state_mutex.lock();
+        defer w.window_state_mutex.unlock();
+        return w.window_state;
+    }
+
+    pub fn setTitle(w: *const Window, text: []const u8) !void {
+        w.window_state_mutex.lock();
+        defer w.window_state_mutex.unlock();
+
+        const wide_text = try std.unicode.utf8ToUtf16LeWithNull(w.allocator, text);
+        defer w.allocator.free(wide_text);
+        wam.SetWindowTextW(w.wnd, wide_text);
+    }
+
+    pub fn setTransparent(w: *const Window) void {
+        _ = w;
+    }
+
+    pub inline fn setVisible(w: *const Window, visible: bool) void {
+        const thread = try std.Thread.spawn(.{
+            .allocator = w.allocator,
+        }, struct {
+            pub fn run(thread_window: *const Window, thread_visible: bool) void {
+                thread_window.window_state_mutex.lock();
+                defer thread_window.window_state_mutex.unlock();
+
+                thread_window.window_state.setWindowFlags(thread_window, thread_visible, struct {
+                    pub fn run(ctx: bool, wf: *windows_window_state.WindowFlags) void {
+                        wf.visble = ctx;
+                    }
+                }.run);
+            }
+        }.run, .{ w, visible });
+        thread.detach();
+    }
+
+    pub inline fn isVisible(w: *const Window) ?bool {
+        return wam.IsWindowVisible(w.wnd) == z32.TRUE;
+    }
+
+    pub inline fn requestRedraw(w: *const Window) void {
+        gdi.RedrawWindow(w.wnd, null, null, gdi.RDW_INTERNALPAINT);
+    }
+
+    pub inline fn prePresentNotify(w: *const Window) void {
+        _ = w;
+    }
+
+    pub inline fn getOuterPosition(w: *const Window) !dpi.PhysicalPosition {
+        return windows_util.getWindowOuterRect(w.wnd) catch return error.NotSupported;
+    }
+
+    pub inline fn getInnerPosition(w: *const Window) !dpi.PhysicalPosition {
+        var position = std.mem.zeroes(foundation.POINT);
+        if (gdi.ClientToScreen(w.wnd, &position) == z32.FALSE) {
+            return error.NotSupported;
+        }
+        return dpi.PhysicalPosition{
+            .x = position.x,
+            .y = position.y,
+        };
+    }
+
+    pub inline fn setOuterPosition(w: *const Window, position: dpi.Position) void {
+        const p = position.toPhysical(w.getScaleFactor());
+        _ = p;
+    }
+
+    pub inline fn getScaleFactor(w: *const Window) f64 {
+        return w.getWindowState().scale_factor;
+    }
 };
 
 const WindowInitData = struct {
     attributes: window.WindowAttributes,
     platform_attributes: PlatformSpecificWindowAttributes,
     window_flags: windows_window_state.WindowFlags,
-    window: ?WindowHandle,
+    window: ?Window,
     allocator: std.mem.Allocator,
 
-    pub fn createWindow(wid: *const WindowInitData, wnd: foundation.HWND) WindowHandle {
+    pub fn createWindow(wid: *const WindowInitData, wnd: foundation.HWND) Window {
         const digitiser: u32 = wam.GetSystemMetrics(wam.SM_DIGITIZER);
         if (digitiser & wam.NID_READY != 0) {
             wam.RegisterTouchWindow(wnd, wam.TWF_WANTPALM);
@@ -134,24 +216,25 @@ const WindowInitData = struct {
 
         windows_dpi.enableNonClientDpiScaling(wnd);
         windows_ime.ImeContext.setImeAllowed(wnd, false);
-        return WindowHandle{
+        return Window{
+            .allocator = wid.allocator,
             .wnd = wnd,
             .window_state = window_state,
         };
     }
 
-    pub fn createWindowData(wid: *const WindowInitData, wnd: *const WindowHandle) WindowData {
+    pub fn createWindowData(wid: *const WindowInitData, wnd: *const Window) windows_event_loop.WindowData {
         _ = wid;
-        return WindowData{
+        return windows_event_loop.WindowData{
             .window_state = wnd.window_state,
         };
     }
 
-    pub fn onNcCreate(wid: *WindowInitData, wnd: foundation.HWND) *WindowData {
+    pub fn onNcCreate(wid: *WindowInitData, wnd: foundation.HWND) *windows_event_loop.WindowData {
         const created_window = wid.createWindow(wnd);
         const created_window_data = wid.createWindowData(&created_window);
         wid.window = created_window;
-        const userdata = wid.allocator.create(WindowData);
+        const userdata = wid.allocator.create(windows_event_loop.WindowData);
         userdata.* = created_window_data;
         return userdata;
     }
@@ -197,7 +280,3 @@ pub fn registerWindowClass(class_name: [*:0]const u16) void {
 
     wam.RegisterClassExW(*class);
 }
-
-const WindowData = struct {
-    window_state: windows_window_state.WindowState,
-};

@@ -5,14 +5,23 @@ const dpi = @import("dpi.zig");
 const icon = @import("icon.zig");
 const theme = @import("theme.zig");
 
-const PlatformWindowHandle = platform.impl.WindowHandle;
+const PlatformWindow = platform.impl.Window;
+const PlatformWindowId = platform.impl.WindowId;
 
-pub const WindowHandle = struct {
-    platform_window_handle: PlatformWindowHandle,
+pub const Window = struct {
+    platform_window_handle: PlatformWindow,
 
-    pub fn deinit(self: *WindowHandle) void {
+    pub fn deinit(self: *Window) void {
         _ = self;
         // switch (self.)
+    }
+};
+
+pub const WindowId = struct {
+    platform_window_id: PlatformWindowId,
+
+    pub fn dummy() WindowId {
+        return WindowId{ .platform_window_id = PlatformWindowId.dummy() };
     }
 };
 

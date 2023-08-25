@@ -19,15 +19,15 @@ pub fn utf8ToUtf16LeAlloc(allocator: std.mem.Allocator, utf8: []const u8) ![]u16
 
 pub fn getWindowOuterRect(wnd: foundation.HWND) !foundation.RECT {
     var rect = std.mem.zeroes(foundation.RECT);
-    wam.GetWindowRect(wnd, &rect);
+    if (wam.GetWindowRect(wnd, &rect) == z32.FALSE) return error.GetWindowRectError;
     return rect;
 }
 
 pub fn getWindowInnerRect(wnd: foundation.HWND) !foundation.RECT {
     var rect = std.mem.zeroes(foundation.RECT);
     var top_left = std.mem.zeroes(foundation.POINT);
-    wam.ClientToScreen(wnd, &top_left);
-    wam.GetClientRect(wnd, &rect);
+    if (gdi.ClientToScreen(wnd, &top_left) == z32.FALSE) return error.ClientToScreenError;
+    if (wam.GetClientRect(wnd, &rect) == z32.FALSE) return error.GetClientRectError;
 
     rect.left += top_left.x;
     rect.right += top_left.x;

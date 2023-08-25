@@ -562,3 +562,8 @@ pub const ModifiersKeys = enum(u8) {
     lsuper = 0b0100_0000,
     rsuper = 0b1000_0000,
 };
+
+pub const ModifiersKeyState = enum {
+    pressed,
+    unknown,
+};
