@@ -10,7 +10,7 @@ pub const atomic_arc = !builtin.single_threaded or (builtin.target.isWasm() and 
 pub fn Rc(comptime T: type) type {
     return struct {
         value: *T,
-        alloc: std.mem.Allocator,
+        allocator: std.mem.Allocator,
 
         const Self = @This();
         const Inner = struct {
@@ -28,21 +28,21 @@ pub fn Rc(comptime T: type) type {
         };
 
         /// Creates a new reference-counted value.
-        pub fn init(alloc: std.mem.Allocator, t: T) std.mem.Allocator.Error!Self {
-            const inner = try alloc.create(Inner);
+        pub fn init(allocator: std.mem.Allocator, t: T) std.mem.Allocator.Error!Self {
+            const inner = try allocator.create(Inner);
             inner.* = Inner{ .strong = 1, .weak = 1, .value = t };
-            return Self{ .value = &inner.value, .alloc = alloc };
+            return Self{ .value = &inner.value, .allocator = allocator };
         }
 
         /// Constructs a new `Rc` while giving you a `Weak` to the allocation,
         /// to allow you to construct a `T` which holds a weak pointer to itself.
-        pub fn initCyclic(alloc: std.mem.Allocator, comptime data_fn: fn (*Weak) T) std.mem.Allocator.Error!Self {
-            const inner = try alloc.create(Inner);
+        pub fn initCyclic(allocator: std.mem.Allocator, comptime data_fn: fn (*Weak) T) std.mem.Allocator.Error!Self {
+            const inner = try allocator.create(Inner);
             inner.* = Inner{ .strong = 0, .weak = 1, .value = undefined };
 
             // Strong references should collectively own a shared weak reference,
             // so don't run the destructor for our old weak reference.
-            var weak = Weak{ .inner = inner, .alloc = alloc };
+            var weak = Weak{ .inner = inner, .allocator = allocator };
 
             // It's important we don't give up ownership of the weak pointer, or
             // else the memory might be freed by the time `data_fn` returns. If
@@ -55,7 +55,7 @@ pub fn Rc(comptime T: type) type {
             std.debug.assert(inner.strong == 0);
             inner.strong = 1;
 
-            return Self{ .value = &inner.value, .alloc = alloc };
+            return Self{ .value = &inner.value, .allocator = allocator };
         }
 
         /// Gets the number of strong references to this value.
@@ -88,7 +88,7 @@ pub fn Rc(comptime T: type) type {
             if (ptr.strong == 0) {
                 ptr.weak -= 1;
                 if (ptr.weak == 0) {
-                    self.alloc.destroy(ptr);
+                    self.allocator.destroy(ptr);
                 }
             }
         }
@@ -105,7 +105,7 @@ pub fn Rc(comptime T: type) type {
 
                 ptr.weak -= 1;
                 if (ptr.weak == 0) {
-                    self.alloc.destroy(ptr);
+                    self.allocator.destroy(ptr);
                 }
             }
         }
@@ -123,7 +123,7 @@ pub fn Rc(comptime T: type) type {
 
                 ptr.weak -= 1;
                 if (ptr.weak == 0) {
-                    self.alloc.destroy(ptr);
+                    self.allocator.destroy(ptr);
                 }
 
                 return tmp;
@@ -151,19 +151,19 @@ pub fn Rc(comptime T: type) type {
         /// A single threaded, weak reference to a reference-counted value.
         pub const Weak = struct {
             inner: ?*Inner = null,
-            alloc: std.mem.Allocator,
+            allocator: std.mem.Allocator,
 
             /// Creates a new weak reference.
             pub fn init(parent: *Rc(T)) Weak {
                 const ptr = parent.innerPtr();
                 ptr.weak += 1;
-                return Weak{ .inner = ptr, .alloc = parent.alloc };
+                return Weak{ .inner = ptr, .allocator = parent.allocator };
             }
 
             /// Creates a new weak reference object from a pointer to it's underlying value,
             /// without increasing the weak count.
-            pub fn fromValuePtr(value: *T, alloc: std.mem.Allocator) Weak {
-                return .{ .inner = @fieldParentPtr(Inner, "value", value), .alloc = alloc };
+            pub fn fromValuePtr(value: *T, allocator: std.mem.Allocator) Weak {
+                return .{ .inner = @fieldParentPtr(Inner, "value", value), .allocator = allocator };
             }
 
             /// Gets the number of strong references to this value.
@@ -198,7 +198,7 @@ pub fn Rc(comptime T: type) type {
                 if (ptr.strong == 0) {
                     ptr.weak -= 1;
                     if (ptr.weak == 0) {
-                        self.alloc.destroy(ptr);
+                        self.allocator.destroy(ptr);
                         self.inner = null;
                     }
                     return null;
@@ -207,7 +207,7 @@ pub fn Rc(comptime T: type) type {
                 ptr.strong += 1;
                 return Rc(T){
                     .value = &ptr.value,
-                    .alloc = self.alloc,
+                    .allocator = self.allocator,
                 };
             }
 
@@ -217,7 +217,7 @@ pub fn Rc(comptime T: type) type {
                 if (self.innerPtr()) |ptr| {
                     ptr.weak -= 1;
                     if (ptr.weak == 0) {
-                        self.alloc.destroy(ptr);
+                        self.allocator.destroy(ptr);
                     }
                 }
             }
@@ -251,7 +251,7 @@ pub fn Arc(comptime T: type) type {
 
     return struct {
         value: *T,
-        alloc: std.mem.Allocator,
+        allocator: std.mem.Allocator,
 
         const Self = @This();
         const Inner = struct {
@@ -269,21 +269,21 @@ pub fn Arc(comptime T: type) type {
         };
 
         /// Creates a new reference-counted value.
-        pub fn init(alloc: std.mem.Allocator, t: T) std.mem.Allocator.Error!Self {
-            const inner = try alloc.create(Inner);
+        pub fn init(allocator: std.mem.Allocator, t: T) std.mem.Allocator.Error!Self {
+            const inner = try allocator.create(Inner);
             inner.* = Inner{ .strong = 1, .weak = 1, .value = t };
-            return Self{ .value = &inner.value, .alloc = alloc };
+            return Self{ .value = &inner.value, .allocator = allocator };
         }
 
         /// Constructs a new `Arc` while giving you a `Aweak` to the allocation,
         /// to allow you to construct a `T` which holds a weak pointer to itself.
-        pub fn initCyclic(alloc: std.mem.Allocator, comptime data_fn: fn (*Weak) T) std.mem.Allocator.Error!Self {
-            const inner = try alloc.create(Inner);
+        pub fn initCyclic(allocator: std.mem.Allocator, comptime data_fn: fn (*Weak) T) std.mem.Allocator.Error!Self {
+            const inner = try allocator.create(Inner);
             inner.* = Inner{ .strong = 0, .weak = 1, .value = undefined };
 
             // Strong references should collectively own a shared weak reference,
             // so don't run the destructor for our old weak reference.
-            var weak = Weak{ .inner = inner, .alloc = alloc };
+            var weak = Weak{ .inner = inner, .allocator = allocator };
 
             // It's important we don't give up ownership of the weak pointer, or
             // else the memory might be freed by the time `data_fn` returns. If
@@ -294,7 +294,7 @@ pub fn Arc(comptime T: type) type {
             inner.value = data_fn(&weak);
 
             std.debug.assert(@atomicRmw(usize, &inner.strong, .Add, 1, .Release) == 0);
-            return Self{ .value = &inner.value, .alloc = alloc };
+            return Self{ .value = &inner.value, .allocator = allocator };
         }
 
         /// Gets the number of strong references to this value.
@@ -325,7 +325,7 @@ pub fn Arc(comptime T: type) type {
 
             if (@atomicRmw(usize, &ptr.strong, .Sub, 1, .AcqRel) == 1) {
                 if (@atomicRmw(usize, &ptr.weak, .Sub, 1, .AcqRel) == 1) {
-                    self.alloc.destroy(ptr);
+                    self.allocator.destroy(ptr);
                 }
             }
         }
@@ -339,7 +339,7 @@ pub fn Arc(comptime T: type) type {
             if (@atomicRmw(usize, &ptr.strong, .Sub, 1, .AcqRel) == 1) {
                 f(self.value.*);
                 if (@atomicRmw(usize, &ptr.weak, .Sub, 1, .AcqRel) == 1) {
-                    self.alloc.destroy(ptr);
+                    self.allocator.destroy(ptr);
                 }
             }
         }
@@ -355,7 +355,7 @@ pub fn Arc(comptime T: type) type {
                 ptr.strong = 0;
                 const tmp = self.value.*;
                 if (@atomicRmw(usize, &ptr.weak, .Sub, 1, .AcqRel) == 1) {
-                    self.alloc.destroy(ptr);
+                    self.allocator.destroy(ptr);
                 }
                 return tmp;
             }
@@ -382,19 +382,19 @@ pub fn Arc(comptime T: type) type {
         /// A multi-threaded, weak reference to a reference-counted value.
         pub const Weak = struct {
             inner: ?*Inner = null,
-            alloc: std.mem.Allocator,
+            allocator: std.mem.Allocator,
 
             /// Creates a new weak reference.
             pub fn init(parent: *Arc(T)) Weak {
                 const ptr = parent.innerPtr();
                 _ = @atomicRmw(usize, &ptr.weak, .Add, 1, .AcqRel);
-                return Weak{ .inner = ptr, .alloc = parent.alloc };
+                return Weak{ .inner = ptr, .allocator = parent.allocator };
             }
 
             /// Creates a new weak reference object from a pointer to it's underlying value,
             /// without increasing the weak count.
-            pub fn fromValuePtr(value: *T, alloc: std.mem.Allocator) Weak {
-                return .{ .inner = @fieldParentPtr(Inner, "value", value), .alloc = alloc };
+            pub fn fromValuePtr(value: *T, allocator: std.mem.Allocator) Weak {
+                return .{ .inner = @fieldParentPtr(Inner, "value", value), .allocator = allocator };
             }
 
             /// Gets the number of strong references to this value.
@@ -434,7 +434,7 @@ pub fn Arc(comptime T: type) type {
 
                     if (prev == 0) {
                         if (@atomicRmw(usize, &ptr.weak, .Sub, 1, .AcqRel) == 1) {
-                            self.alloc.destroy(ptr);
+                            self.allocator.destroy(ptr);
                             self.inner = null;
                         }
                         return null;
@@ -443,7 +443,7 @@ pub fn Arc(comptime T: type) type {
                     if (@cmpxchgStrong(usize, &ptr.strong, prev, prev + 1, .Acquire, .Monotonic) == null) {
                         return Arc(T){
                             .value = &ptr.value,
-                            .alloc = self.alloc,
+                            .allocator = self.allocator,
                         };
                     }
 
@@ -456,7 +456,7 @@ pub fn Arc(comptime T: type) type {
             pub fn release(self: Weak) void {
                 if (self.innerPtr()) |ptr| {
                     if (@atomicRmw(usize, &ptr.weak, .Sub, 1, .AcqRel) == 1) {
-                        self.alloc.destroy(ptr);
+                        self.allocator.destroy(ptr);
                     }
                 }
             }
@@ -481,11 +481,11 @@ pub fn Arc(comptime T: type) type {
 }
 
 /// Creates a new `Rc` inferring the type of `value`
-pub fn rc(alloc: std.mem.Allocator, value: anytype) std.mem.Allocator.Error!Rc(@TypeOf(value)) {
-    return Rc(@TypeOf(value)).init(alloc, value);
+pub fn rc(allocator: std.mem.Allocator, value: anytype) std.mem.Allocator.Error!Rc(@TypeOf(value)) {
+    return Rc(@TypeOf(value)).init(allocator, value);
 }
 
 /// Creates a new `Arc` inferring the type of `value`
-pub fn arc(alloc: std.mem.Allocator, value: anytype) std.mem.Allocator.Error!Arc(@TypeOf(value)) {
-    return Arc(@TypeOf(value)).init(alloc, value);
+pub fn arc(allocator: std.mem.Allocator, value: anytype) std.mem.Allocator.Error!Arc(@TypeOf(value)) {
+    return Arc(@TypeOf(value)).init(allocator, value);
 }
