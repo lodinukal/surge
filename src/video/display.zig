@@ -35,14 +35,14 @@ pub const VideoMode = struct {
 pub const DisplayHandle = struct {
     plaform_display_handle: PlatformDisplayHandle,
 
-    pub fn primary() DisplayHandle {
+    pub fn getPrimary() DisplayHandle {
         return .{
-            .plaform_display_handle = PlatformDisplayHandle.primary(),
+            .plaform_display_handle = PlatformDisplayHandle.getPrimary(),
         };
     }
 
-    pub fn availableDisplays(allocator: std.mem.Allocator) ![]DisplayHandle {
-        var displays = try PlatformDisplayHandle.availableDisplays(allocator);
+    pub fn getAvailableDisplays(allocator: std.mem.Allocator) ![]DisplayHandle {
+        var displays = try PlatformDisplayHandle.getAvailableDisplays(allocator);
         defer allocator.free(displays);
         var result = std.ArrayList(DisplayHandle).init(allocator);
         defer result.deinit();

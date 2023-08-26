@@ -72,12 +72,12 @@ pub const DisplayHandle = struct {
         return hasher.final();
     }
 
-    pub fn primary() DisplayHandle {
+    pub fn getPrimary() DisplayHandle {
         const origin = foundation.POINT{ .x = 0, .y = 0 };
         return DisplayHandle.init(gdi.MonitorFromPoint(origin, gdi.MONITOR_DEFAULTTOPRIMARY));
     }
 
-    pub fn availableDisplays(allocator: std.mem.Allocator) ![]DisplayHandle {
+    pub fn getAvailableDisplays(allocator: std.mem.Allocator) ![]DisplayHandle {
         var count: usize = 0;
         _ = gdi.EnumDisplayMonitors(
             null,

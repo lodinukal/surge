@@ -15,7 +15,7 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    const displays = try display.DisplayHandle.availableDisplays(allocator);
+    const displays = try display.DisplayHandle.getAvailableDisplays(allocator);
     defer allocator.free(displays);
 
     var ico = try icon.WinIcon.fromDefaultResource(32512);

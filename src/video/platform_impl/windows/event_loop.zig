@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const windows_platform = @import("windows.zig");
+const windows_display = @import("display.zig");
 const windows_dpi = @import("dpi.zig");
 const windows_ime = @import("ime.zig");
 const windows_raw_input = @import("raw_input.zig");
@@ -16,6 +17,7 @@ const windows_window_state = @import("window_state.zig");
 
 const pump_events = @import("../pump_events.zig");
 
+const display = @import("../../display.zig");
 const dpi = @import("../../dpi.zig");
 const event = @import("../../event.zig");
 const event_loop = @import("../../event_loop.zig");
@@ -181,6 +183,10 @@ pub fn EventLoop(comptime T: type) type {
                 },
                 .msg_hook = attributes.msg_hook,
             };
+        }
+
+        pub fn deinit(el: *Self) void {
+            el.window_target.p.deinit();
         }
 
         pub fn getWindowTarget(el: Self) *event_loop.EventLoopWindowTarget(T) {
@@ -383,6 +389,60 @@ pub fn EventLoop(comptime T: type) type {
 
             return runner.value.getControlFlow();
         }
+
+        fn dispatchPeekedMessages(el: *Self) event_loop.ControlFlow {
+            const runner = el.window_target.p.runner_shared;
+            runner.retain();
+            defer runner.release();
+
+            runner.value.interrupt_msg_dispatch = false;
+
+            var msg = std.mem.zeroes(wam.MSG);
+            var control_flow = runner.value.getControlFlow();
+            while (true) {
+                if (wam.PeekMessageW(
+                    &msg,
+                    null,
+                    0,
+                    0,
+                    wam.PM_REMOVE,
+                ) == z32.FALSE) {
+                    break;
+                }
+
+                const handled = blk: {
+                    if (el.msg_hook) |callback| {
+                        break :blk callback(@ptrCast(&msg));
+                    } else {
+                        break :blk false;
+                    }
+                };
+
+                if (!handled) {
+                    wam.TranslateMessage(&msg);
+                    wam.DispatchMessageW(&msg);
+                }
+
+                control_flow = runner.value.getControlFlow();
+                switch (control_flow) {
+                    .exit_with_code => |_| break,
+                    else => {},
+                }
+
+                if (runner.value.interrupt_msg_dispatch) {
+                    break;
+                }
+            }
+
+            return control_flow;
+        }
+
+        pub fn createProxy(el: *Self) EventLoopProxy(T) {
+            return EventLoopProxy(T){
+                .target_window = el.window_target.p.thread_msg_target,
+                .event_send = el.thread_msg_sender,
+            };
+        }
     };
 }
 
@@ -421,11 +481,54 @@ pub fn EventLoopWindowTarget(comptime T: type) type {
 
         pub fn deinit(elt: *Self) void {
             elt.runner_shared.release();
+            wam.DestroyWindow(elt.thread_msg_target);
+        }
+
+        pub inline fn createThreadExecutor(elt: *Self) EventLoopThreadExecutor {
+            return EventLoopThreadExecutor{
+                .thread_id = elt.thread_id,
+                .target_window = elt.thread_msg_target,
+            };
+        }
+
+        pub fn getAvailableDisplays(elt: Self, allocator: std.mem.Allocator) ![]windows_display.DisplayHandle {
+            _ = elt;
+            return windows_display.DisplayHandle.getAvailableDisplays(allocator);
+        }
+
+        pub fn getPrimaryDisplay(elt: Self) ?display.PlatformDisplayHandle {
+            _ = elt;
+            return display.PlatformDisplayHandle.getPrimary();
+        }
+
+        pub fn listenDeviceEvents(elt: Self, allowed: event_loop.DeviceEvents) void {
+            windows_raw_input.registerAllMiceAndKeyboardForRawInput(elt.thread_msg_target, allowed);
+        }
+    };
+}
+
+pub fn EventLoopProxy(comptime T: type) type {
+    return struct {
+        const Self = @This();
+
+        target_window: foundation.HWND,
+        event_send: channel.Sender(T),
+
+        pub fn sendEvent(elp: *Self, e: T) !void {
+            if (wam.PostMessageW(elp.target_window, user_event_msg_id.get(), 0, 0) == z32.TRUE) {
+                try elp.event_send.send(e);
+            }
+            return error.EventLoopClosed;
         }
     };
 }
 
 const thread_event_target_window_class = std.unicode.utf8ToUtf16LeStringLiteral("engine_thread_event_target");
+var user_event_msg_id = LazyMesageId.init(@ptrCast("engine_wakeup_msg"));
+var exec_msg_id = LazyMesageId.init(@ptrCast("engine_exec_msg"));
+var destroy_msg_id = LazyMesageId.init(@ptrCast("engine_destroy_msg"));
+var set_retain_state_on_size_msg_id = LazyMesageId.init(@ptrCast("engine_set_retain_state_on_size_msg"));
+var taskbar_created_msg_id = LazyMesageId.init(@ptrCast("engine_taskbar_created_msg"));
 
 fn createEventTargetWindow(comptime T: type) fn () foundation.HWND {
     const CS_HREDRAW = wam.CS_HREDRAW;
@@ -472,10 +575,6 @@ fn createEventTargetWindow(comptime T: type) fn () foundation.HWND {
     return wnd;
 }
 
-fn threadEventTargetCallback(comptime T: type) fn () void {
-    _ = T;
-}
-
 fn insertEventTargetWindowData(
     comptime T: type,
     allocator: std.mem.Allocator,
@@ -500,6 +599,96 @@ fn insertEventTargetWindowData(
     );
     return c.getSender();
 }
+
+fn captureMouse(wnd: foundation.HWND, window_state: *windows_window_state.WindowState) void {
+    window_state.mouse.capture_count += 1;
+    win32.ui.input.keyboard_and_mouse.SetCapture(wnd);
+}
+
+fn releaseMouse(window_state: *windows_window_state.WindowState) void {
+    window_state.mouse.capture_count -= 1;
+    if (window_state.mouse.capture_count == 0) {
+        win32.ui.input.keyboard_and_mouse.ReleaseCapture();
+    }
+}
+
+fn normalisePointerPressure(pressure: u32) ?event.Force {
+    switch (pressure) {
+        1...1024 => event.Force{ .normalised = @as(f64, @floatFromInt(pressure)) / 1024.0 },
+        else => return null,
+    }
+}
+
+fn updateModifiers(comptime T: type, wnd: foundation.HWND, userdata: *const WindowData(T)) void {
+    _ = userdata;
+    _ = wnd;
+    const modifiers = blk: {
+        break :blk;
+    };
+    _ = modifiers;
+}
+
+fn threadEventTargetCallback(comptime T: type) fn () void {
+    _ = T;
+}
+
+pub const LazyMesageId = struct {
+    const invalid_id: u32 = 0x0;
+    id: std.atomic.Atomic(u32),
+    name: [:0]const u8,
+
+    pub fn init(name: [:0]const u8) LazyMesageId {
+        return LazyMesageId{
+            .id = std.atomic.Atomic(u32).init(invalid_id),
+            .name = name,
+        };
+    }
+
+    pub fn get(lmi: *LazyMesageId) u32 {
+        const id = lmi.id.load(.Unordered);
+        if (id != invalid_id) {
+            return id;
+        }
+        const new_id = wam.RegisterWindowMessageA(&lmi.name);
+        common.assert(
+            new_id != invalid_id,
+            "LazyMessageId.get: RegisterWindowMessageA returned zero",
+            .{},
+        );
+        lmi.id.store(new_id, .Unordered);
+
+        return new_id;
+    }
+};
+
+pub const EventLoopThreadExecutor = struct {
+    const Self = @This();
+
+    thread_id: u32,
+    target_window: foundation.HWND,
+
+    pub fn isInEventLoopThread(elt: Self) bool {
+        return elt.thread_id == win32.system.threading.GetCurrentThreadId();
+    }
+
+    pub fn executeInThread(elt: Self, f: *fn () void) void {
+        if (elt.isInEventLoopThread()) {
+            f();
+        } else {
+            const res = wam.PostMessageW(
+                elt.target_window,
+                exec_msg_id.get(),
+                @intFromPtr(f),
+                0,
+            );
+            common.assert(
+                res != z32.FALSE,
+                "EventLoopThreadExecutor.executeInThread: PostMessageW failed",
+                .{},
+            );
+        }
+    }
+};
 
 // Event Loop Runner
 

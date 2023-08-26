@@ -9,6 +9,7 @@ pub const DisplayHandle = display.DisplayHandle;
 const event_loop = @import("event_loop.zig");
 pub const EventLoop = event_loop.EventLoop;
 pub const EventLoopWindowTarget = event_loop.EventLoopWindowTarget;
+pub const EventLoopProxy = event_loop.EventLoopProxy;
 
 const icon = @import("icon.zig");
 pub const Icon = icon.WinIcon;
