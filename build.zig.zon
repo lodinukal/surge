@@ -1,5 +1,5 @@
 .{
-    .name = "hotaru",
+    .name = "engine",
     .version = "0.0.1",
     .dependencies = .{
         .win32 = .{
