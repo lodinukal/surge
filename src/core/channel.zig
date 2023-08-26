@@ -17,8 +17,12 @@ pub fn Channel(comptime T: type) type {
             };
         }
 
-        pub fn getSender() Sender(T) {
-            return Sender(T).init();
+        pub fn getSender(c: *Self) Sender(T) {
+            return Sender(T).init(c);
+        }
+
+        pub fn getReceiver(c: *Self) Receiver(T) {
+            return Receiver(T).init(c);
         }
     };
 }
