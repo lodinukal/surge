@@ -21,25 +21,25 @@ pub fn becomeDpiAware() void {
     };
     if (Static.enabled) return;
     Static.enabled = true;
-    if (windows_platform.lazySetProcessDpiAwarenessContext.get()) |setProcessDpiAwarenessContext| {
+    if (windows_platform.lazy_set_process_dpi_awareness_context.get()) |setProcessDpiAwarenessContext| {
         if (setProcessDpiAwarenessContext(hi_dpi.DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) == z32.FALSE) {
             setProcessDpiAwarenessContext(hi_dpi.DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE);
-        } else if (windows_platform.lazySetProcessDpiAwareness.get()) |setProcessDpiAwareness| {
+        } else if (windows_platform.lazy_set_process_dpi_awareness.get()) |setProcessDpiAwareness| {
             setProcessDpiAwareness(hi_dpi.PROCESS_PER_MONITOR_DPI_AWARE);
-        } else if (windows_platform.lazySetProcessDpiAware) |setProcessDpiAware| {
+        } else if (windows_platform.lazy_set_process_dpi_aware) |setProcessDpiAware| {
             setProcessDpiAware();
         }
     }
 }
 
 pub fn enableNonClientDpiScaling(wnd: foundation.HWND) void {
-    if (windows_platform.lazyEnableNonClientDpiScaling.get()) |enableNonClientDpiScalingWin| {
+    if (windows_platform.lazy_enable_non_client_dpi_scaling.get()) |enableNonClientDpiScalingWin| {
         enableNonClientDpiScalingWin(wnd);
     }
 }
 
 pub fn getMonitorDpi(monitor: gdi.HMONITOR) ?u32 {
-    if (windows_platform.lazyGetDpiForMonitor) |getDpiForMonitor| {
+    if (windows_platform.lazy_get_dpi_for_monitor) |getDpiForMonitor| {
         var xdpi: u32 = 0;
         var ydpi: u32 = 0;
         if (getDpiForMonitor(monitor, hi_dpi.MDT_EFFECTIVE_DPI, &xdpi, &ydpi) == foundation.S_OK) {
@@ -56,12 +56,12 @@ pub fn dpiToScaleFactor(indpi: u32) f64 {
 pub fn hwndDpi(wnd: foundation.HWND) u32 {
     const dc = gdi.GetDC(wnd);
     if (dc == null) unreachable;
-    if (windows_platform.lazyGetDpiForWindow.get()) |getDpiForWindow| {
+    if (windows_platform.lazy_get_dpi_for_window.get()) |getDpiForWindow| {
         switch (getDpiForWindow(wnd)) {
             0 => return BASE_DPI,
             else => |dpi| return dpi,
         }
-    } else if (windows_platform.lazyGetDpiForMonitor.get()) |getDpiForMonitor| {
+    } else if (windows_platform.lazy_get_dpi_for_monitor.get()) |getDpiForMonitor| {
         var monitor = gdi.MonitorFromWindow(wnd, gdi.MONITOR_DEFAULTTONEAREST);
         if (monitor == null) return BASE_DPI;
         var xdpi: u32 = 0;

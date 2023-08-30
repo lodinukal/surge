@@ -3,13 +3,14 @@ const std = @import("std");
 const platform = @import("./platform_impl/platform_impl.zig");
 const dpi = @import("dpi.zig");
 const keyboard = @import("keyboard.zig");
+const window = @import("window.zig");
 const theme = @import("theme.zig");
 
 pub fn Event(comptime T: type) type {
     return union(enum) {
         new_events: StartCause,
         window_event: struct {
-            window_id: platform.impl.WindowId,
+            window_id: window.WindowId,
             event: WindowEvent,
         },
         device_event: struct {
@@ -20,7 +21,6 @@ pub fn Event(comptime T: type) type {
         suspended,
         resumed,
         about_to_wait,
-        redraw_requested: platform.impl.WindowId,
         loop_exiting,
     };
 }
@@ -91,6 +91,7 @@ pub const WindowEvent = union(enum) {
     },
     theme_changed: theme.Theme,
     occluded: bool,
+    redraw_requested,
 };
 
 pub const DeviceId = struct {
@@ -145,47 +146,15 @@ pub const Modifiers = struct {
     state: keyboard.ModifiersState,
     pressed_mods: keyboard.ModifiersKeys,
 
+    pub fn fromModifiersState(state: keyboard.ModifiersState) Modifiers {
+        return Modifiers{
+            .state = state,
+            .pressed_mods = .{},
+        };
+    }
+
     pub fn getState(self: Modifiers) keyboard.ModifiersState {
         return self.state;
-    }
-
-    pub fn getLShift(self: Modifiers) bool {
-        return self.modState(keyboard.ModifiersKeys.lshift);
-    }
-
-    pub fn getRShift(self: Modifiers) bool {
-        return self.modState(keyboard.ModifiersKeys.rshift);
-    }
-
-    pub fn getLCtrl(self: Modifiers) bool {
-        return self.modState(keyboard.ModifiersKeys.lctrl);
-    }
-
-    pub fn getRCtrl(self: Modifiers) bool {
-        return self.modState(keyboard.ModifiersKeys.rctrl);
-    }
-
-    pub fn getLAlt(self: Modifiers) bool {
-        return self.modState(keyboard.ModifiersKeys.lalt);
-    }
-
-    pub fn getRAlt(self: Modifiers) bool {
-        return self.modState(keyboard.ModifiersKeys.ralt);
-    }
-
-    pub fn getLSuper(self: Modifiers) bool {
-        return self.modState(keyboard.ModifiersKeys.lsuper);
-    }
-
-    pub fn getRSuper(self: Modifiers) bool {
-        return self.modState(keyboard.ModifiersKeys.rsuper);
-    }
-
-    fn modState(self: Modifiers, mod: keyboard.ModifiersKeys) keyboard.ModifiersKeyState {
-        return if ((self.pressed_mods & mod) != 0)
-            keyboard.ModifiersKeyState.pressed
-        else
-            keyboard.ModifiersKeyState.unknown;
     }
 };
 

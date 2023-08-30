@@ -48,6 +48,12 @@ pub const Rect3f = rect.Rect3f;
 const lazy = @import("lazy.zig");
 pub const Lazy = lazy.Lazy;
 
+const _rc = @import("rc.zig");
+pub const Rc = _rc.Rc;
+pub const Arc = _rc.Arc;
+pub const rc = _rc.rc;
+pub const arc = _rc.arc;
+
 pub inline fn clamp(x: anytype, min: @TypeOf(x), max: @TypeOf(x)) @TypeOf(x) {
     return @min(@max(x, min), max);
 }

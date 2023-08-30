@@ -18,7 +18,11 @@ const window = @import("window.zig");
 pub const PlatformSpecificWindowAttributes = window.PlatformSpecificWindowAttributes;
 pub const Window = window.Window;
 
+const raw_input = @import("raw_input.zig");
+
 const common = @import("../../../core/common.zig");
+
+const event = @import("../../event.zig");
 
 extern const __ImageBase: win32.system.system_services.IMAGE_DOS_HEADER;
 
@@ -76,37 +80,37 @@ const SetProcessDpiAware = *fn () callconv(.Win64) foundation.BOOL;
 
 const EnableNonClientDpiScaling = *fn (hwnd: foundation.HWND) callconv(.Win64) foundation.BOOL;
 
-pub var lazyGetDpiForMonitor = getDllFunction(
+pub var lazy_get_dpi_for_monitor = getDllFunction(
     GetDpiForMonitor,
     "shcore.dll",
     "GetDpiForMonitor",
 ){};
-pub var lazyGetDpiForWindow = getDllFunction(
+pub var lazy_get_dpi_for_window = getDllFunction(
     GetDpiForWindow,
     "user32.dll",
     "GetDpiForWindow",
 ){};
-pub var lazyAdjustWindowRectExForDpi = getDllFunction(
+pub var lazy_adjust_window_rect_ex_for_dpi = getDllFunction(
     AdjustWindowRectExForDpi,
     "user32.dll",
     "AdjustWindowRectExForDpi",
 ){};
-pub var lazySetProcessDpiAwarenessContext = getDllFunction(
+pub var lazy_set_process_dpi_awareness_context = getDllFunction(
     SetProcessDpiAwarenessContext,
     "user32.dll",
     "SetProcessDpiAwarenessContext",
 ){};
-pub var lazySetProcessDpiAwareness = getDllFunction(
+pub var lazy_set_process_dpi_awareness = getDllFunction(
     SetProcessDpiAwareness,
     "shcore.dll",
     "SetProcessDpiAwareness",
 ){};
-pub var lazySetProcessDpiAware = getDllFunction(
+pub var lazy_set_process_dpi_aware = getDllFunction(
     SetProcessDpiAware,
     "user32.dll",
     "SetProcessDpiAware",
 ){};
-pub var lazyEnableNonClientDpiScaling = getDllFunction(
+pub var lazy_enable_non_client_dpi_scaling = getDllFunction(
     EnableNonClientDpiScaling,
     "user32.dll",
     "EnableNonClientDpiScaling",
@@ -120,12 +124,44 @@ pub const WindowId = struct {
     }
 };
 
+pub inline fn getPrimaryLangId(lang: u16) u16 {
+    return lang & 0x3FF;
+}
+
+pub inline fn loword(l: u32) u16 {
+    return @bitCast(l & 0xFFFF);
+}
+
+pub inline fn hiword(l: u32) u16 {
+    return @bitCast((l >> 16) & 0xFFFF);
+}
+
 pub fn getWindowLong(wnd: foundation.HWND, nindex: wam.WINDOW_LONG_PTR_INDEX) isize {
     return wam.GetWindowLongPtrW(wnd, nindex);
 }
 
 pub fn setWindowLong(wnd: foundation.HWND, nindex: wam.WINDOW_LONG_PTR_INDEX, dwnew_long: isize) isize {
     return wam.SetWindowLongPtrW(wnd, nindex, dwnew_long);
+}
+
+pub const DeviceId = struct {
+    id: u32,
+
+    pub fn dummy() DeviceId {
+        return DeviceId{ .id = 0 };
+    }
+
+    pub fn getPersistentId(self: *const DeviceId, allocator: std.mem.Allocator) ?[]u8 {
+        if (self.id != 0) {
+            raw_input.getRawInputDeviceName(allocator, @ptrFromInt(self.id));
+        }
+        return null;
+    }
+};
+
+pub const root_device_id = event.DeviceId{ .platform_device_id = .{ .id = 0 } };
+pub fn wrapDeviceId(id: u32) event.DeviceId {
+    return event.DeviceId{ .platform_device_id = .{ .id = id } };
 }
 
 test "ref" {

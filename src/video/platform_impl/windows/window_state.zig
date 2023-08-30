@@ -372,7 +372,7 @@ pub const WindowFlags = packed struct(u32) {
 
         const b_menu = wam.GetMenu(wnd) != 0;
         var ran = false;
-        if (windows_platform.lazyGetDpiForWindow.get()) |getDpiForWindow| {
+        if (windows_platform.lazy_get_dpi_for_window.get()) |getDpiForWindow| {
             if (windows_platform.AdjustWindowRectExForDpi.get()) |adjustWindowRectExForDpi| {
                 adjustWindowRectExForDpi(rect, style, b_menu, style_ex, getDpiForWindow(wnd));
                 ran = true;

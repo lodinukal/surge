@@ -159,7 +159,7 @@ pub const DisplayHandle = struct {
     }
 
     pub inline fn getDpi(handle: DisplayHandle) ?u32 {
-        if (windows_platform.lazyGetDpiForMonitor.get()) |getDpiForMonitor| {
+        if (windows_platform.lazy_get_dpi_for_monitor.get()) |getDpiForMonitor| {
             var x: u32 = 0;
             var y: u32 = 0;
             if (getDpiForMonitor(

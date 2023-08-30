@@ -11,7 +11,6 @@ const windows_util = @import("util.zig");
 const win32 = @import("win32");
 const channel = @import("../../../core/channel.zig");
 const common = @import("../../../core/common.zig");
-const rc = @import("../../../core/rc.zig");
 
 const windows_window_state = @import("window_state.zig");
 
@@ -22,12 +21,16 @@ const dpi = @import("../../dpi.zig");
 const event = @import("../../event.zig");
 const event_loop = @import("../../event_loop.zig");
 const icon = @import("../../icon.zig");
+const keyboard = @import("../../keyboard.zig");
 const window = @import("../../window.zig");
 
 const dwm = win32.graphics.dwm;
 const gdi = win32.graphics.gdi;
 const foundation = win32.foundation;
-const pointer = win32.ui.input.pointer;
+const hid = win32.devices.human_interface_device;
+const input = win32.ui.input;
+const kam = win32.ui.input.keyboard_and_mouse;
+const pointer = input.pointer;
 const wam = win32.ui.windows_and_messaging;
 const z32 = win32.zig;
 
@@ -448,11 +451,11 @@ pub fn EventLoop(comptime T: type) type {
 
 pub const EventLoopErrorTag = enum { ok, not_supported, os, already_running, recreation_attempt, exit_failure };
 pub const EventLoopResult = union(EventLoopErrorTag) {
-    ok: void,
-    not_supported: void,
-    os: void,
-    already_running: void,
-    recreation_attempt: void,
+    ok,
+    not_supported,
+    os,
+    already_running,
+    recreation_attempt,
     exit_failure: i32,
 };
 
@@ -649,16 +652,200 @@ fn normalisePointerPressure(pressure: u32) ?event.Force {
 }
 
 fn updateModifiers(comptime T: type, wnd: foundation.HWND, userdata: *const WindowData(T)) void {
-    _ = userdata;
-    _ = wnd;
-    const modifiers = blk: {
-        break :blk;
-    };
-    _ = modifiers;
+    const modifiers = getModifiers();
+
+    var window_state = userdata.window_state;
+    var unlocked = false;
+    userdata.window_state_mutex.lock();
+    defer if (unlocked) userdata.window_state_mutex.unlock();
+
+    if (!std.mem.eql(window_state.modifiers_state, modifiers)) {
+        window_state.modifiers_state = modifiers;
+        userdata.window_state_mutex.unlock();
+        unlocked = true;
+
+        userdata.sendEvent(WindowData(T).EventType{ .window_event = .{
+            .window_id = window.WindowId{
+                .platform_window_id = .{
+                    .hwnd = wnd,
+                },
+            },
+            .event = event.WindowEvent{ .modifiers_changed = event.Modifiers.fromModifiersState(modifiers) },
+        } });
+    }
+}
+
+fn getModifiers() keyboard.ModifiersState {
+    var modifiers = keyboard.ModifiersState{};
+    modifiers.shift = isKeyDown(kam.VK_SHIFT);
+    modifiers.ctrl = isKeyDown(kam.VK_CONTROL);
+    modifiers.alt = isKeyDown(kam.VK_MENU);
+    modifiers.super = isKeyDown(kam.VK_LWIN) || isKeyDown(kam.VK_RWIN);
+}
+
+fn isKeyDown(k: kam.VIRTUAL_KEY) bool {
+    return (kam.GetAsyncKeyState(k) & (1 << 15)) != 0;
+}
+
+fn gainActiveFocus(comptime T: type, wnd: foundation.HWND, userdata: *const WindowData(T)) void {
+    updateModifiers(T, wnd, userdata);
+
+    userdata.sendEvent(WindowData(T).EventType{ .window_event = .{
+        .window_id = window.WindowId{
+            .platform_window_id = .{
+                .hwnd = wnd,
+            },
+        },
+        .event = event.WindowEvent{ .focused = true },
+    } });
+}
+
+fn loseActiveFocus(comptime T: type, wnd: foundation.HWND, userdata: *const WindowData(T)) void {
+    {
+        var window_state = userdata.window_state;
+        userdata.window_state_mutex.lock();
+        defer userdata.window_state_mutex.unlock();
+
+        window_state.modifiers_state = keyboard.ModifiersState{};
+    }
+
+    userdata.sendEvent(WindowData(T).EventType{ .window_event = .{
+        .window_id = window.WindowId{
+            .platform_window_id = .{
+                .hwnd = wnd,
+            },
+        },
+        .event = event.WindowEvent{ .modifiers_changed = event.Modifiers.fromModifiersState(
+            keyboard.ModifiersState{},
+        ) },
+    } });
+
+    userdata.sendEvent(WindowData(T).EventType{ .window_event = .{
+        .window_id = window.WindowId{
+            .platform_window_id = .{
+                .hwnd = wnd,
+            },
+        },
+        .event = event.WindowEvent{ .focused = false },
+    } });
 }
 
 fn threadEventTargetCallback(comptime T: type) fn () void {
-    _ = T;
+    return struct {
+        pub fn callback(
+            wnd: foundation.HWND,
+            msg: u32,
+            wparam: foundation.WPARAM,
+            lparam: foundation.LPARAM,
+        ) callconv(.Win64) foundation.LRESULT {
+            const userdata_ptr: ?*ThreadMsgTargetData(T) = @ptrFromInt(
+                windows_platform.getWindowLong(wnd, wam.GWL_USERDATA),
+            );
+            if (userdata_ptr == null) {
+                return wam.DefWindowProcW(wnd, msg, wparam, lparam);
+            }
+            const userdata = userdata_ptr.?;
+
+            if (msg != wam.WM_PAINT) {
+                gdi.RedrawWindow(wnd, null, null, gdi.RDW_INTERNALPAINT);
+            }
+
+            var userdata_removed = false;
+            const result = switch (msg) {
+                wam.WM_NCDESTROY => blk: {
+                    windows_platform.setWindowLong(wnd, wam.GWL_USERDATA, 0);
+                    userdata_removed = true;
+                    break :blk 0;
+                },
+                wam.WM_PAINT => blk: {
+                    gdi.ValidateRect(wnd, null);
+                    break :blk wam.DefWindowProcW(wnd, msg, wparam, lparam);
+                },
+                wam.WM_INPUT_DEVICE_CHANGE => blk: {
+                    const send_event = switch (wparam) {
+                        wam.GIDC_ARRIVAL => event.DeviceEvent{.added},
+                        wam.GIDC_REMOVAL => event.DeviceEvent{.removed},
+                        else => unreachable,
+                    };
+                    userdata.sendEvent(WindowData(T).EventType{ .device_event = .{
+                        .device_id = windows_platform.wrapDeviceId(@intCast(lparam)),
+                        .event = send_event,
+                    } });
+                    break :blk 0;
+                },
+                wam.WM_INPUT => blk: {
+                    if (windows_raw_input.getRawInputData(@bitCast(lparam))) |data| {
+                        handleRawInput(T, userdata, data);
+                    }
+                    break :blk wam.DefWindowProcW(wnd, msg, wparam, lparam);
+                },
+            };
+            _ = result;
+        }
+    }.callback;
+}
+
+pub fn handleRawInput(comptime T: type, userdata: *ThreadMsgTargetData(T), data: input.RAWINPUT) void {
+    const device_id = windows_platform.wrapDeviceId(@intFromPtr(data.header.hDevice.?));
+    if (data.header.dwType == input.RIM_TYPEMOUSE) {
+        const mouse = data.data.mouse;
+
+        if ((@as(u32, @intCast(mouse.usFlags)) & hid.MOUSE_MOVE_RELATIVE) != 0) {
+            const x: f64 = @floatFromInt(mouse.lLastX);
+            const y: f64 = @floatFromInt(mouse.lLastY);
+
+            if (x != 0.0) {
+                userdata.sendEvent(WindowData(T).EventType{ .device_event = .{
+                    .device_id = device_id,
+                    .event = event.DeviceEvent{ .motion = .{ .axis = 0, .value = x } },
+                } });
+            }
+
+            if (y != 0.0) {
+                userdata.sendEvent(WindowData(T).EventType{ .device_event = .{
+                    .device_id = device_id,
+                    .event = event.DeviceEvent{ .motion = .{ .axis = 1, .value = y } },
+                } });
+            }
+
+            if (x != 0.0 or y != 0.0) {
+                userdata.sendEvent(WindowData(T).EventType{ .device_event = .{
+                    .device_id = device_id,
+                    .event = event.DeviceEvent{ .mouse_motion = .{ .delta = .{ x, y } } },
+                } });
+            }
+        }
+
+        const button_flags = mouse.Anonymous.Anonymous.usButtonFlags;
+
+        if ((button_flags & wam.RI_MOUSE_WHEEL) != 0) {
+            const button_data = mouse.Anonymous.Anonymous.usButtonData;
+            const delta = @as(
+                f32,
+                @as(i16, button_data),
+            ) / @as(
+                f32,
+                @floatFromInt(wam.WHEEL_DELTA),
+            );
+            userdata.sendEvent(WindowData(T).EventType{ .device_event = .{
+                .device_id = device_id,
+                .event = event.DeviceEvent{ .mouse_wheel = .{
+                    .delta = event.MouseScrollDelta{ .line_delta = .{ 0.0, delta } },
+                } },
+            } });
+        }
+
+        const button_state = windows_raw_input.getRawMouseButtonState(@intCast(button_flags));
+        for (button_state, 0..) |opt_state, index| {
+            if (opt_state) |state| {
+                const button: u32 = @intCast(index + 1);
+                userdata.sendEvent(WindowData(T).EventType{ .device_event = .{
+                    .device_id = device_id,
+                    .event = event.DeviceEvent{ .button = .{ .button = button, .state = state } },
+                } });
+            }
+        }
+    }
 }
 
 pub const LazyMesageId = struct {
@@ -701,11 +888,11 @@ fn EventHandler(comptime T: type) type {
 }
 
 pub fn eventLoopRunnerShared(comptime T: type, allocator: std.mem.Allocator, value: foundation.HWND) EventLoopRunnerShared(T) {
-    return rc.rc(allocator, EventLoopRunner(T).init(allocator, value));
+    return common.rc(allocator, EventLoopRunner(T).init(allocator, value));
 }
 
 pub fn EventLoopRunnerShared(comptime T: type) type {
-    return rc.Rc(EventLoopRunner(T));
+    return common.Rc(EventLoopRunner(T));
 }
 
 pub fn EventLoopRunner(comptime T: type) type {
