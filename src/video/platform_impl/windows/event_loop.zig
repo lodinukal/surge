@@ -507,6 +507,35 @@ pub fn EventLoopWindowTarget(comptime T: type) type {
     };
 }
 
+pub const EventLoopThreadExecutor = struct {
+    const Self = @This();
+
+    thread_id: u32,
+    target_window: foundation.HWND,
+
+    pub fn isInEventLoopThread(elt: Self) bool {
+        return elt.thread_id == win32.system.threading.GetCurrentThreadId();
+    }
+
+    pub fn executeInThread(elt: Self, f: *fn () void) void {
+        if (elt.isInEventLoopThread()) {
+            f();
+        } else {
+            const res = wam.PostMessageW(
+                elt.target_window,
+                exec_msg_id.get(),
+                @intFromPtr(f),
+                0,
+            );
+            common.assert(
+                res != z32.FALSE,
+                "EventLoopThreadExecutor.executeInThread: PostMessageW failed",
+                .{},
+            );
+        }
+    }
+};
+
 pub fn EventLoopProxy(comptime T: type) type {
     return struct {
         const Self = @This();
@@ -658,35 +687,6 @@ pub const LazyMesageId = struct {
         lmi.id.store(new_id, .Unordered);
 
         return new_id;
-    }
-};
-
-pub const EventLoopThreadExecutor = struct {
-    const Self = @This();
-
-    thread_id: u32,
-    target_window: foundation.HWND,
-
-    pub fn isInEventLoopThread(elt: Self) bool {
-        return elt.thread_id == win32.system.threading.GetCurrentThreadId();
-    }
-
-    pub fn executeInThread(elt: Self, f: *fn () void) void {
-        if (elt.isInEventLoopThread()) {
-            f();
-        } else {
-            const res = wam.PostMessageW(
-                elt.target_window,
-                exec_msg_id.get(),
-                @intFromPtr(f),
-                0,
-            );
-            common.assert(
-                res != z32.FALSE,
-                "EventLoopThreadExecutor.executeInThread: PostMessageW failed",
-                .{},
-            );
-        }
     }
 };
 
