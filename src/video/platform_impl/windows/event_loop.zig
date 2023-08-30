@@ -3,6 +3,7 @@ const std = @import("std");
 const windows_platform = @import("windows.zig");
 const windows_display = @import("display.zig");
 const windows_dpi = @import("dpi.zig");
+const windows_keyboard = @import("keyboard.zig");
 const windows_ime = @import("ime.zig");
 const windows_raw_input = @import("raw_input.zig");
 const windows_theme = @import("theme.zig");
@@ -779,8 +780,27 @@ fn threadEventTargetCallback(comptime T: type) fn () void {
                     }
                     break :blk wam.DefWindowProcW(wnd, msg, wparam, lparam);
                 },
+                else => blk: {
+                    if (msg == user_event_msg_id.get()) {
+                        if (try userdata.user_event_propagator.receive()) |e| {
+                            userdata.sendEvent(event.Event(T){ .user_event = e });
+                        }
+                        break :blk 0;
+                    } else if (msg == exec_msg_id.get()) {
+                        var fun: *fn () void = @ptrCast(wparam);
+                        fun();
+                        break :blk 0;
+                    }
+                    break :blk wam.DefWindowProcW(wnd, msg, wparam, lparam);
+                },
             };
-            _ = result;
+
+            if (userdata_removed) {
+                userdata.deinit();
+                userdata.allocator.destroy(userdata);
+            }
+
+            return result;
         }
     }.callback;
 }
@@ -845,6 +865,64 @@ pub fn handleRawInput(comptime T: type, userdata: *ThreadMsgTargetData(T), data:
                 } });
             }
         }
+    } else if (data.header.dwType == input.RIM_TYPEKEYBOARD) {
+        const this_keyboard = data.data.keyboard;
+
+        const pressed = this_keyboard.Message == wam.WM_KEYDOWN or this_keyboard.Message == wam.WM_SYSKEYDOWN;
+        const released = this_keyboard.Message == wam.WM_KEYUP or this_keyboard.Message == wam.WM_SYSKEYUP;
+
+        if (!pressed or !released) {
+            return;
+        }
+        const state = if (pressed) event.ElementState.pressed else event.ElementState.released;
+        const extension = blk: {
+            if (this_keyboard.Flags & wam.RI_KEY_E0) {
+                break :blk 0xE000;
+            } else if (this_keyboard.Flags & wam.RI_KEY_E1) {
+                break :blk 0xE100;
+            } else {
+                break :blk 0x0000;
+            }
+        };
+        const scancode: u16 = if (this_keyboard.MakeCode == 0)
+            @intCast(kam.MapVirtualKeyW(this_keyboard.VKey, wam.MAPVK_VK_TO_VSC_EX))
+        else
+            (this_keyboard.MakeCode | extension);
+        if (scancode == 0xE11D or scancode == 0xE02A) {
+            return;
+        }
+        const code = if (this_keyboard.VKey == kam.VK_NUMLOCK)
+            keyboard.KeyCode{.num_lock}
+        else
+            windows_keyboard.fromScanCode(scancode);
+
+        if (this_keyboard.VKey == kam.VK_SHIFT) {
+            switch (code) {
+                .numpad_decimal,
+                .numpad_0,
+                .numpad_1,
+                .numpad_2,
+                .numpad_3,
+                .numpad_4,
+                .numpad_5,
+                .numpad_6,
+                .numpad_7,
+                .numpad_8,
+                .numpad_9,
+                => {
+                    return;
+                },
+                else => {},
+            }
+        }
+
+        userdata.sendEvent(WindowData(T).EventType{ .device_event = .{
+            .device_id = device_id,
+            .event = event.DeviceEvent{ .key = .{
+                .physical_key = code,
+                .state = state,
+            } },
+        } });
     }
 }
 
