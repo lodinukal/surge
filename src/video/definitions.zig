@@ -248,8 +248,6 @@ pub const CursorShape = enum {
     hand_cursor,
 };
 
-pub const Cursor = *anyopaque;
-
 pub const VideoMode = struct {
     width: i32,
     height: i32,
