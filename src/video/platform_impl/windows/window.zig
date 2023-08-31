@@ -38,11 +38,14 @@ pub const Window = struct {
     wnd: foundation.HWND,
     window_state: windows_window_state.WindowState,
     window_state_mutex: std.Thread.Mutex = std.Thread.Mutex{},
+    thread_executor: windows_event_loop.EventLoopThreadExecutor,
 
     pub fn init(
+        allocator: std.mem.Allocator,
+        comptime T: type,
+        event_loop: *windows_event_loop.EventLoopWindowTarget(T),
         window_attributes: window.WindowAttributes,
         platform_attributes: PlatformSpecificWindowAttributes,
-        allocator: std.mem.Allocator,
     ) !Window {
         const title = std.unicode.utf8ToUtf16LeWithNull(allocator, window_attributes.title);
         const class_name = std.unicode.utf8ToUtf16LeWithNull(allocator, platform_attributes.class_name);
@@ -73,6 +76,7 @@ pub const Window = struct {
         const ex_style = styles.@"1";
 
         var data = WindowInitData{
+            .event_loop = event_loop,
             .attributes = window_attributes,
             .platform_attributes = platform_attributes,
             .window_flags = window_flags,
@@ -181,87 +185,95 @@ pub const Window = struct {
     }
 };
 
-const WindowInitData = struct {
-    attributes: window.WindowAttributes,
-    platform_attributes: PlatformSpecificWindowAttributes,
-    window_flags: windows_window_state.WindowFlags,
-    window: ?Window,
-    allocator: std.mem.Allocator,
+pub fn WindowInitData(comptime T: type) type {
+    return struct {
+        const Self = @This();
 
-    pub fn createWindow(wid: *const WindowInitData, wnd: foundation.HWND) Window {
-        const digitiser: u32 = wam.GetSystemMetrics(wam.SM_DIGITIZER);
-        if (digitiser & wam.NID_READY != 0) {
-            wam.RegisterTouchWindow(wnd, wam.TWF_WANTPALM);
-        }
+        event_loop: *windows_event_loop.EventLoopWindowTarget(T),
+        attributes: window.WindowAttributes,
+        platform_attributes: PlatformSpecificWindowAttributes,
+        window_flags: windows_window_state.WindowFlags,
+        window: ?Window,
+        allocator: std.mem.Allocator,
 
-        const wnd_dpi = windows_dpi.hwndDpi(wnd);
-        const scale_factor = windows_dpi.dpiToScaleFactor(wnd_dpi);
-
-        const current_theme = windows_theme.tryTheme(wnd, wid.attributes.preferred_theme);
-
-        const window_state = blk: {
-            const in_state = windows_window_state.WindowState.init(
-                &wid.attributes,
-                scale_factor,
-                current_theme,
-                wid.attributes.preferred_theme,
-            );
-            in_state.setWindowFlags(wnd, wid, struct {
-                pub fn set(passed_wid: *WindowInitData, wf: *windows_window_state.WindowFlags) void {
-                    wf.* = passed_wid.window_flags;
-                }
-            }.set);
-            break :blk in_state;
-        };
-
-        windows_dpi.enableNonClientDpiScaling(wnd);
-        windows_ime.ImeContext.setImeAllowed(wnd, false);
-        return Window{
-            .allocator = wid.allocator,
-            .wnd = wnd,
-            .window_state = window_state,
-        };
-    }
-
-    pub fn createWindowData(wid: *const WindowInitData, wnd: *const Window) windows_event_loop.WindowData {
-        _ = wid;
-        return windows_event_loop.WindowData{
-            .window_state = wnd.window_state,
-        };
-    }
-
-    pub fn onNcCreate(wid: *WindowInitData, wnd: foundation.HWND) *windows_event_loop.WindowData {
-        const created_window = wid.createWindow(wnd);
-        const created_window_data = wid.createWindowData(&created_window);
-        wid.window = created_window;
-        const userdata = wid.allocator.create(windows_event_loop.WindowData);
-        userdata.* = created_window_data;
-        return userdata;
-    }
-
-    pub fn onCreate(wid: *WindowInitData) void {
-        const win = wid.window;
-        common.assert(win != null, "Window does not exist\n", .{});
-
-        if (wid.attributes.transparent and !wid.platform_attributes.no_redirection_bitmap) {
-            const region = gdi.CreateRectRgn(0, 0, -1, -1);
-            const bb = dwm.DWM_BLURBEHIND{
-                .dwFlags = dwm.DWM_BB_ENABLE | dwm.DWM_BB_BLURREGION,
-                .fEnable = true,
-                .hRgnBlur = region,
-                .fTransitionOnMaximized = z32.FALSE,
-            };
-            const hres = dwm.DwmEnableBlurBehindWindow(win.?.wnd, &bb);
-            if (hres < 0) {
-                common.err("Setting transparent window is failed, HRESULT: 0x{:X}", .{hres});
+        pub fn createWindow(wid: *const Self, wnd: foundation.HWND) Window {
+            const digitiser: u32 = wam.GetSystemMetrics(wam.SM_DIGITIZER);
+            if (digitiser & wam.NID_READY != 0) {
+                wam.RegisterTouchWindow(wnd, wam.TWF_WANTPALM);
             }
-            gdi.DeleteObject(region);
+
+            const wnd_dpi = windows_dpi.hwndDpi(wnd);
+            const scale_factor = windows_dpi.dpiToScaleFactor(wnd_dpi);
+
+            const current_theme = windows_theme.tryTheme(wnd, wid.attributes.preferred_theme);
+
+            const window_state = blk: {
+                const in_state = windows_window_state.WindowState.init(
+                    &wid.attributes,
+                    scale_factor,
+                    current_theme,
+                    wid.attributes.preferred_theme,
+                );
+                in_state.setWindowFlags(wnd, wid, struct {
+                    pub fn set(passed_wid: *WindowInitData, wf: *windows_window_state.WindowFlags) void {
+                        wf.* = passed_wid.window_flags;
+                    }
+                }.set);
+                break :blk in_state;
+            };
+
+            windows_dpi.enableNonClientDpiScaling(wnd);
+            windows_ime.ImeContext.setImeAllowed(wnd, false);
+            return Window{
+                .allocator = wid.allocator,
+                .wnd = wnd,
+                .window_state = window_state,
+            };
         }
 
-        // TODO: Set properties of windows
-        //   win.?.(propset)
-    }
-};
+        pub fn createWindowData(wid: *const Self, wnd: *const Window) windows_event_loop.WindowData(T) {
+            return windows_event_loop.WindowData(T){
+                .allocator = wid.allocator,
+                .window_state = &wnd.window_state,
+                .event_loop_runner = wid.event_loop.runner_shared.retain(),
+                .userdata_removed = false,
+                .recurse_depth = 0,
+            };
+        }
+
+        pub fn onNcCreate(wid: *Self, wnd: foundation.HWND) ?*windows_event_loop.WindowData(T) {
+            const created_window = wid.createWindow(wnd);
+            const created_window_data = wid.createWindowData(&created_window);
+            wid.window = created_window;
+            const userdata = wid.allocator.create(windows_event_loop.WindowData(T));
+            userdata.* = created_window_data;
+            return userdata;
+        }
+
+        pub fn onCreate(wid: *Self) void {
+            const win = wid.window;
+            common.assert(win != null, "Window does not exist\n", .{});
+
+            if (wid.attributes.transparent and !wid.platform_attributes.no_redirection_bitmap) {
+                const region = gdi.CreateRectRgn(0, 0, -1, -1);
+                const bb = dwm.DWM_BLURBEHIND{
+                    .dwFlags = dwm.DWM_BB_ENABLE | dwm.DWM_BB_BLURREGION,
+                    .fEnable = true,
+                    .hRgnBlur = region,
+                    .fTransitionOnMaximized = z32.FALSE,
+                };
+                const hres = dwm.DwmEnableBlurBehindWindow(win.?.wnd, &bb);
+                if (hres < 0) {
+                    common.err("Setting transparent window is failed, HRESULT: 0x{:X}", .{hres});
+                }
+                gdi.DeleteObject(region);
+            }
+
+            // TODO: Set properties of windows
+            //   win.?.(propset)
+        }
+    };
+}
 
 pub fn registerWindowClass(class_name: [*:0]const u16) void {
     const class = wam.WNDCLASSEXW{

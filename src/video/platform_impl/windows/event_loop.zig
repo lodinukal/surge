@@ -8,12 +8,12 @@ const windows_ime = @import("ime.zig");
 const windows_raw_input = @import("raw_input.zig");
 const windows_theme = @import("theme.zig");
 const windows_util = @import("util.zig");
+const windows_window = @import("window.zig");
+const windows_window_state = @import("window_state.zig");
 
 const win32 = @import("win32");
 const channel = @import("../../../core/channel.zig");
 const common = @import("../../../core/common.zig");
-
-const windows_window_state = @import("window_state.zig");
 
 const pump_events = @import("../pump_events.zig");
 
@@ -90,9 +90,16 @@ pub fn WindowData(comptime T: type) type {
         const Self = @This();
         const EventType = event.Event(T);
 
+        allocator: std.mem.Allocator,
         window_state: *windows_window_state.WindowState,
         window_state_mutex: std.Thread.Mutex = std.Thread.Mutex{},
         event_loop_runner: EventLoopRunnerShared(T),
+        userdata_removed: bool,
+        recurse_depth: u32,
+
+        pub fn deinit(wd: *Self) void {
+            wd.event_loop_runner.release();
+        }
 
         pub fn sendEvent(wd: *Self, e: EventType) !void {
             wd.event_loop_runner.retain();
@@ -118,7 +125,11 @@ fn ThreadMsgTargetData(comptime T: type) type {
         event_loop_runner: EventLoopRunnerShared(T),
         user_event_propagator: channel.Receiver(T),
 
-        pub fn init(allocator: std.mem.Allocator, event_loop_runner: EventLoopRunnerShared(T), user_event_propagator: channel.Receiver(T)) Self {
+        pub fn init(
+            allocator: std.mem.Allocator,
+            event_loop_runner: EventLoopRunnerShared(T),
+            user_event_propagator: channel.Receiver(T),
+        ) Self {
             event_loop_runner.retain();
             return Self{
                 .allocator = allocator,
@@ -731,7 +742,92 @@ fn loseActiveFocus(comptime T: type, wnd: foundation.HWND, userdata: *const Wind
     } });
 }
 
-fn threadEventTargetCallback(comptime T: type) fn () void {
+fn publicWindowCallback(comptime T: type) wam.WNDPROC {
+    return struct {
+        pub fn callback(
+            wnd: foundation.HWND,
+            msg: u32,
+            wparam: foundation.WPARAM,
+            lparam: foundation.LPARAM,
+        ) callconv(.Win64) foundation.LRESULT {
+            const userdata = windows_platform.getWindowLong(wnd, wam.GWL_USERDATA);
+
+            const userdata_ptr: *WindowData(T) = userblk: {
+                if (userdata == 0 and msg == wam.WM_NCCREATE) {
+                    const createstruct: *wam.CREATESTRUCTW = @ptrCast(lparam);
+                    const initdata: ?*windows_window.WindowInitData(T) = @ptrCast(createstruct.lpCreateParams);
+
+                    const result = if (initdata.?.onNcCreate(wnd)) |new_userdata| blk: {
+                        windows_platform.setWindowLong(
+                            wnd,
+                            wam.GWL_USERDATA,
+                            @ptrFromInt(new_userdata),
+                        );
+                        break :blk wam.DefWindowProcW(wnd, msg, wparam, lparam);
+                    } else -1;
+                    return result;
+                }
+                if (userdata == 0 and msg == wam.WM_CREATE) return -1;
+                if (msg == wam.WM_CREATE) {
+                    const createstruct: *wam.CREATESTRUCTW = @ptrCast(lparam);
+                    const initdata: ?*windows_window.WindowInitData(T) = @ptrCast(createstruct.lpCreateParams);
+
+                    initdata.onCreate();
+                    return wam.DefWindowProcW(wnd, msg, wparam, lparam);
+                }
+                if (userdata == 0) {
+                    return wam.DefWindowProcW(wnd, msg, wparam, lparam);
+                }
+                break :userblk @ptrFromInt(userdata);
+            };
+
+            userdata_ptr.recurse_depth += 1;
+            const result = publicWindowCallbackInner(
+                T,
+                wnd,
+                msg,
+                wparam,
+                lparam,
+                userdata_ptr,
+            );
+            _ = result;
+            const userdata_removed = userdata_ptr.userdata_removed;
+            const recurse_depth = userdata_ptr.recurse_depth - 1;
+            userdata_ptr.recurse_depth = recurse_depth;
+
+            if (userdata_removed and recurse_depth == 0) {
+                userdata_ptr.deinit();
+                userdata_ptr.allocator.destroy(userdata_ptr);
+            }
+        }
+    }.callback;
+}
+
+fn publicWindowCallbackInner(
+    comptime T: type,
+    wnd: foundation.HWND,
+    msg: u32,
+    wparam: foundation.WPARAM,
+    lparam: foundation.LPARAM,
+    userdata: *WindowData(T),
+) foundation.LRESULT {
+    _ = lparam;
+    var result = ProcResult{ .def_window_proc = wparam };
+    {
+        switch (msg) {
+            wam.WM_KEYDOWN, wam.WM_SYSKEYDOWN, wam.WM_KEYUP, wam.WM_SYSKEYUP => {
+                updateModifiers(T, wnd, userdata);
+                result = ProcResult{ .value = 0 };
+            },
+            else => {},
+        }
+    }
+    {
+        // TODO: Keyevents
+    }
+}
+
+fn threadEventTargetCallback(comptime T: type) wam.WNDPROC {
     return struct {
         pub fn callback(
             wnd: foundation.HWND,
