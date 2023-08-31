@@ -4,7 +4,7 @@ an engine serving as a kind of intermediary between something like raylib and un
 
 ## roadmap
 
-- [ ] video/platform modules (based off of SDL)
+- [ ] video/platform modules (based off of GLFW)
   - [ ] win32
   - [ ] ~~linux~~
   - [ ] ~~macos~~
