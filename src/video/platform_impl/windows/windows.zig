@@ -2,21 +2,8 @@ const std = @import("std");
 
 const win32 = @import("win32");
 
-const display = @import("display.zig");
-pub const VideoMode = display.VideoMode;
-pub const DisplayHandle = display.DisplayHandle;
-
-const event_loop = @import("event_loop.zig");
-pub const EventLoop = event_loop.EventLoop;
-pub const EventLoopWindowTarget = event_loop.EventLoopWindowTarget;
-pub const EventLoopProxy = event_loop.EventLoopProxy;
-
 const icon = @import("icon.zig");
 pub const Icon = icon.WinIcon;
-
-const window = @import("window.zig");
-pub const PlatformSpecificWindowAttributes = window.PlatformSpecificWindowAttributes;
-pub const Window = window.Window;
 
 const common = @import("../../../core/common.zig");
 
@@ -130,5 +117,4 @@ pub fn setWindowLong(wnd: foundation.HWND, nindex: wam.WINDOW_LONG_PTR_INDEX, dw
 
 test "ref" {
     std.testing.refAllDecls(icon);
-    std.testing.refAllDecls(display);
 }
