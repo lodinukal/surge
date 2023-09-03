@@ -1,9 +1,11 @@
 const std = @import("std");
 const win32 = @import("win32");
 
-const definitions = @import("../definitions.zig");
+const main = @import("../../main.zig");
+const platform = @import("../platform.zig");
+const definitions = @import("../../definitions.zig");
 
-pub const WindowsWindow = struct {
+const WindowsWindow = struct {
     handle: win32.foundation.HWND,
     big_icon: win32.ui.windows_and_messaging.HICON,
     small_icon: win32.ui.windows_and_messaging.HICON,
@@ -24,7 +26,7 @@ pub const WindowsWindow = struct {
     high_surrogate: std.os.windows.WCHAR,
 };
 
-pub const WindowsState = struct {
+const WindowsState = struct {
     instance: win32.foundation.HINSTANCE,
     helper_window_handle: win32.foundation.HWND,
     helper_window_class: u16,
@@ -53,7 +55,7 @@ pub const WindowsState = struct {
     },
 };
 
-pub const WindowsMonitor = struct {
+const WindowsMonitor = struct {
     handle: win32.graphics.gdi.HMONITOR,
     adapter_name: [32]std.os.windows.WCHAR,
     adapter_name_len: u32,
@@ -67,16 +69,16 @@ pub const WindowsMonitor = struct {
     mode_changed: bool,
 };
 
-pub const WindowsCursor = struct {
+const WindowsCursor = struct {
     handle: win32.ui.windows_and_messaging.HCURSOR,
 };
 
-pub const WindowsJoyobject = struct {
+const WindowsJoyobject = struct {
     offset: i32,
     type: i32,
 };
 
-pub const WindowsJoystick = struct {
+const WindowsJoystick = struct {
     objects: []WindowsJoyobject,
     device: *win32.devices.human_interface_device.IDirectInputDevice8W,
     index: std.os.windows.DWORD,
@@ -87,8 +89,105 @@ pub fn detectJoystickConnection() void {}
 
 pub fn detectJoystickDisonnection() void {}
 
+const WindowsTls = struct {
+    allocated: bool = false,
+    index: std.os.windows.DWORD = undefined,
+
+    const TLS_OUT_OF_INDEXES: std.os.windows.DWORD = 0xffffffff;
+
+    pub fn init(tls: *WindowsTls) definitions.Error!void {
+        if (tls.allocated) {
+            return;
+        }
+
+        tls.index = win32.system.threading.TlsAlloc();
+        if (tls.index == TLS_OUT_OF_INDEXES) {
+            main.setErrorString("Failed to allocate TLS index");
+            return definitions.Error.PlatformError;
+        }
+
+        tls.allocated = true;
+        return;
+    }
+
+    pub fn deinit(tls: *WindowsTls) void {
+        if (!tls.allocated) {
+            return;
+        }
+
+        win32.system.threading.TlsFree(tls.index);
+        tls.allocated = false;
+        tls.index = 0;
+    }
+
+    pub fn getTls(tls: *const WindowsTls) *void {
+        return win32.system.threading.TlsGetValue(tls.index);
+    }
+
+    pub fn setTls(tls: *const WindowsTls, value: *void) void {
+        win32.system.threading.TlsSetValue(tls.index, value);
+    }
+};
+
+const WindowsMutex = struct {
+    allocated: bool = false,
+    section: win32.system.threading.RTL_CRITICAL_SECTION = undefined,
+
+    pub fn init(m: *WindowsMutex) definitions.Error!void {
+        if (m.allocated) {
+            return;
+        }
+
+        win32.system.threading.InitializeCriticalSection(&m.section);
+        m.allocated = true;
+        return;
+    }
+
+    pub fn deinit(m: *WindowsMutex) void {
+        if (!m.allocated) {
+            return;
+        }
+
+        win32.system.threading.DeleteCriticalSection(&m.section);
+        m.allocated = false;
+        m.section = std.mem.zeroes(win32.system.threading.RTL_CRITICAL_SECTION);
+    }
+
+    pub fn lock(m: *WindowsMutex) void {
+        win32.system.threading.EnterCriticalSection(&m.section);
+    }
+
+    pub fn unlock(m: *WindowsMutex) void {
+        win32.system.threading.LeaveCriticalSection(&m.section);
+    }
+};
+
+const WindowsTimer = struct {
+    frequency: u64,
+
+    pub fn init() void {
+        win32.system.performance.QueryPerformanceFrequency(
+            @ptrCast(&platform.lib.timer.platform.frequency),
+        );
+    }
+
+    pub fn getTimerValue() u64 {
+        var value: u64 = undefined;
+        win32.system.performance.QueryPerformanceCounter(@ptrCast(&value));
+        return value;
+    }
+
+    pub fn getTimerFrequency() u64 {
+        return platform.lib.timer.platform.frequency;
+    }
+};
+
 pub const PlatformState = WindowsState;
 pub const PlatformWindow = WindowsWindow;
 pub const PlatformMonitor = WindowsMonitor;
 pub const PlatformCursor = WindowsCursor;
 pub const PlatformJoystick = WindowsJoystick;
+pub const PlatformJoystickState = void;
+pub const PlatformTls = WindowsTls;
+pub const PlatformMutex = WindowsMutex;
+pub const PlatformTimer = WindowsTimer;

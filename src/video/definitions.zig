@@ -4,6 +4,7 @@ pub const ElementState = enum(u8) {
     release = 0,
     press = 1,
     repeat = 2,
+    stick = 3,
 };
 
 pub const Hat = enum(u8) {
@@ -141,8 +142,6 @@ pub const Key = enum(i16) {
     right_alt = 346,
     right_super = 347,
     menu = 348,
-
-    pub const last = Key.menu;
 };
 
 pub const Modifier = enum(u8) {
@@ -154,6 +153,16 @@ pub const Modifier = enum(u8) {
     num_lock = 0x0020,
 };
 
+pub const Modifiers = packed struct(u8) {
+    shift: bool = false,
+    control: bool = false,
+    alt: bool = false,
+    super: bool = false,
+    caps_lock: bool = false,
+    num_lock: bool = false,
+    _padding: u2 = 0,
+};
+
 pub const MouseButton = enum(u8) {
     @"1" = 0,
     @"2" = 1,
@@ -163,10 +172,28 @@ pub const MouseButton = enum(u8) {
     @"6" = 5,
     @"7" = 6,
     @"8" = 7,
-    pub const last = MouseButton.@"8";
     pub const left = MouseButton.@"1";
     pub const right = MouseButton.@"2";
     pub const middle = MouseButton.@"3";
+};
+
+pub const Joystick = enum(u8) {
+    @"1" = 0,
+    @"2" = 1,
+    @"3" = 2,
+    @"4" = 3,
+    @"5" = 4,
+    @"6" = 5,
+    @"7" = 6,
+    @"8" = 7,
+    @"9" = 8,
+    @"10" = 9,
+    @"11" = 10,
+    @"12" = 11,
+    @"13" = 12,
+    @"14" = 13,
+    @"15" = 14,
+    @"16" = 15,
 };
 
 pub const GamepadButton = enum(u8) {
@@ -185,7 +212,6 @@ pub const GamepadButton = enum(u8) {
     d_pad_right = 12,
     d_pad_down = 13,
     d_pad_left = 14,
-    pub const last = GamepadButton.d_pad_left;
 
     pub const cross = GamepadButton.a;
     pub const circle = GamepadButton.b;
@@ -200,7 +226,6 @@ pub const GamepadAxis = enum(u8) {
     right_y = 3,
     left_trigger = 4,
     right_trigger = 5,
-    pub const last = GamepadAxis.right_trigger;
 };
 
 pub const Error = error{
@@ -283,14 +308,16 @@ pub const InputMode = enum {
 };
 
 pub const InputModePayload = union(InputMode) {
-    cursor: enum {
-        normal,
-        hidden,
-        disabled,
-        captured,
-    },
+    cursor: CursorMode,
     sticky_keys: bool,
     sticky_mouse_buttons: bool,
     lock_key_mods: bool,
     raw_mouse_motion: bool,
+};
+
+pub const CursorMode = enum {
+    normal,
+    hidden,
+    disabled,
+    captured,
 };
