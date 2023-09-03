@@ -2,6 +2,7 @@ const std = @import("std");
 const definitions = @import("definitions.zig");
 const monitor = @import("monitor.zig");
 const image = @import("image.zig");
+const joystick = @import("joystick.zig");
 const platform = @import("./platforms/platform.zig");
 const main = @import("main.zig");
 
@@ -310,7 +311,281 @@ pub fn initJoysticks() bool {
     return true;
 }
 
+pub fn findMapping(guid: []const u8) ?*platform.InternalMapping {
+    for (platform.lib.mappings) |mapping| {
+        if (std.mem.eql(u8, &mapping.guid, guid)) {
+            return &mapping;
+        }
+    }
+    return null;
+}
+
+pub fn isValidElementForJoystick(
+    e: *const platform.InternalMapElement,
+    joy: *const platform.InternalJoystick,
+) bool {
+    if (e.typ == .hatbit and (e.index >> 4) >= joy.hats.len) {
+        return false;
+    } else if (e.typ == .button and e.index >= joy.buttons.len) {
+        return false;
+    } else if (e.typ == .axis and e.index >= joy.axes.len) {
+        return false;
+    }
+    return true;
+}
+
+pub fn findValidMapping(joy: *const platform.InternalJoystick) ?*platform.InternalMapping {
+    if (findMapping(joy.guid)) |mapping| {
+        inline for (0..std.meta.fields(definitions.GamepadButton)) |i| {
+            if (!isValidElementForJoystick(mapping.buttons[i], joy)) {
+                return null;
+            }
+        }
+        inline for (0..std.meta.fields(definitions.GamepadAxis)) |i| {
+            if (!isValidElementForJoystick(mapping.axes[i], joy)) {
+                return null;
+            }
+        }
+    }
+    return null;
+}
+
+const Prefix = enum {
+    pos,
+    neg,
+    unsigned,
+};
+
+pub fn parseMapping(mapping: *platform.InternalMapping, str: []const u8) bool {
+    var fields = [_]struct { name: []const u8, element: ?*platform.InternalMapElement }{
+        .{ .name = "platform", .element = null },
+        .{ .name = "a", .element = &mapping.buttons[@intFromEnum(definitions.GamepadButton.a)] },
+        .{ .name = "b", .element = &mapping.buttons[@intFromEnum(definitions.GamepadButton.b)] },
+        .{ .name = "x", .element = &mapping.buttons[@intFromEnum(definitions.GamepadButton.x)] },
+        .{ .name = "y", .element = &mapping.buttons[@intFromEnum(definitions.GamepadButton.y)] },
+        .{ .name = "back", .element = &mapping.buttons[@intFromEnum(definitions.GamepadButton.back)] },
+        .{ .name = "start", .element = &mapping.buttons[@intFromEnum(definitions.GamepadButton.start)] },
+        .{ .name = "guide", .element = &mapping.buttons[@intFromEnum(definitions.GamepadButton.guide)] },
+        .{ .name = "leftshoulder", .element = &mapping.buttons[@intFromEnum(definitions.GamepadButton.left_bumper)] },
+        .{ .name = "rightshoulder", .element = &mapping.buttons[@intFromEnum(definitions.GamepadButton.right_bumper)] },
+        .{ .name = "leftstick", .element = &mapping.buttons[@intFromEnum(definitions.GamepadButton.left_thumb)] },
+        .{ .name = "rightstick", .element = &mapping.buttons[@intFromEnum(definitions.GamepadButton.right_thumb)] },
+        .{ .name = "dpup", .element = &mapping.buttons[@intFromEnum(definitions.GamepadButton.dpad_up)] },
+        .{ .name = "dpright", .element = &mapping.buttons[@intFromEnum(definitions.GamepadButton.dpad_right)] },
+        .{ .name = "dpdown", .element = &mapping.buttons[@intFromEnum(definitions.GamepadButton.dpad_down)] },
+        .{ .name = "dpleft", .element = &mapping.buttons[@intFromEnum(definitions.GamepadButton.dpad_left)] },
+        .{ .name = "lefttrigger", .element = &mapping.axes[@intFromEnum(definitions.GamepadAxis.left_trigger)] },
+        .{ .name = "righttrigger", .element = &mapping.axes[@intFromEnum(definitions.GamepadAxis.right_trigger)] },
+        .{ .name = "leftx", .element = &mapping.axes[@intFromEnum(definitions.GamepadAxis.left_x)] },
+        .{ .name = "lefty", .element = &mapping.axes[@intFromEnum(definitions.GamepadAxis.left_y)] },
+        .{ .name = "rightx", .element = &mapping.axes[@intFromEnum(definitions.GamepadAxis.right_x)] },
+        .{ .name = "righty", .element = &mapping.axes[@intFromEnum(definitions.GamepadAxis.right_y)] },
+    };
+
+    var parser = std.fmt.Parser{ .buf = str };
+    var guid = parser.until(',');
+    if (guid.len != 32) {
+        return false;
+    }
+    @memcpy(mapping.guid[0..32], guid[0..32]);
+    if (!parser.maybe(',')) return false;
+
+    var name = parser.until(',');
+    if (name.len > mapping.name.len) {
+        return false;
+    }
+    var m = @min(name.len, mapping.name.len);
+    @memcpy(mapping.name[0..m], name[0..m]);
+    if (!parser.maybe(',')) return false;
+
+    lp: while (parser.peek(0)) |_| {
+        std.debug.print("{s}\n", .{parser.buf[parser.pos..]});
+        var key_prefix: Prefix = key_prefix: {
+            var is_pos = (parser.peek(0) orelse return false) == '+';
+            var is_neg = (parser.peek(0) orelse return false) == '-';
+            if (is_pos or is_neg) {
+                _ = parser.char();
+            }
+            break :key_prefix if (is_pos) .pos else if (is_neg) .neg else .unsigned;
+        };
+        _ = key_prefix;
+        var key = parser.until(':');
+        if (!parser.maybe(':')) return;
+
+        var val_prefix: Prefix = val_prefix: {
+            var is_pos = (parser.peek(0) orelse return false) == '+';
+            var is_neg = (parser.peek(0) orelse return false) == '-';
+            if (is_pos or is_neg) {
+                _ = parser.char();
+            }
+            break :val_prefix if (is_pos) .pos else if (is_neg) .neg else .unsigned;
+        };
+
+        var mapping_source_opt: ?platform.JoystickMappingSource = mapping_source: {
+            break :mapping_source switch ((parser.char() orelse return false)) {
+                'a' => platform.JoystickMappingSource.axis,
+                'b' => platform.JoystickMappingSource.button,
+                'h' => platform.JoystickMappingSource.hatbit,
+                else => null,
+            };
+        };
+
+        var value = parser.until(',');
+        if (!parser.maybe(',')) return;
+        const mapping_source = mapping_source_opt orelse {
+            std.debug.print("unknown mapping source: {s}\n", .{value});
+            continue :lp;
+        };
+
+        var min: i8 = -1;
+        var max: i8 = 1;
+        switch (val_prefix) {
+            .pos => min = 0,
+            .neg => max = 0,
+            else => {},
+        }
+
+        var has_axis_invert = has_axis_invert: {
+            if (mapping_source != .axis) {
+                break :has_axis_invert false;
+            }
+            if (value[value.len - 1] == '~') {
+                value = value[0 .. value.len - 1];
+                break :has_axis_invert true;
+            }
+            break :has_axis_invert false;
+        };
+
+        kv: for (fields) |f| {
+            if (!std.mem.eql(u8, f.name, key)) {
+                continue :kv;
+            }
+
+            if (f.element == null) {
+                continue :kv;
+            }
+            var element = f.element.?;
+
+            var index = index: {
+                break :index switch (mapping_source) {
+                    .hatbit => hatbit: {
+                        var inner_parser = std.fmt.Parser{ .buf = value };
+                        var hat_contents = inner_parser.until('.');
+                        if (hat_contents.len < 1) {
+                            continue :kv;
+                        }
+                        _ = inner_parser.char();
+                        var hat = std.fmt.parseInt(u8, hat_contents, 0) catch {
+                            continue :kv;
+                        };
+                        var bit: u8 = @truncate(inner_parser.number() orelse continue :kv);
+                        break :hatbit @as(u8, ((hat << 4) | bit));
+                    },
+                    else => std.fmt.parseInt(u8, value, 0) catch {
+                        continue :kv;
+                    },
+                };
+            };
+
+            element.typ = mapping_source;
+            element.index = index;
+
+            if (mapping_source == .axis) {
+                element.axis_scale = @divTrunc(2, max - min);
+                element.axis_offset = -(max + min);
+
+                if (has_axis_invert) {
+                    element.axis_scale *= -1;
+                    element.axis_offset *= -1;
+                }
+            }
+        }
+    }
+
+    for (mapping.guid[0..32]) |*c| {
+        c.* = std.ascii.toLower(c.*);
+    }
+
+    platform.lib.platform.updateGamepadGuid(mapping.guid);
+    return true;
+}
+
 pub fn isJoystickPresent(joy: definitions.Joystick) bool {
-    if (!initJoysticks()) return false;
-    return platform.lib.platform.isJoystickPresent(joy);
+    if (joystickFromDefinition(joy)) |internal_joy| {
+        if (!internal_joy.connected) return null;
+        return platform.lib.platform.pollJoystick(joy, .presence);
+    }
+}
+
+pub fn getJoystickAxes(joy: definitions.Joystick) ?[]const f32 {
+    if (joystickFromDefinition(joy)) |internal_joy| {
+        if (!internal_joy.connected) return null;
+        if (!platform.lib.platform.pollJoystick(joy, .axes)) return null;
+        return internal_joy.axes[0..internal_joy.axes.len];
+    }
+    return null;
+}
+
+pub fn getJoystickButtons(joy: definitions.Joystick) ?[]const definitions.ElementState {
+    if (joystickFromDefinition(joy)) |internal_joy| {
+        if (!internal_joy.connected) return null;
+        if (!platform.lib.platform.pollJoystick(joy, .buttons)) return null;
+        return internal_joy.buttons[0..internal_joy.buttons.len];
+    }
+    return null;
+}
+
+pub fn getJoystickHats(joy: definitions.Joystick) ?[]const definitions.HatState {
+    if (joystickFromDefinition(joy)) |internal_joy| {
+        if (!internal_joy.connected) return null;
+        if (!platform.lib.platform.pollJoystick(joy, .buttons)) return null;
+        return internal_joy.hats[0..internal_joy.hats.len];
+    }
+    return null;
+}
+
+pub fn getJoystickName(joy: definitions.Joystick) ?[]const u8 {
+    if (joystickFromDefinition(joy)) |internal_joy| {
+        if (!internal_joy.connected) return null;
+        const name_length = std.mem.indexOfScalar(u8, internal_joy.name, 0);
+        return internal_joy.name[0..name_length];
+    }
+    return null;
+}
+
+pub fn setJoystickUserPointer(joy: definitions.Joystick, ptr: ?*void) void {
+    if (joystickFromDefinition(joy)) |internal_joy| {
+        if (!internal_joy.allocated) return;
+        internal_joy.user_pointer = ptr;
+    }
+}
+
+pub fn getJoystickUserPointer(joy: definitions.Joystick) ?*void {
+    if (joystickFromDefinition(joy)) |internal_joy| {
+        if (!internal_joy.allocated) return null;
+        return internal_joy.user_pointer;
+    }
+    return null;
+}
+
+pub fn setJoystickConnectionCallback(
+    cb: ?platform.JoystickConnectionCallback,
+) ?platform.JoystickConnectionCallback {
+    if (!initJoysticks()) return null;
+
+    std.mem.swap(?joystick.JoystickConnectionCallback, &platform.lib.callbacks.joystick, &cb);
+    return cb;
+}
+
+// pub fn updateGamepadMappings(str: []const u8) bool {
+
+// }
+
+fn joystickFromDefinition(joy: definitions.Joystick) ?*platform.InternalJoystick {
+    if (!initJoysticks()) return null;
+
+    var internal_joy = &platform.lib.joysticks[@intFromEnum(joy)];
+    if (!internal_joy.connected) return null;
+
+    return internal_joy;
 }

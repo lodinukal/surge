@@ -147,18 +147,25 @@ pub const InternalCursor = struct {
     platform: impl.PlatformCursor,
 };
 
+pub const JoystickMappingSource = enum(u8) {
+    unknown = 0,
+    axis = 1,
+    button = 2,
+    hatbit = 3,
+};
+
 pub const InternalMapElement = struct {
-    type: u8,
-    index: u8,
-    axis_scale: i8,
-    axis_offset: i8,
+    typ: JoystickMappingSource = .unknown,
+    index: u8 = 0,
+    axis_scale: i8 = 0,
+    axis_offset: i8 = 0,
 };
 
 pub const InternalMapping = struct {
-    name: [128]u8,
-    guid: [128]u8,
-    buttons: [15]InternalMapElement,
-    axes: [6]InternalMapElement,
+    name: [128]u8 = .{0} ** 128,
+    guid: [128]u8 = .{0} ** 128,
+    buttons: [15]InternalMapElement = .{InternalMapElement{}} ** 15,
+    axes: [6]InternalMapElement = .{InternalMapElement{}} ** 6,
     platform: impl.PlatformJoystick,
 };
 
@@ -169,7 +176,7 @@ pub const InternalJoystick = struct {
     buttons: []definitions.ElementState,
     hats: []u8,
     name: [128]u8,
-    user_pointer: *void,
+    user_pointer: ?*void,
     guid: [33]u8,
     mapping: *InternalMapping,
 

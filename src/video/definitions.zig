@@ -208,10 +208,10 @@ pub const GamepadButton = enum(u8) {
     guide = 8,
     left_thumb = 9,
     right_thumb = 10,
-    d_pad_up = 11,
-    d_pad_right = 12,
-    d_pad_down = 13,
-    d_pad_left = 14,
+    dpad_up = 11,
+    dpad_right = 12,
+    dpad_down = 13,
+    dpad_left = 14,
 
     pub const cross = GamepadButton.a;
     pub const circle = GamepadButton.b;
