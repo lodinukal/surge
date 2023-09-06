@@ -89,79 +89,6 @@ pub fn detectJoystickConnection() void {}
 
 pub fn detectJoystickDisonnection() void {}
 
-const WindowsTls = struct {
-    allocated: bool = false,
-    index: std.os.windows.DWORD = undefined,
-
-    const TLS_OUT_OF_INDEXES: std.os.windows.DWORD = 0xffffffff;
-
-    pub fn init(tls: *WindowsTls) definitions.Error!void {
-        if (tls.allocated) {
-            return;
-        }
-
-        tls.index = win32.system.threading.TlsAlloc();
-        if (tls.index == TLS_OUT_OF_INDEXES) {
-            main.setErrorString("Failed to allocate TLS index");
-            return definitions.Error.PlatformError;
-        }
-
-        tls.allocated = true;
-        return;
-    }
-
-    pub fn deinit(tls: *WindowsTls) void {
-        if (!tls.allocated) {
-            return;
-        }
-
-        win32.system.threading.TlsFree(tls.index);
-        tls.allocated = false;
-        tls.index = 0;
-    }
-
-    pub fn getTls(tls: *const WindowsTls) *void {
-        return win32.system.threading.TlsGetValue(tls.index);
-    }
-
-    pub fn setTls(tls: *const WindowsTls, value: *void) void {
-        win32.system.threading.TlsSetValue(tls.index, value);
-    }
-};
-
-const WindowsMutex = struct {
-    allocated: bool = false,
-    section: win32.system.threading.RTL_CRITICAL_SECTION = undefined,
-
-    pub fn init(m: *WindowsMutex) definitions.Error!void {
-        if (m.allocated) {
-            return;
-        }
-
-        win32.system.threading.InitializeCriticalSection(&m.section);
-        m.allocated = true;
-        return;
-    }
-
-    pub fn deinit(m: *WindowsMutex) void {
-        if (!m.allocated) {
-            return;
-        }
-
-        win32.system.threading.DeleteCriticalSection(&m.section);
-        m.allocated = false;
-        m.section = std.mem.zeroes(win32.system.threading.RTL_CRITICAL_SECTION);
-    }
-
-    pub fn lock(m: *WindowsMutex) void {
-        win32.system.threading.EnterCriticalSection(&m.section);
-    }
-
-    pub fn unlock(m: *WindowsMutex) void {
-        win32.system.threading.LeaveCriticalSection(&m.section);
-    }
-};
-
 const WindowsTimer = struct {
     frequency: u64,
 
@@ -188,6 +115,4 @@ pub const PlatformMonitor = WindowsMonitor;
 pub const PlatformCursor = WindowsCursor;
 pub const PlatformJoystick = WindowsJoystick;
 pub const PlatformJoystickState = void;
-pub const PlatformTls = WindowsTls;
-pub const PlatformMutex = WindowsMutex;
 pub const PlatformTimer = WindowsTimer;
