@@ -289,6 +289,52 @@ pub const VideoMode = struct {
     green_bits: i32,
     blue_bits: i32,
     refresh_rate: i32,
+
+    pub fn less(_: void, self: *const VideoMode, other: *const VideoMode) bool {
+        return self.order(other) == .lt;
+    }
+
+    pub fn order(self: *const VideoMode, other: *const VideoMode) std.math.Order {
+        const self_bpp = self.red_bits + self.green_bits + self.blue_bits;
+        const other_bpp = other.red_bits + other.green_bits + other.blue_bits;
+
+        const self_area = self.width * self.height;
+        const other_area = other.width * other.height;
+
+        if (self_bpp != other_bpp) {
+            if (self_bpp < other_bpp) {
+                return .lt;
+            } else {
+                return .gt;
+            }
+        }
+
+        if (self_area != other_area) {
+            if (self_area < other_area) {
+                return .lt;
+            } else {
+                return .gt;
+            }
+        }
+
+        if (self.width != other.width) {
+            if (self.width < other.width) {
+                return .lt;
+            } else {
+                return .gt;
+            }
+        }
+
+        if (self.height != other.height) {
+            if (self.height < other.height) {
+                return .lt;
+            } else {
+                return .gt;
+            }
+        }
+
+        return .eq;
+    }
 };
 
 pub const GammaRamp = struct {
