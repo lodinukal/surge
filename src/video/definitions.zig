@@ -5,6 +5,15 @@ pub const ElementState = enum(u8) {
     press = 1,
     repeat = 2,
     stick = 3,
+
+    pub fn toFloat(self: ElementState) f32 {
+        switch (self) {
+            .release => return 0.0,
+            .press => return 1.0,
+            .repeat => return 0.0,
+            .stick => return 0.0,
+        }
+    }
 };
 
 pub const Hat = enum(u8) {
