@@ -1,6 +1,7 @@
 const std = @import("std");
 const definitions = @import("../definitions.zig");
 
+const main = @import("../main.zig");
 const common = @import("../../core/common.zig");
 
 const monitor = @import("../monitor.zig");
@@ -134,11 +135,11 @@ pub const InternalMonitor = struct {
     user_pointer: *void,
     width_mm: i32,
     height_mm: i32,
-    current_window: *InternalWindow,
-    modes: []definitions.VideoMode,
-    current_mode: definitions.VideoMode,
-    original_ramp: definitions.GammaRamp,
-    current_ramp: definitions.GammaRamp,
+    current_window: ?*InternalWindow = null,
+    modes: std.ArrayListUnmanaged(definitions.VideoMode) = std.ArrayListUnmanaged(definitions.VideoMode){},
+    current_mode: ?definitions.VideoMode = null,
+    original_ramp: ?definitions.GammaRamp = null,
+    current_ramp: ?definitions.GammaRamp = null,
     platform: impl.PlatformMonitor,
 };
 
@@ -170,65 +171,17 @@ pub const InternalMapping = struct {
 };
 
 pub const InternalJoystick = struct {
-    allocated: bool,
-    connected: bool,
-    axes: []f32,
-    buttons: []definitions.ElementState,
-    hats: []u8,
-    name: [128]u8,
-    user_pointer: ?*void,
-    guid: [33]u8,
+    allocated: bool = false,
+    connected: bool = false,
+    axes: []f32 = undefined,
+    buttons: []definitions.ElementState = undefined,
+    hats: []u8 = undefined,
+    name: [128]u8 = undefined,
+    user_pointer: ?*void = null,
+    guid: [32]u8 = undefined,
     mapping: ?*InternalMapping = null,
 
-    platform: impl.PlatformJoystick,
-};
-
-pub const InternalTls = struct {
-    platform: impl.PlatformTls,
-
-    pub fn init() definitions.Error!void {
-        var created_tls = InternalTls{
-            .platform = impl.PlatformTls{},
-        };
-        try created_tls.platform.init();
-        return created_tls;
-    }
-
-    pub fn deinit(tls: *InternalTls) void {
-        return tls.platform.deinit();
-    }
-
-    pub fn getTls(tls: *const InternalTls) *void {
-        return tls.platform.getTls();
-    }
-
-    pub fn setTls(tls: *const InternalTls, value: *void) void {
-        return tls.platform.setTls(value);
-    }
-};
-
-pub const InternalMutex = struct {
-    platform: impl.PlatformMutex,
-
-    pub fn init() definitions.Error!InternalMutex {
-        var mutex = InternalMutex{
-            .platform = impl.PlatformMutex{},
-        };
-        try mutex.platform.init();
-        return mutex;
-    }
-
-    pub fn deinit(mutex: *InternalMutex) void {
-        return mutex.platform.deinit();
-    }
-
-    pub fn lock(mutex: *InternalMutex) void {
-        return mutex.platform.lock();
-    }
-
-    pub fn unlock(mutex: *InternalMutex) void {
-        return mutex.platform.unlock();
-    }
+    platform: impl.PlatformJoystick = undefined,
 };
 
 pub const InternalPlatform = struct {
@@ -260,7 +213,7 @@ pub const InternalPlatform = struct {
     getMonitorPos: fn (monitor: *InternalMonitor) struct { x: i32, y: i32 },
     getMonitorContentScale: fn (monitor: *InternalMonitor) struct { x: f32, y: f32 },
     getMonitorWorkarea: fn (monitor: *InternalMonitor) struct { x: i32, y: i32, width: i32, height: i32 },
-    getVideoModes: fn (monitor: *InternalMonitor) []definitions.VideoMode,
+    getVideoModes: fn (monitor: *InternalMonitor) ?[]definitions.VideoMode,
     getVideoMode: fn (monitor: *InternalMonitor) *const definitions.VideoMode,
     getGammaRamp: fn (monitor: *InternalMonitor) ?definitions.GammaRamp,
     setGammaRamp: fn (monitor: *InternalMonitor, ramp: *const definitions.GammaRamp) void,
@@ -318,7 +271,7 @@ pub const InternalLibrary = struct {
     platform: InternalPlatform,
     cursor_head: ?*InternalCursor,
     window_head: ?*InternalWindow,
-    monitors: []*InternalMonitor,
+    monitors: std.ArrayListUnmanaged(*InternalMonitor) = std.ArrayListUnmanaged(*InternalMonitor){},
     joysticks_initialised: bool = false,
     joysticks: [std.meta.fields(definitions.Joystick).len]InternalJoystick,
     mappings: std.ArrayListUnmanaged(InternalMapping) = std.ArrayListUnmanaged(InternalMapping){},
@@ -566,4 +519,862 @@ pub fn inputJoystickHat(joy: *InternalJoystick, hat: i32, value: u8) void {
     joy.buttons[base + 3] = if ((value & 0x08) != 0) .press else .release;
 
     joy.hats[hat] = value;
+}
+
+const default_mappings = @import("../default_mappings.zig");
+pub fn initGamepadMappings() void {
+    const count = default_mappings.mappings.len;
+    lib.mappings.ensureUnusedCapacity(lib.allocator, count);
+
+    var index: usize = 0;
+    for (default_mappings.mappings) |m| {
+        if (parseMapping(&lib.mappings[index], m)) {
+            index += 1;
+        }
+    }
+}
+
+pub fn allocateJoystick(name: []const u8, guid: [32]u8, axis_count: i32, button_count: i32, hat_count: i32) !*InternalJoystick {
+    var find_joy: ?*InternalJoystick = null;
+    for (lib.joysticks) |*j| {
+        if (!j.allocated) {
+            find_joy = j;
+            break;
+        }
+    }
+
+    if (find_joy == null) {
+        return error.TooManyJoysticks;
+    }
+
+    var joy = find_joy.?;
+    joy.allocated = true;
+    joy.axes = try lib.allocator.alloc(f32, axis_count);
+    joy.buttons = try lib.allocator.alloc(definitions.ElementState, button_count + hat_count * 4);
+    joy.hats = try lib.allocator.alloc(u8, hat_count);
+
+    const min_name_length: usize = @min(name.len, joy.name.len);
+    @memcpy(
+        joy.name[0..min_name_length],
+        name[0..min_name_length],
+    );
+
+    joy.guid = guid;
+    joy.mapping = findValidMapping(joy);
+
+    return joy;
+}
+
+pub fn freeJoystick(joy: *InternalJoystick) void {
+    lib.allocator.free(joy.axes);
+    lib.allocator.free(joy.buttons);
+    lib.allocator.free(joy.hats);
+    joy.allocated = false;
+}
+
+pub fn centreCursorInContentArea(wnd: *InternalWindow) void {
+    const res = lib.platform.getWindowSize(wnd);
+    const float_width: f32 = @floatFromInt(res.width);
+    const float_height: f32 = @floatFromInt(res.height);
+    lib.platform.setCursorPos(
+        wnd,
+        @floatFromInt(float_width / 2.0),
+        @floatFromInt(float_height / 2.0),
+    );
+}
+
+pub const WindowMouseButtonCallback = *fn (
+    wnd: *window.Window,
+    button: definitions.MouseButton,
+    action: definitions.ElementState,
+    mods: definitions.Modifier,
+) void;
+pub const WindowCursorPosCallback = *fn (wnd: *window.Window, x: f64, y: f64) void;
+pub const WindowCursorEnterCallback = *fn (wnd: *window.Window, entered: bool) void;
+pub const WindowScrollCallback = *fn (wnd: *window.Window, x: f64, y: f64) void;
+pub const WindowKeyCallback = *fn (
+    wnd: *window.Window,
+    key: definitions.Key,
+    scancode: i32,
+    action: definitions.ElementState,
+    mods: definitions.Modifiers,
+) void;
+pub const WindowCharCallback = *fn (wnd: *window.Window, ch: u21) void;
+pub const WindowCharModsCallback = *fn (wnd: *window.Window, ch: u21, mods: definitions.Modifier) void;
+pub const WindowDropCallback = *fn (wnd: *window.Window, paths: []const []const u8) void;
+
+pub fn getInputMode(
+    wnd: *const window.Window,
+    mode: definitions.InputMode,
+) definitions.InputModePayload {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+
+    return switch (mode) {
+        .cursor => .{ .cursor = internal_window.cursor_mode },
+        .sticky_keys => .{ .sticky_keys = internal_window.sticky_keys },
+        .sticky_mouse_buttons => .{ .sticky_mouse_buttons = internal_window.sticky_mouse_buttons },
+        .lock_key_mods => .{ .lock_key_mods = internal_window.lock_key_mods },
+        .raw_mouse_motion => .{ .raw_mouse_motion = internal_window.raw_mouse_motion },
+    };
+}
+
+pub fn setInputMode(
+    wnd: *window.Window,
+    value: definitions.InputModePayload,
+) definitions.Error!void {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+
+    switch (value) {
+        .cursor => |mode| {
+            if (internal_window.cursor_mode == mode)
+                return;
+
+            internal_window.cursor_mode = mode;
+
+            const result = lib.platform.getCursorPos(internal_window);
+            internal_window.virtual_cursor_pos_x = result.x;
+            internal_window.virtual_cursor_pos_y = result.y;
+
+            lib.platform.setCursorMode(internal_window, mode);
+        },
+        .sticky_keys => |new| {
+            if (internal_window.sticky_keys == new)
+                return;
+
+            if (!new) {
+                inline for (std.meta.fields(definitions.Key)) |k| {
+                    if (internal_window.keys[@intCast(k.value)] == .stick) {
+                        internal_window.keys[@intCast(k.value)] = .release;
+                    }
+                }
+            }
+
+            internal_window.sticky_keys = new;
+        },
+        .sticky_mouse_buttons => |new| {
+            if (internal_window.sticky_mouse_buttons == new)
+                return;
+
+            if (!new) {
+                inline for (std.meta.fields(definitions.MouseButton)) |b| {
+                    if (internal_window.mouse_buttons[@intCast(b.value)] == .stick) {
+                        internal_window.mouse_buttons[@intCast(b.value)] = .release;
+                    }
+                }
+            }
+
+            internal_window.sticky_mouse_buttons = new;
+        },
+        .lock_key_mods => |new| {
+            internal_window.lock_key_mods = new;
+        },
+        .raw_mouse_motion => |new| {
+            if (!isRawMouseMotionSupported()) {
+                main.setErrorString("Raw mouse motion is not supported on this platform.");
+                return definitions.Error.PlatformError;
+            }
+
+            if (internal_window.raw_mouse_motion == new)
+                return;
+
+            internal_window.raw_mouse_motion = new;
+
+            lib.platform.setRawMouseMotion(internal_window, new);
+        },
+    }
+}
+
+pub fn isRawMouseMotionSupported() bool {
+    return lib.platform.isRawMouseMotionSupported();
+}
+
+pub fn getKeyName(key: definitions.Key, scancode: i32) definitions.Error!?[]const u8 {
+    if (key != .unknown) {
+        const ikey: i32 = @intFromEnum(key);
+        if (key != .kp_equal and
+            (ikey < @intFromEnum(.kp_0) or
+            ikey > @intFromEnum(.kp_add)) and
+            (ikey < @intFromEnum(.apostrophe) or
+            ikey > @intFromEnum(.world_2)))
+        {
+            return null;
+        }
+
+        scancode = lib.platform.getKeyScancode(key);
+    }
+
+    return lib.platform.getScancodeName(scancode);
+}
+
+pub fn getKeyScancode(key: definitions.Key) ?i32 {
+    if (key == .unknown) {
+        return null;
+    }
+    return lib.platform.getKeyScancode(key);
+}
+
+pub fn getKey(
+    wnd: *const window.Window,
+    key: definitions.Key,
+) definitions.ElementState {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+    if (key == .unknown) {
+        return definitions.ElementState.release;
+    }
+
+    if (internal_window.keys[@intFromEnum(key)] == .stick) {
+        internal_window.keys[@intFromEnum(key)] = .release;
+        return .press;
+    }
+
+    return internal_window.keys[@intFromEnum(key)];
+}
+
+pub fn getMouseButton(
+    wnd: *const window.Window,
+    button: definitions.MouseButton,
+) definitions.ElementState {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+
+    if (internal_window.mouse_buttons[@intFromEnum(button)] == .stick) {
+        internal_window.mouse_buttons[@intFromEnum(button)] = .release;
+        return .press;
+    }
+
+    return internal_window.mouse_buttons[@intFromEnum(button)];
+}
+
+pub fn getCursorPos(wnd: *const window.Window) struct { x: f64, y: f64 } {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+
+    if (internal_window.cursor_mode == .disabled) {
+        return .{ .x = internal_window.virtual_cursor_pos_x, .y = internal_window.virtual_cursor_pos_y };
+    }
+
+    return lib.platform.getCursorPos(internal_window);
+}
+
+pub fn setCursorPos(wnd: *window.Window, x: f64, y: f64) void {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+
+    if (!lib.platform.isWindowFocused(wnd)) {
+        return;
+    }
+
+    if (internal_window.cursor_mode == .disabled) {
+        internal_window.virtual_cursor_pos_x = x;
+        internal_window.virtual_cursor_pos_y = y;
+        return;
+    }
+
+    lib.platform.setCursorPos(internal_window, x, y);
+}
+
+pub fn setCursor(wnd: *window.Window, cursor: *Cursor) void {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+    const internal_cursor: *InternalCursor = @ptrCast(cursor);
+
+    internal_window.cursor = internal_cursor;
+    lib.platform.setCursor(internal_window, internal_cursor);
+}
+
+pub fn setKeyCallback(handle: *window.Window, cb: ?WindowKeyCallback) ?WindowKeyCallback {
+    const internal_window: *InternalWindow = @ptrCast(handle);
+    std.mem.swap(?WindowKeyCallback, &internal_window.callbacks.key, &cb);
+    return cb;
+}
+
+pub fn setCharCallback(handle: *window.Window, cb: ?WindowCharCallback) ?WindowCharCallback {
+    const internal_window: *InternalWindow = @ptrCast(handle);
+    std.mem.swap(?WindowCharCallback, &internal_window.callbacks.char, &cb);
+    return cb;
+}
+
+pub fn setCharModsCallback(handle: *window.Window, cb: ?WindowCharModsCallback) definitions.Error!?WindowCharModsCallback {
+    const internal_window: *InternalWindow = @ptrCast(handle);
+    std.mem.swap(?WindowCharModsCallback, &internal_window.callbacks.char_mods, &cb);
+    return cb;
+}
+
+pub fn setMouseButtonCallback(
+    handle: *window.Window,
+    cb: ?WindowMouseButtonCallback,
+) ?WindowMouseButtonCallback {
+    const internal_window: *InternalWindow = @ptrCast(handle);
+    std.mem.swap(?WindowMouseButtonCallback, &internal_window.callbacks.mouse_button, &cb);
+    return cb;
+}
+
+pub fn setCursorPosCallback(
+    handle: *window.Window,
+    cb: ?WindowCursorPosCallback,
+) ?WindowCursorPosCallback {
+    const internal_window: *InternalWindow = @ptrCast(handle);
+    std.mem.swap(?WindowCursorPosCallback, &internal_window.callbacks.cursor_pos, &cb);
+    return cb;
+}
+
+pub fn setCursorEnterCallback(
+    handle: *window.Window,
+    cb: ?WindowCursorEnterCallback,
+) definitions.Error!?WindowCursorEnterCallback {
+    const internal_window: *InternalWindow = @ptrCast(handle);
+    std.mem.swap(?WindowCursorEnterCallback, &internal_window.callbacks.cursor_enter, &cb);
+    return cb;
+}
+
+pub fn setScrollCallback(
+    handle: *window.Window,
+    cb: ?WindowScrollCallback,
+) definitions.Error!?WindowScrollCallback {
+    const internal_window: *InternalWindow = @ptrCast(handle);
+    std.mem.swap(?WindowScrollCallback, &internal_window.callbacks.scroll, &cb);
+    return cb;
+}
+
+pub fn setDropCallback(
+    handle: *window.Window,
+    cb: ?WindowDropCallback,
+) definitions.Error!?WindowDropCallback {
+    const internal_window: *InternalWindow = @ptrCast(handle);
+    std.mem.swap(?WindowDropCallback, &internal_window.callbacks.drop, &cb);
+    return cb;
+}
+
+pub fn setClipboardString(wnd: *window.Window, s: []const u8) void {
+    _ = wnd;
+    lib.platform.setClipboardString(s);
+}
+
+pub fn getClipboardString(
+    wnd: *const window.Window,
+) ?[]const u8 {
+    _ = wnd;
+    return lib.platform.getClipboardString();
+}
+
+pub fn getTime() f64 {
+    const numer: f64 = @floatFromInt((getTimerValue() - lib.timer.offset));
+    const denom: f64 = @floatFromInt(getTimerFrequency());
+    return numer / denom;
+}
+
+pub fn setTime(time: f64) void {
+    const ffreq: f64 = @floatFromInt(getTimerFrequency());
+    const other: u64 = @intCast(time * ffreq);
+    lib.timer.offset = getTimerValue() - other;
+}
+
+pub fn initJoysticks() bool {
+    if (!lib.joysticks_initialised) {
+        if (!lib.platform.initJoysticks()) {
+            lib.platform.deinitJoysticks();
+            return false;
+        }
+    }
+    lib.joysticks_initialised = true;
+    return true;
+}
+
+pub fn findMapping(guid: []const u8) ?*InternalMapping {
+    for (lib.mappings.items) |mapping| {
+        const min_length = @min(mapping.guid.len, guid.len);
+        if (std.mem.eql(u8, mapping.guid[0..min_length], guid[0..min_length])) {
+            return &mapping;
+        }
+    }
+    return null;
+}
+
+pub fn isValidElementForJoystick(
+    e: *const InternalMapElement,
+    joy: *const InternalJoystick,
+) bool {
+    if (e.typ == .hatbit and (e.index >> 4) >= joy.hats.len) {
+        return false;
+    } else if (e.typ == .button and e.index >= joy.buttons.len) {
+        return false;
+    } else if (e.typ == .axis and e.index >= joy.axes.len) {
+        return false;
+    }
+    return true;
+}
+
+pub fn findValidMapping(joy: *const InternalJoystick) ?*InternalMapping {
+    if (findMapping(joy.guid)) |mapping| {
+        inline for (0..std.meta.fields(definitions.GamepadButton)) |i| {
+            if (!isValidElementForJoystick(mapping.buttons[i], joy)) {
+                return null;
+            }
+        }
+        inline for (0..std.meta.fields(definitions.GamepadAxis)) |i| {
+            if (!isValidElementForJoystick(mapping.axes[i], joy)) {
+                return null;
+            }
+        }
+
+        return mapping;
+    }
+    return null;
+}
+
+const Prefix = enum {
+    pos,
+    neg,
+    unsigned,
+};
+
+pub fn parseMapping(mapping: *InternalMapping, str: []const u8) bool {
+    var fields = [_]struct { name: []const u8, element: ?*InternalMapElement }{
+        .{ .name = "platform", .element = null },
+        .{ .name = "a", .element = &mapping.buttons[@intFromEnum(definitions.GamepadButton.a)] },
+        .{ .name = "b", .element = &mapping.buttons[@intFromEnum(definitions.GamepadButton.b)] },
+        .{ .name = "x", .element = &mapping.buttons[@intFromEnum(definitions.GamepadButton.x)] },
+        .{ .name = "y", .element = &mapping.buttons[@intFromEnum(definitions.GamepadButton.y)] },
+        .{ .name = "back", .element = &mapping.buttons[@intFromEnum(definitions.GamepadButton.back)] },
+        .{ .name = "start", .element = &mapping.buttons[@intFromEnum(definitions.GamepadButton.start)] },
+        .{ .name = "guide", .element = &mapping.buttons[@intFromEnum(definitions.GamepadButton.guide)] },
+        .{ .name = "leftshoulder", .element = &mapping.buttons[@intFromEnum(definitions.GamepadButton.left_bumper)] },
+        .{ .name = "rightshoulder", .element = &mapping.buttons[@intFromEnum(definitions.GamepadButton.right_bumper)] },
+        .{ .name = "leftstick", .element = &mapping.buttons[@intFromEnum(definitions.GamepadButton.left_thumb)] },
+        .{ .name = "rightstick", .element = &mapping.buttons[@intFromEnum(definitions.GamepadButton.right_thumb)] },
+        .{ .name = "dpup", .element = &mapping.buttons[@intFromEnum(definitions.GamepadButton.dpad_up)] },
+        .{ .name = "dpright", .element = &mapping.buttons[@intFromEnum(definitions.GamepadButton.dpad_right)] },
+        .{ .name = "dpdown", .element = &mapping.buttons[@intFromEnum(definitions.GamepadButton.dpad_down)] },
+        .{ .name = "dpleft", .element = &mapping.buttons[@intFromEnum(definitions.GamepadButton.dpad_left)] },
+        .{ .name = "lefttrigger", .element = &mapping.axes[@intFromEnum(definitions.GamepadAxis.left_trigger)] },
+        .{ .name = "righttrigger", .element = &mapping.axes[@intFromEnum(definitions.GamepadAxis.right_trigger)] },
+        .{ .name = "leftx", .element = &mapping.axes[@intFromEnum(definitions.GamepadAxis.left_x)] },
+        .{ .name = "lefty", .element = &mapping.axes[@intFromEnum(definitions.GamepadAxis.left_y)] },
+        .{ .name = "rightx", .element = &mapping.axes[@intFromEnum(definitions.GamepadAxis.right_x)] },
+        .{ .name = "righty", .element = &mapping.axes[@intFromEnum(definitions.GamepadAxis.right_y)] },
+    };
+
+    var parser = std.fmt.Parser{ .buf = str };
+    var guid = parser.until(',');
+    if (guid.len != 32) {
+        return false;
+    }
+    @memcpy(mapping.guid[0..32], guid[0..32]);
+    if (!parser.maybe(',')) return false;
+
+    var name = parser.until(',');
+    if (name.len > mapping.name.len) {
+        return false;
+    }
+    var m = @min(name.len, mapping.name.len);
+    @memcpy(mapping.name[0..m], name[0..m]);
+    if (!parser.maybe(',')) return false;
+
+    lp: while (parser.peek(0)) |_| {
+        var key_prefix: Prefix = key_prefix: {
+            var is_pos = (parser.peek(0) orelse return false) == '+';
+            var is_neg = (parser.peek(0) orelse return false) == '-';
+            if (is_pos or is_neg) {
+                _ = parser.char();
+            }
+            break :key_prefix if (is_pos) .pos else if (is_neg) .neg else .unsigned;
+        };
+        _ = key_prefix;
+        var key = parser.until(':');
+        if (!parser.maybe(':')) return false;
+
+        var val_prefix: Prefix = val_prefix: {
+            var is_pos = (parser.peek(0) orelse return false) == '+';
+            var is_neg = (parser.peek(0) orelse return false) == '-';
+            if (is_pos or is_neg) {
+                _ = parser.char();
+            }
+            break :val_prefix if (is_pos) .pos else if (is_neg) .neg else .unsigned;
+        };
+
+        var mapping_source_opt: ?JoystickMappingSource = mapping_source: {
+            break :mapping_source switch ((parser.char() orelse return false)) {
+                'a' => JoystickMappingSource.axis,
+                'b' => JoystickMappingSource.button,
+                'h' => JoystickMappingSource.hatbit,
+                else => null,
+            };
+        };
+
+        var value = parser.until(',');
+        if (!parser.maybe(',')) return false;
+        const mapping_source = mapping_source_opt orelse {
+            // std.debug.print("unknown mapping source: {s}\n", .{value});
+            continue :lp;
+        };
+
+        var min: i8 = -1;
+        var max: i8 = 1;
+        switch (val_prefix) {
+            .pos => min = 0,
+            .neg => max = 0,
+            else => {},
+        }
+
+        var has_axis_invert = has_axis_invert: {
+            if (mapping_source != .axis) {
+                break :has_axis_invert false;
+            }
+            if (value[value.len - 1] == '~') {
+                value = value[0 .. value.len - 1];
+                break :has_axis_invert true;
+            }
+            break :has_axis_invert false;
+        };
+
+        kv: for (fields) |f| {
+            if (!std.mem.eql(u8, f.name, key)) {
+                continue :kv;
+            }
+
+            if (f.element == null) {
+                continue :kv;
+            }
+            var element = f.element.?;
+
+            var index = index: {
+                break :index switch (mapping_source) {
+                    .hatbit => hatbit: {
+                        var inner_parser = std.fmt.Parser{ .buf = value };
+                        var hat_contents = inner_parser.until('.');
+                        if (hat_contents.len < 1) {
+                            continue :kv;
+                        }
+                        _ = inner_parser.char();
+                        var hat = std.fmt.parseInt(u8, hat_contents, 0) catch {
+                            continue :kv;
+                        };
+                        var bit: u8 = @truncate(inner_parser.number() orelse continue :kv);
+                        break :hatbit @as(u8, ((hat << 4) | bit));
+                    },
+                    else => std.fmt.parseInt(u8, value, 0) catch {
+                        continue :kv;
+                    },
+                };
+            };
+
+            element.typ = mapping_source;
+            element.index = index;
+
+            if (mapping_source == .axis) {
+                element.axis_scale = @divTrunc(2, max - min);
+                element.axis_offset = -(max + min);
+
+                if (has_axis_invert) {
+                    element.axis_scale *= -1;
+                    element.axis_offset *= -1;
+                }
+            }
+        }
+    }
+
+    for (mapping.guid[0..32]) |*c| {
+        c.* = std.ascii.toLower(c.*);
+    }
+
+    lib.platform.updateGamepadGuid(mapping.guid);
+    return true;
+}
+
+pub fn isJoystickPresent(joy: definitions.Joystick) bool {
+    if (joystickFromDefinition(joy)) |internal_joy| {
+        if (!internal_joy.connected) return null;
+        return lib.platform.pollJoystick(joy, .presence);
+    }
+}
+
+pub fn getJoystickAxes(joy: definitions.Joystick) ?[]const f32 {
+    if (joystickFromDefinition(joy)) |internal_joy| {
+        if (!internal_joy.connected) return null;
+        if (!lib.platform.pollJoystick(joy, .axes)) return null;
+        return internal_joy.axes[0..internal_joy.axes.len];
+    }
+    return null;
+}
+
+pub fn getJoystickButtons(joy: definitions.Joystick) ?[]const definitions.ElementState {
+    if (joystickFromDefinition(joy)) |internal_joy| {
+        if (!internal_joy.connected) return null;
+        if (!lib.platform.pollJoystick(joy, .buttons)) return null;
+        return internal_joy.buttons[0..internal_joy.buttons.len];
+    }
+    return null;
+}
+
+pub fn getJoystickHats(joy: definitions.Joystick) ?[]const definitions.HatState {
+    if (joystickFromDefinition(joy)) |internal_joy| {
+        if (!internal_joy.connected) return null;
+        if (!lib.platform.pollJoystick(joy, .buttons)) return null;
+        return internal_joy.hats[0..internal_joy.hats.len];
+    }
+    return null;
+}
+
+pub fn getJoystickName(joy: definitions.Joystick) ?[]const u8 {
+    if (joystickFromDefinition(joy)) |internal_joy| {
+        if (!internal_joy.connected) return null;
+        const name_length = std.mem.indexOfScalar(u8, internal_joy.name, 0);
+        return internal_joy.name[0..name_length];
+    }
+    return null;
+}
+
+pub fn getJoystickGuid(joy: definitions.Joystick) ?[32]u8 {
+    if (joystickFromDefinition(joy)) |internal_joy| {
+        if (!internal_joy.connected) return null;
+        const result: [32]u8 = undefined;
+        if (!lib.platform.pollJoystick(internal_joy, .presence)) return null;
+        @memcpy(result[0..32], internal_joy.guid[0..32]);
+        return result;
+    }
+    return null;
+}
+
+pub fn setJoystickUserPointer(joy: definitions.Joystick, ptr: ?*void) void {
+    if (joystickFromDefinition(joy)) |internal_joy| {
+        if (!internal_joy.allocated) return;
+        internal_joy.user_pointer = ptr;
+    }
+}
+
+pub fn getJoystickUserPointer(joy: definitions.Joystick) ?*void {
+    if (joystickFromDefinition(joy)) |internal_joy| {
+        if (!internal_joy.allocated) return null;
+        return internal_joy.user_pointer;
+    }
+    return null;
+}
+
+pub fn setJoystickConnectionCallback(
+    cb: ?joystick.JoystickConnectionCallback,
+) ?joystick.JoystickConnectionCallback {
+    if (!initJoysticks()) return null;
+
+    std.mem.swap(?joystick.JoystickConnectionCallback, &lib.callbacks.joystick, &cb);
+    return cb;
+}
+
+pub fn updateGamepadMappings(str: []const u8) !bool {
+    var parser = std.fmt.Parser{ .buf = str };
+    while (parser.peek(0)) |c| {
+        if (!std.ascii.isHex(c) or c == '#') {
+            _ = parser.until('\n');
+            _ = parser.char();
+            continue;
+        }
+        var mapping = InternalMapping{};
+        if (!parseMapping(&mapping, parser.until('\n'))) {
+            return false;
+        }
+        if (findMapping(mapping.guid)) |previous_mapping| {
+            previous_mapping.* = mapping;
+        } else try lib.mappings.append(lib.allocator, mapping);
+    }
+
+    for (lib.joysticks) |joy| {
+        if (!joy.connected) continue;
+        joy.mapping = findValidMapping(joy);
+    }
+
+    return true;
+}
+
+pub fn isJoystickGamepad(joy: definitions.Joystick) bool {
+    if (joystickFromDefinition(joy)) |internal_joy| {
+        if (!internal_joy.connected) return null;
+        return internal_joy.mapping != null;
+    }
+    return null;
+}
+
+pub fn getGamepadName(joy: definitions.Joystick) ?[]const u8 {
+    if (joystickFromDefinition(joy)) |internal_joy| {
+        if (!internal_joy.connected) return null;
+        if (internal_joy.mapping) |mapping| return std.mem.span(
+            @as([*:0]const u8, @ptrCast(mapping.name)),
+        ) else return null;
+    }
+    return null;
+}
+
+pub fn getGamepadState(joy: definitions.Joystick) ?definitions.GamepadState {
+    if (joystickFromDefinition(joy)) |internal_joy| {
+        if (!internal_joy.connected) return null;
+        if (!lib.platform.pollJoystick(joy, .all)) return null;
+        if (internal_joy.mapping == null) return null;
+        var mapping = internal_joy.mapping.?;
+        var state = definitions.GamepadState{};
+        inline for (0..std.meta.fields(definitions.GamepadButton)) |i| {
+            const element = mapping.buttons[i];
+            switch (element.typ) {
+                .button => state.buttons[i] = internal_joy.buttons[@intCast(element.index)],
+                .axis => {
+                    const value = internal_joy.axes[element.index] * element.axis_scale + element.axis_offset;
+                    if (element.axis_offset < 0 or (element.axis_offset == 0 and element.axis_scale > 0)) {
+                        if (value >= 0.0) {
+                            state.buttons[i] = .press;
+                        }
+                    } else {
+                        if (value <= 0.0) {
+                            state.buttons[i] = .press;
+                        }
+                    }
+                },
+                .hatbit => {
+                    const hat = element.index >> 4;
+                    const bit = element.index & 0xF;
+                    if ((internal_joy.hats[hat] & bit) != 0) {
+                        state.buttons[i] = .press;
+                    }
+                },
+            }
+        }
+        inline for (0..std.meta.fields(definitions.GamepadAxis)) |i| {
+            const element = mapping.axes[i];
+            switch (element.typ) {
+                .axis => {
+                    const value = internal_joy.axes[element.index] * element.axis_scale + element.axis_offset;
+                    state.axes[i] = @min(@max(value, -1.0), 1.0);
+                },
+                .hatbit => {
+                    const hat = element.index >> 4;
+                    const bit = element.index & 0xF;
+                    if ((internal_joy.hats[hat] & bit) != 0) {
+                        state.axes[i] = 1.0;
+                    } else {
+                        state.axes[i] = -1.0;
+                    }
+                },
+                .button => {
+                    state.axes[i] = internal_joy.buttons[
+                        @intCast(
+                            element.index,
+                        )
+                    ].toFloat() * 1.0 - 1.0;
+                },
+            }
+        }
+        return state;
+    }
+    return null;
+}
+
+fn joystickFromDefinition(joy: definitions.Joystick) ?*InternalJoystick {
+    if (!initJoysticks()) return null;
+
+    var internal_joy = &lib.joysticks[@intFromEnum(joy)];
+    if (!internal_joy.connected) return null;
+
+    return internal_joy;
+}
+
+// monitor
+pub fn refreshVideoModes(mon: *InternalMonitor) bool {
+    var find_modes = lib.platform.getVideoModes(mon);
+    if (find_modes == null) {
+        return false;
+    }
+    var modes = find_modes.?;
+
+    std.sort.pdq(definitions.VideoMode, modes, {}, definitions.VideoMode.less);
+
+    mon.modes.deinit(lib.allocator);
+    mon.modes.fromOwnedSlice(modes);
+
+    return true;
+}
+
+pub fn inputMonitorConnection(mon: *InternalMonitor, connected: bool, place_first: bool) void {
+    if (connected) {
+        if (place_first) {
+            lib.monitors.insert(lib.allocator, 0, mon);
+        } else {
+            lib.monitors.append(lib.allocator, mon);
+        }
+    } else {
+        var window_head = lib.window_head;
+        const monitor_as_public: *monitor.Monitor = @ptrCast(mon);
+        while (window_head) |found_window| {
+            if (found_window.monitor == monitor_as_public) {
+                const wh = lib.platform.getWindowSize(found_window);
+                lib.platform.setWindowMonitor(found_window, null, 0, 0, wh.width, wh.height, 0);
+                const fs = lib.platform.getWindowFrameSize(found_window);
+                lib.platform.setWindowPos(found_window, fs.left, fs.top);
+            }
+            window_head = found_window.next_window;
+        }
+
+        var monitor_index: ?usize = null;
+        for (lib.monitors, 0..) |found_monitor, index| {
+            if (found_monitor == mon) {
+                monitor_index = index;
+                break;
+            }
+        }
+
+        if (monitor_index) |index| {
+            lib.monitors.orderedRemove(lib.allocator, index);
+        }
+
+        if (lib.callbacks.monitor) |f| {
+            f(mon, connected);
+        }
+
+        if (!connected) {
+            freeMonitor(mon);
+        }
+    }
+}
+
+fn inputMonitorWindow(mon: *InternalMonitor, wnd: *InternalWindow) void {
+    mon.current_window = wnd;
+}
+
+fn allocateMonitor(name: []const u8, width_mm: i32, height_mm: i32) !*InternalMonitor {
+    const mon: *InternalMonitor = try lib.allocator.create(InternalMonitor);
+    mon.width_mm = width_mm;
+    mon.height_mm = height_mm;
+
+    const min_name_length = @min(name.len, mon.name.len);
+    @memcpy(mon.name[0..min_name_length], name[0..min_name_length]);
+
+    return mon;
+}
+
+fn freeMonitor(mon: *InternalMonitor) void {
+    lib.platform.freeMonitor(mon);
+
+    if (mon.original_ramp) |*ramp| {
+        freeGammaRamp(ramp);
+    }
+    if (mon.current_ramp) |ramp| {
+        freeGammaRamp(ramp);
+    }
+
+    mon.modes.deinit(lib.allocator);
+    lib.allocator.destroy(mon);
+}
+
+fn allocateGammaRamp(size: i32) !definitions.GammaRamp {
+    const ramp = definitions.GammaRamp{};
+    ramp.size = size;
+    ramp.red = try lib.allocator.alloc(u16, size);
+    ramp.green = try lib.allocator.alloc(u16, size);
+    ramp.blue = try lib.allocator.alloc(u16, size);
+    return ramp;
+}
+
+fn freeGammaRamp(ramp: *definitions.GammaRamp) void {
+    lib.allocator.free(ramp.red);
+    lib.allocator.free(ramp.green);
+    lib.allocator.free(ramp.blue);
+}
+
+fn chooseVideoMode(
+    mon: *InternalMonitor,
+    desired: *const definitions.VideoMode,
+) *const definitions.VideoMode {
+    _ = desired;
+    _ = mon;
 }
