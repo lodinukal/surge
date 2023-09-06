@@ -1,7 +1,7 @@
 const std = @import("std");
 const definitions = @import("definitions.zig");
 
-pub const MonitorConnectionCallback = *fn (monitor: Monitor, connected: bool) void;
+pub const MonitorConnectionCallback = ?*fn (monitor: Monitor, connected: bool) void;
 
 pub fn getMonitors() []const definitions.Monitor {}
 
