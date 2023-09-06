@@ -19,7 +19,7 @@ pub const Poll = enum {
     presence,
     axes,
     buttons,
-    pub const all = Poll.axes | Poll.buttons;
+    all, // axes | buttons
 };
 
 pub const InternalWindowConfig = struct {
@@ -178,7 +178,7 @@ pub const InternalJoystick = struct {
     name: [128]u8,
     user_pointer: ?*void,
     guid: [33]u8,
-    mapping: *InternalMapping,
+    mapping: ?*InternalMapping = null,
 
     platform: impl.PlatformJoystick,
 };
@@ -252,7 +252,7 @@ pub const InternalPlatform = struct {
     getClipboardString: fn () ?[]const u8,
     initJoysticks: fn () bool,
     deinitJoysticks: fn () void,
-    pollJoystick: fn (joy: *InternalJoystick, poll: Poll) void,
+    pollJoystick: fn (joy: *InternalJoystick, poll: Poll) bool,
     getMappingName: fn () []const u8,
     updateGamepadGuid: fn (n: []u8) void,
 
@@ -321,7 +321,7 @@ pub const InternalLibrary = struct {
     monitors: []*InternalMonitor,
     joysticks_initialised: bool = false,
     joysticks: [std.meta.fields(definitions.Joystick).len]InternalJoystick,
-    mappings: []InternalMapping,
+    mappings: std.ArrayListUnmanaged(InternalMapping) = std.ArrayListUnmanaged(InternalMapping){},
     timer: struct {
         offset: u64,
         platform: impl.PlatformTimer,
