@@ -312,8 +312,9 @@ pub fn initJoysticks() bool {
 }
 
 pub fn findMapping(guid: []const u8) ?*platform.InternalMapping {
-    for (platform.lib.mappings) |mapping| {
-        if (std.mem.eql(u8, &mapping.guid, guid)) {
+    for (platform.lib.mappings.items) |mapping| {
+        const min_length = @min(mapping.guid.len, guid.len);
+        if (std.mem.eql(u8, mapping.guid[0..min_length], guid[0..min_length])) {
             return &mapping;
         }
     }
@@ -346,6 +347,8 @@ pub fn findValidMapping(joy: *const platform.InternalJoystick) ?*platform.Intern
                 return null;
             }
         }
+
+        return mapping;
     }
     return null;
 }
@@ -399,7 +402,6 @@ pub fn parseMapping(mapping: *platform.InternalMapping, str: []const u8) bool {
     if (!parser.maybe(',')) return false;
 
     lp: while (parser.peek(0)) |_| {
-        std.debug.print("{s}\n", .{parser.buf[parser.pos..]});
         var key_prefix: Prefix = key_prefix: {
             var is_pos = (parser.peek(0) orelse return false) == '+';
             var is_neg = (parser.peek(0) orelse return false) == '-';
@@ -410,7 +412,7 @@ pub fn parseMapping(mapping: *platform.InternalMapping, str: []const u8) bool {
         };
         _ = key_prefix;
         var key = parser.until(':');
-        if (!parser.maybe(':')) return;
+        if (!parser.maybe(':')) return false;
 
         var val_prefix: Prefix = val_prefix: {
             var is_pos = (parser.peek(0) orelse return false) == '+';
@@ -431,9 +433,9 @@ pub fn parseMapping(mapping: *platform.InternalMapping, str: []const u8) bool {
         };
 
         var value = parser.until(',');
-        if (!parser.maybe(',')) return;
+        if (!parser.maybe(',')) return false;
         const mapping_source = mapping_source_opt orelse {
-            std.debug.print("unknown mapping source: {s}\n", .{value});
+            // std.debug.print("unknown mapping source: {s}\n", .{value});
             continue :lp;
         };
 
@@ -553,6 +555,17 @@ pub fn getJoystickName(joy: definitions.Joystick) ?[]const u8 {
     return null;
 }
 
+pub fn getJoystickGuid(joy: definitions.Joystick) ?[32]u8 {
+    if (joystickFromDefinition(joy)) |internal_joy| {
+        if (!internal_joy.connected) return null;
+        const result: [32]u8 = undefined;
+        if (!platform.lib.platform.pollJoystick(internal_joy, .presence)) return null;
+        @memcpy(result[0..32], internal_joy.guid[0..32]);
+        return result;
+    }
+    return null;
+}
+
 pub fn setJoystickUserPointer(joy: definitions.Joystick, ptr: ?*void) void {
     if (joystickFromDefinition(joy)) |internal_joy| {
         if (!internal_joy.allocated) return;
@@ -577,9 +590,110 @@ pub fn setJoystickConnectionCallback(
     return cb;
 }
 
-// pub fn updateGamepadMappings(str: []const u8) bool {
+pub fn updateGamepadMappings(str: []const u8) !bool {
+    var parser = std.fmt.Parser{ .buf = str };
+    while (parser.peek(0)) |c| {
+        if (!std.ascii.isHex(c) or c == '#') {
+            _ = parser.until('\n');
+            _ = parser.char();
+            continue;
+        }
+        var mapping = platform.InternalMapping{};
+        if (!parseMapping(&mapping, parser.until('\n'))) {
+            return false;
+        }
+        if (findMapping(mapping.guid)) |previous_mapping| {
+            previous_mapping.* = mapping;
+        } else try platform.lib.mappings.append(platform.lib.allocator, mapping);
+    }
 
-// }
+    for (platform.lib.joysticks) |joy| {
+        if (!joy.connected) continue;
+        joy.mapping = findValidMapping(joy);
+    }
+
+    return true;
+}
+
+pub fn isJoystickGamepad(joy: definitions.Joystick) bool {
+    if (joystickFromDefinition(joy)) |internal_joy| {
+        if (!internal_joy.connected) return null;
+        return internal_joy.mapping != null;
+    }
+    return null;
+}
+
+pub fn getGamepadName(joy: definitions.Joystick) ?[]const u8 {
+    if (joystickFromDefinition(joy)) |internal_joy| {
+        if (!internal_joy.connected) return null;
+        if (internal_joy.mapping) |mapping| return std.mem.span(
+            @as([*:0]const u8, @ptrCast(mapping.name)),
+        ) else return null;
+    }
+    return null;
+}
+
+pub fn getGamepadState(joy: definitions.Joystick) ?definitions.GamepadState {
+    if (joystickFromDefinition(joy)) |internal_joy| {
+        if (!internal_joy.connected) return null;
+        if (!platform.lib.platform.pollJoystick(joy, .all)) return null;
+        if (internal_joy.mapping == null) return null;
+        var mapping = internal_joy.mapping.?;
+        var state = definitions.GamepadState{};
+        inline for (0..std.meta.fields(definitions.GamepadButton)) |i| {
+            const element = mapping.buttons[i];
+            switch (element.typ) {
+                .button => state.buttons[i] = internal_joy.buttons[@intCast(element.index)],
+                .axis => {
+                    const value = internal_joy.axes[element.index] * element.axis_scale + element.axis_offset;
+                    if (element.axis_offset < 0 or (element.axis_offset == 0 and element.axis_scale > 0)) {
+                        if (value >= 0.0) {
+                            state.buttons[i] = .press;
+                        }
+                    } else {
+                        if (value <= 0.0) {
+                            state.buttons[i] = .press;
+                        }
+                    }
+                },
+                .hatbit => {
+                    const hat = element.index >> 4;
+                    const bit = element.index & 0xF;
+                    if ((internal_joy.hats[hat] & bit) != 0) {
+                        state.buttons[i] = .press;
+                    }
+                },
+            }
+        }
+        inline for (0..std.meta.fields(definitions.GamepadAxis)) |i| {
+            const element = mapping.axes[i];
+            switch (element.typ) {
+                .axis => {
+                    const value = internal_joy.axes[element.index] * element.axis_scale + element.axis_offset;
+                    state.axes[i] = @min(@max(value, -1.0), 1.0);
+                },
+                .hatbit => {
+                    const hat = element.index >> 4;
+                    const bit = element.index & 0xF;
+                    if ((internal_joy.hats[hat] & bit) != 0) {
+                        state.axes[i] = 1.0;
+                    } else {
+                        state.axes[i] = -1.0;
+                    }
+                },
+                .button => {
+                    state.axes[i] = internal_joy.buttons[
+                        @intCast(
+                            element.index,
+                        )
+                    ].toFloat() * 1.0 - 1.0;
+                },
+            }
+        }
+        return state;
+    }
+    return null;
+}
 
 fn joystickFromDefinition(joy: definitions.Joystick) ?*platform.InternalJoystick {
     if (!initJoysticks()) return null;
