@@ -290,6 +290,8 @@ pub const VideoMode = struct {
     blue_bits: i32,
     refresh_rate: i32,
 
+    pub const ignore_field = -1;
+
     pub fn less(_: void, self: *const VideoMode, other: *const VideoMode) bool {
         return self.order(other) == .lt;
     }

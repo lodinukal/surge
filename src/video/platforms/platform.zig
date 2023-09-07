@@ -118,14 +118,14 @@ pub const InternalWindow = struct {
         maximise: ?window.WindowMaximiseCallback,
         framebuffer_changed: ?window.WindowFramebufferChangedCallback,
         content_scale: ?window.WindowContentScaleCallback,
-        mouse_button: ?input.WindowMouseButtonCallback,
-        cursor_pos: ?input.WindowCursorPosCallback,
-        cursor_enter: ?input.WindowCursorEnterCallback,
-        scroll: ?input.WindowScrollCallback,
-        key: ?input.WindowKeyCallback,
-        char: ?input.WindowCharCallback,
-        char_mods: ?input.WindowCharModsCallback,
-        drop: ?input.WindowDropCallback,
+        mouse_button: ?WindowMouseButtonCallback,
+        cursor_pos: ?WindowCursorPosCallback,
+        cursor_enter: ?WindowCursorEnterCallback,
+        scroll: ?WindowScrollCallback,
+        key: ?WindowKeyCallback,
+        char: ?WindowCharCallback,
+        char_mods: ?WindowCharModsCallback,
+        drop: ?WindowDropCallback,
     },
     platform: impl.PlatformWindow,
 };
@@ -214,7 +214,7 @@ pub const InternalPlatform = struct {
     getMonitorContentScale: fn (monitor: *InternalMonitor) struct { x: f32, y: f32 },
     getMonitorWorkarea: fn (monitor: *InternalMonitor) struct { x: i32, y: i32, width: i32, height: i32 },
     getVideoModes: fn (monitor: *InternalMonitor) ?[]definitions.VideoMode,
-    getVideoMode: fn (monitor: *InternalMonitor) *const definitions.VideoMode,
+    getVideoMode: fn (monitor: *InternalMonitor) definitions.VideoMode,
     getGammaRamp: fn (monitor: *InternalMonitor) ?definitions.GammaRamp,
     setGammaRamp: fn (monitor: *InternalMonitor, ramp: *const definitions.GammaRamp) void,
 
@@ -1374,7 +1374,214 @@ fn freeGammaRamp(ramp: *definitions.GammaRamp) void {
 fn chooseVideoMode(
     mon: *InternalMonitor,
     desired: *const definitions.VideoMode,
-) *const definitions.VideoMode {
-    _ = desired;
-    _ = mon;
+) ?*const definitions.VideoMode {
+    if (!refreshVideoModes(mon)) {
+        return null;
+    }
+
+    var least_size_diff: u32 = std.math.maxInt(u32);
+    var least_rate_diff: u32 = std.math.maxInt(u32);
+    var least_colour_diff: u32 = std.math.maxInt(u32);
+
+    var best_mode: ?*const definitions.VideoMode = null;
+
+    for (mon.modes.items) |mode| {
+        const colour_diff: u32 = blk: {
+            var value: u32 = 0;
+            if (desired.red_bits != definitions.VideoMode.ignore_field) {
+                value += std.math.absInt(mode.red_bits - desired.red_bits);
+            }
+            if (desired.green_bits != definitions.VideoMode.ignore_field) {
+                value += std.math.absInt(mode.green_bits - desired.green_bits);
+            }
+            if (desired.blue_bits != definitions.VideoMode.ignore_field) {
+                value += std.math.absInt(mode.blue_bits - desired.blue_bits);
+            }
+            break :blk value;
+        };
+
+        const size_diff: u32 = std.math.absInt((mode.width - desired.width) ^
+            2 + (mode.height - desired.height) ^ 2);
+
+        const rate_diff: u32 = blk: {
+            if (desired.refresh_rate != definitions.VideoMode.ignore_field) {
+                break :blk std.math.absInt(mode.refresh_rate - desired.refresh_rate);
+            } else break @as(u32, std.math.maxInt(u32)) - mode.refresh_rate;
+        };
+
+        if ((colour_diff < least_colour_diff) or
+            (colour_diff == least_colour_diff and
+            size_diff < least_size_diff) or
+            (colour_diff == least_colour_diff and
+            size_diff == least_size_diff and
+            rate_diff < least_rate_diff))
+        {
+            best_mode = mode;
+            least_colour_diff = colour_diff;
+            least_size_diff = size_diff;
+            least_rate_diff = rate_diff;
+        }
+    }
+
+    return best_mode;
+}
+
+const BitsPerPixelResult = struct { red: i32, green: i32, blue: i32 };
+fn splitBitsPerPixel(bits: i32) BitsPerPixelResult {
+    if (bits == 32) bits = 24;
+    const initial_bits_per_pixel = @divTrunc(bits, @as(i32, 3));
+    var result = BitsPerPixelResult{
+        .red = initial_bits_per_pixel,
+        .green = initial_bits_per_pixel,
+        .blue = initial_bits_per_pixel,
+    };
+    const remainder = bits - initial_bits_per_pixel * 3;
+    if (remainder >= 1) {
+        result.green += remainder;
+    }
+    if (remainder == 2) {
+        result.blue += 1;
+    }
+    return result;
+}
+
+pub fn getMonitors() []*monitor.Monitor {
+    return @ptrCast(lib.monitors.items);
+}
+
+pub fn getPrimaryMonitor() ?*monitor.Monitor {
+    if (lib.monitors.items.len == 0) {
+        return null;
+    }
+    return @ptrCast(lib.monitors.items[0]);
+}
+
+pub fn getMonitorPos(mon: *const monitor.Monitor) struct { x: i32, y: i32 } {
+    const internal_monitor = monitorFromPublic(mon);
+    return lib.platform.getMonitorPos(internal_monitor);
+}
+
+pub fn getMonitorWorkarea(mon: *const monitor.Monitor) struct {
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+} {
+    const internal_monitor = monitorFromPublic(mon);
+    return lib.platform.getMonitorWorkarea(internal_monitor);
+}
+
+pub fn getMonitorPhysicalSize(mon: *const monitor.Monitor) struct {
+    width: i32,
+    height: i32,
+} {
+    const internal_monitor = monitorFromPublic(mon);
+    return .{
+        .width = internal_monitor.width_mm,
+        .height = internal_monitor.height_mm,
+    };
+}
+
+pub fn getMonitorContentScale(mon: *const monitor.Monitor) struct {
+    x: f32,
+    y: f32,
+} {
+    const internal_monitor = monitorFromPublic(mon);
+    return lib.platform.getMonitorContentScale(internal_monitor);
+}
+
+pub fn getMonitorName(mon: *const monitor.Monitor) []const u8 {
+    const internal_monitor = monitorFromPublic(mon);
+    return std.mem.span(
+        @as([*:0]const u8, @ptrCast(internal_monitor.name)),
+    );
+}
+
+pub fn setMonitorUserPointer(mon: *const monitor.Monitor, ptr: ?*void) void {
+    const internal_monitor = monitorFromPublic(mon);
+    internal_monitor.user_pointer = ptr;
+}
+
+pub fn getMonitorUserPointer(mon: *const monitor.Monitor) ?*void {
+    const internal_monitor = monitorFromPublic(mon);
+    return internal_monitor.user_pointer;
+}
+
+pub fn setMonitorConnectionCallback(
+    cb: monitor.MonitorConnectionCallback,
+) monitor.MonitorConnectionCallback {
+    std.mem.swap(monitor.MonitorConnectionCallback, &lib.callbacks.monitor, &cb);
+    return cb;
+}
+
+pub fn getVideoModes(mon: *monitor.Monitor) []definitions.VideoMode {
+    const internal_monitor = monitorFromPublic(mon);
+    if (!refreshVideoModes(internal_monitor)) {
+        return null;
+    }
+    return @ptrCast(internal_monitor.modes.items);
+}
+
+pub fn getVideoMode(mon: *monitor.Monitor) definitions.VideoMode {
+    const internal_monitor = monitorFromPublic(mon);
+    internal_monitor.current_mode = lib.platform.getVideoMode(internal_monitor);
+    return internal_monitor.current_mode;
+}
+
+pub fn setGamma(mon: *monitor.Monitor, gamma: f32) !void {
+    const internal_monitor = monitorFromPublic(mon);
+    _ = internal_monitor;
+
+    const original = getGammaRamp(mon) orelse return;
+    const size = original.red.len;
+    const values = try lib.allocator.alloc(u16, size);
+
+    for (values, 0..) |*val, i| {
+        const float_i: f32 = @floatFromInt(i);
+        var set_val = float_i / @as(f32, @floatFromInt(size - 1));
+        set_val = std.math.pow(set_val, @as(f32, 1.0) / gamma) * 65535.0 + 0.5;
+        set_val = @min(set_val, 65535.0);
+        val.* = @as(u16, @intFromFloat(set_val));
+    }
+
+    const ramp = definitions.GammaRamp{
+        .red = values,
+        .green = values,
+        .blue = values,
+    };
+
+    setGammaRamp(mon, &ramp);
+    lib.allocator.free(values);
+}
+
+pub fn getGammaRamp(mon: *monitor.Monitor) ?*const definitions.GammaRamp {
+    const internal_monitor = monitorFromPublic(mon);
+    if (internal_monitor.current_ramp) |ramp| {
+        freeGammaRamp(&ramp);
+    }
+    if (lib.platform.getGammaRamp(mon)) |ramp| {
+        internal_monitor.current_ramp = ramp;
+        return ramp;
+    }
+    return null;
+}
+
+pub fn setGammaRamp(mon: *monitor.Monitor, ramp: *const definitions.GammaRamp) !void {
+    const internal_monitor = monitorFromPublic(mon);
+    if (ramp.red.len <= 0) {
+        return error.InvalidSize;
+    }
+
+    if (internal_monitor.original_ramp == null) {
+        internal_monitor.original_ramp = lib.platform.getGammaRamp(internal_monitor);
+        if (internal_monitor.original_ramp == null) {
+            return;
+        }
+    }
+
+    lib.platform.setGammaRamp(internal_monitor, ramp);
+}
+
+pub fn monitorFromPublic(mon: *monitor.Monitor) *InternalMonitor {
+    return @ptrCast(mon);
 }
