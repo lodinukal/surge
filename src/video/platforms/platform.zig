@@ -23,58 +23,6 @@ pub const Poll = enum {
     all, // axes | buttons
 };
 
-pub const InternalWindowConfig = struct {
-    xpos: i32,
-    ypos: i32,
-    width: i32,
-    height: i32,
-    title: []const u8,
-    resizable: bool,
-    decorated: bool,
-    focused: bool,
-    auto_iconify: bool,
-    floating: bool,
-    maximized: bool,
-    center_cursor: bool,
-    focus_on_show: bool,
-    mouse_passthrough: bool,
-    scale_to_monitor: bool,
-    ns: struct {
-        retina: bool,
-        frame_name: [256]u8,
-    },
-    x11: struct {
-        class_name: [256]u8,
-        instance_name: [256]u8,
-    },
-    windows: struct {
-        keymenu: bool,
-    },
-    wl: struct {
-        app_id: [256]u8,
-    },
-};
-
-pub const InternalFramebufferConfig = struct {
-    red_bits: i32,
-    green_bits: i32,
-    blue_bits: i32,
-    alpha_bits: i32,
-    depth_bits: i32,
-    stencil_bits: i32,
-    accum_red_bits: i32,
-    accum_green_bits: i32,
-    accum_blue_bits: i32,
-    accum_alpha_bits: i32,
-    aux_buffers: i32,
-    stereo: bool,
-    samples: i32,
-    srgb: bool,
-    doublebuffer: bool,
-    transparent: bool,
-    handle: usize,
-};
-
 pub const InternalWindow = struct {
     next_window: ?*InternalWindow,
     resizable: bool,
@@ -84,17 +32,17 @@ pub const InternalWindow = struct {
     focus_on_show: bool,
     mouse_passthrough: bool,
     should_close: bool,
-    user_pointer: *void,
+    user_pointer: ?*void = null,
     double_buffer: bool,
     video_mode: definitions.VideoMode,
-    monitor: *monitor.Monitor,
+    monitor: ?*monitor.Monitor,
     cursor: ?*Cursor = null,
-    min_width: i32,
-    min_height: i32,
-    max_width: i32,
-    max_height: i32,
-    numer: i32,
-    denom: i32,
+    min_width: ?i32,
+    min_height: ?i32,
+    max_width: ?i32,
+    max_height: ?i32,
+    numer: ?i32,
+    denom: ?i32,
     sticky_keys: bool,
     sticky_mouse_buttons: bool,
     lock_key_mods: bool,
@@ -218,10 +166,10 @@ pub const InternalPlatform = struct {
     getGammaRamp: fn (monitor: *InternalMonitor) ?definitions.GammaRamp,
     setGammaRamp: fn (monitor: *InternalMonitor, ramp: *const definitions.GammaRamp) void,
 
-    createWindow: fn (cfg: *const InternalWindowConfig, fbcfg: *const InternalFramebufferConfig) ?*InternalWindow,
+    createWindow: fn (wnd: *InternalWindow, cfg: *const definitions.WindowConfig, fbcfg: *const definitions.FramebufferConfig) bool,
     destroyWindow: fn (wnd: *InternalWindow) void,
     setWindowTitle: fn (wnd: *InternalWindow, title: []const u8) void,
-    setWindowIcon: fn (wnd: *InternalWindow, img: *const definitions.Image) void,
+    setWindowIcons: fn (wnd: *InternalWindow, imgs: []*const definitions.Image) void,
     getWindowPos: fn (wnd: *InternalWindow) struct { x: i32, y: i32 },
     setWindowPos: fn (wnd: *InternalWindow, xpos: i32, ypos: i32) void,
     getWindowSize: fn (wnd: *InternalWindow) struct { width: i32, height: i32 },
@@ -233,7 +181,7 @@ pub const InternalPlatform = struct {
     getWindowContentScale: fn (wnd: *InternalWindow) struct { x: f32, y: f32 },
     iconifyWindow: fn (wnd: *InternalWindow) void,
     restoreWindow: fn (wnd: *InternalWindow) void,
-    maximizeWindow: fn (wnd: *InternalWindow) void,
+    maximiseWindow: fn (wnd: *InternalWindow) void,
     showWindow: fn (wnd: *InternalWindow) void,
     hideWindow: fn (wnd: *InternalWindow) void,
     requestWindowAttention: fn (wnd: *InternalWindow) void,
@@ -245,12 +193,12 @@ pub const InternalPlatform = struct {
         ypos: i32,
         width: i32,
         height: i32,
-        refresh_rate: i32,
+        refresh_rate: ?i32,
     ) void,
     isWindowFocused: fn (wnd: *InternalWindow) bool,
     isWindowIconified: fn (wnd: *InternalWindow) bool,
     isWindowVisible: fn (wnd: *InternalWindow) bool,
-    isWindowMaximized: fn (wnd: *InternalWindow) bool,
+    isWindowMaximised: fn (wnd: *InternalWindow) bool,
     isWindowHovered: fn (wnd: *InternalWindow) bool,
     isFramebufferTransparent: fn (wnd: *InternalWindow) bool,
     getWindowOpacity: fn (wnd: *InternalWindow) f32,
@@ -291,16 +239,7 @@ pub const InternalLibrary = struct {
 
 pub var lib = InternalLibrary{};
 
-pub fn initTimer() void {
-    lib.timer.platform.init();
-}
-pub fn getTimerValue() u64 {
-    return lib.timer.platform.getTimerValue();
-}
-pub fn getTimerFrequency() u64 {
-    return lib.timer.platform.getTimerFrequency();
-}
-
+// window
 pub fn inputWindowFocus(wnd: *InternalWindow, focused: bool) void {
     if (wnd.callbacks.focus) |f| {
         f(@ptrCast(wnd), focused);
@@ -381,6 +320,429 @@ pub fn inputWindowCloseRequest(wnd: *InternalWindow) void {
 
 pub fn inputWindowMonitor(wnd: *InternalWindow, mn: *InternalMonitor) void {
     wnd.monitor = mn;
+}
+
+pub fn createWindow(
+    cfg: *const definitions.WindowConfig,
+    fbcfg: *const definitions.FramebufferConfig,
+    mon: ?*monitor.Monitor,
+    refresh_rate: ?i32,
+) ?*window.Window {
+    var wnd: *InternalWindow = lib.allocator.create(InternalWindow) catch return null;
+    wnd.* = undefined;
+
+    wnd.next_window = lib.window_head;
+    lib.window_head = wnd;
+
+    wnd.video_mode.width = cfg.width;
+    wnd.video_mode.height = cfg.height;
+    wnd.video_mode.red_bits = fbcfg.red_bits;
+    wnd.video_mode.green_bits = fbcfg.green_bits;
+    wnd.video_mode.blue_bits = fbcfg.blue_bits;
+    wnd.video_mode.refresh_rate = refresh_rate;
+
+    wnd.monitor = if (mon) |m| @ptrCast(m) else null;
+    wnd.resizable = cfg.resizable;
+    wnd.decorated = cfg.decorated;
+    wnd.auto_iconify = cfg.auto_iconify;
+    wnd.floating = cfg.floating;
+    wnd.focus_on_show = cfg.focus_on_show;
+    wnd.mouse_passthrough = cfg.mouse_passthrough;
+    wnd.cursor_mode = cfg.cursor_mode;
+
+    wnd.double_buffer = fbcfg.double_buffer;
+
+    wnd.min_height = null;
+    wnd.min_width = null;
+    wnd.max_height = null;
+    wnd.max_width = null;
+    wnd.numer = null;
+    wnd.denom = null;
+
+    if (!lib.platform.createWindow(wnd, cfg, fbcfg)) {
+        lib.allocator.destroy(wnd);
+        return null;
+    }
+
+    return @ptrCast(wnd);
+}
+
+pub fn destroyWindow(wnd: *window.Window) void {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+
+    lib.platform.destroyWindow(internal_window);
+
+    var prev = &lib.window_head;
+    while (prev.* != null and prev.* != internal_window) {
+        prev = prev.*.?.next_window;
+    }
+    prev.* = internal_window.next_window;
+
+    lib.allocator.destroy(internal_window);
+}
+
+pub fn windowShouldClose(wnd: *window.Window) bool {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+    return internal_window.should_close;
+}
+
+pub fn setWindowShouldClose(wnd: *window.Window, value: bool) void {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+    internal_window.should_close = value;
+}
+
+pub fn setWindowTitle(wnd: *window.Window, title: []const u8) void {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+    lib.platform.setWindowTitle(internal_window, title);
+}
+
+pub fn setWindowIcons(wnd: *window.Window, images: []*const definitions.Image) !void {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+
+    for (images) |image| {
+        if (image.width <= 0 or image.height <= 0) {
+            return error.InvalidValue;
+        }
+    }
+
+    lib.platform.setWindowIcon(internal_window, images[0]);
+}
+
+pub fn getWindowPos(wnd: *window.Window) struct { x: i32, y: i32 } {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+    return lib.platform.getWindowPos(internal_window);
+}
+
+pub fn setWindowPos(wnd: *window.Window, xpos: i32, ypos: i32) void {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+    lib.platform.setWindowPos(internal_window, xpos, ypos);
+}
+
+pub fn getWindowSize(wnd: *window.Window) struct { width: i32, height: i32 } {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+    return lib.platform.getWindowSize(internal_window);
+}
+
+pub fn setWindowSize(wnd: *window.Window, width: i32, height: i32) void {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+    internal_window.video_mode.width = width;
+    internal_window.video_mode.height = height;
+    lib.platform.setWindowSize(internal_window, width, height);
+}
+
+pub fn setWindowSizeLimits(
+    wnd: *window.Window,
+    minwidth: i32,
+    minheight: i32,
+    maxwidth: i32,
+    maxheight: i32,
+) void {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+    internal_window.min_width = minwidth;
+    internal_window.min_height = minheight;
+    internal_window.max_width = maxwidth;
+    internal_window.max_height = maxheight;
+
+    if (internal_window.monitor != null or !internal_window.resizable) {
+        return;
+    }
+
+    lib.platform.setWindowSizeLimits(
+        internal_window,
+        minwidth,
+        minheight,
+        maxwidth,
+        maxheight,
+    );
+}
+
+pub fn setWindowAspectRatio(wnd: *window.Window, numer: i32, denom: i32) !void {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+
+    if (numer <= 0 or denom <= 0) {
+        return error.InvalidValue;
+    }
+    internal_window.numer = numer;
+    internal_window.denom = denom;
+
+    if (internal_window.monitor != null or !internal_window.resizable) {
+        return;
+    }
+
+    lib.platform.setWindowAspectRatio(internal_window, numer, denom);
+}
+
+pub fn getFramebufferSize(wnd: *window.Window) struct { width: i32, height: i32 } {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+    return lib.platform.getFramebufferSize(internal_window);
+}
+
+pub fn getWindowFrameSize(wnd: *window.Window) struct { left: i32, top: i32, right: i32, bottom: i32 } {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+    return lib.platform.getWindowFrameSize(internal_window);
+}
+
+pub fn getWindowContentScale(wnd: *window.Window) struct { x: f32, y: f32 } {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+    return lib.platform.getWindowContentScale(internal_window);
+}
+
+pub fn getWindowOpacity(wnd: *window.Window) f32 {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+    return lib.platform.getWindowOpacity(internal_window);
+}
+
+pub fn setWindowOpacity(wnd: *window.Window, opacity: f32) !void {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+
+    if (std.math.isNormal(opacity) or opacity < 0.0 or opacity > 1.0) {
+        return error.InvalidValue;
+    }
+
+    lib.platform.setWindowOpacity(internal_window, opacity);
+}
+
+pub fn iconifiyWindow(wnd: *window.Window) void {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+    lib.platform.iconifyWindow(internal_window);
+}
+
+pub fn restoreWindow(wnd: *window.Window) void {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+    lib.platform.restoreWindow(internal_window);
+}
+
+pub fn maximiseWindow(wnd: *window.Window) void {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+    lib.platform.maximiseWindow(internal_window);
+}
+
+pub fn showWindow(wnd: *window.Window) void {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+
+    if (internal_window.monitor) {
+        return;
+    }
+
+    lib.platform.showWindow(internal_window);
+
+    if (internal_window.focus_on_show) {
+        lib.platform.focusWindow(internal_window);
+    }
+}
+
+pub fn requestWindowAttention(wnd: *window.Window) void {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+    lib.platform.requestWindowAttention(internal_window);
+}
+
+pub fn hideWindow(wnd: *window.Window) void {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+    lib.platform.hideWindow(internal_window);
+}
+
+pub fn focusWindow(wnd: *window.Window) void {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+    lib.platform.focusWindow(internal_window);
+}
+
+pub fn getWindowFlags(wnd: *window.Window) definitions.WindowFlags {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+    var flags = definitions.WindowFlags{};
+
+    flags.focused = lib.platform.isWindowFocused(internal_window);
+    flags.iconified = lib.platform.isWindowIconified(internal_window);
+    flags.visible = lib.platform.isWindowVisible(internal_window);
+    flags.maximised = lib.platform.isWindowMaximised(internal_window);
+    flags.hovered = lib.platform.isWindowHovered(internal_window);
+    flags.focus_on_show = internal_window.focus_on_show;
+    flags.mouse_passthrough = internal_window.mouse_passthrough;
+    flags.transparent = lib.platform.isFramebufferTransparent(internal_window);
+    flags.resizable = internal_window.resizable;
+    flags.decorated = internal_window.decorated;
+    flags.auto_iconify = internal_window.auto_iconify;
+    flags.double_buffer = internal_window.double_buffer;
+    flags.floating = internal_window.floating;
+
+    return flags;
+}
+
+pub fn setWindowFlags(wnd: *window.Window, flags: definitions.WindowFlags) void {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+
+    if (internal_window.auto_iconify != flags.auto_iconify) {
+        internal_window.auto_iconify = flags.auto_iconify;
+    }
+    if (internal_window.resizable != flags.resizable) {
+        internal_window.resizable = flags.resizable;
+        if (internal_window.monitor == null) {
+            lib.platform.setWindowResizable(internal_window, flags.resizable);
+        }
+    }
+    if (internal_window.decorated != flags.decorated) {
+        internal_window.decorated = flags.decorated;
+        if (internal_window.monitor == null) {
+            lib.platform.setWindowDecorated(internal_window, flags.decorated);
+        }
+    }
+    if (internal_window.floating != flags.floating) {
+        internal_window.floating = flags.floating;
+        if (internal_window.monitor == null) {
+            lib.platform.setWindowFloating(internal_window, flags.floating);
+        }
+    }
+    if (internal_window.focus_on_show != flags.focus_on_show) {
+        internal_window.focus_on_show = flags.focus_on_show;
+    }
+    if (internal_window.mouse_passthrough != flags.mouse_passthrough) {
+        internal_window.mouse_passthrough = flags.mouse_passthrough;
+        lib.platform.setWindowMousePassthrough(
+            internal_window,
+            flags.mouse_passthrough,
+        );
+    }
+}
+
+pub fn getWindowMonitor(wnd: *window.Window) ?*monitor.Monitor {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+    return if (internal_window.monitor) |m| @ptrCast(m) else null;
+}
+
+pub fn setWindowMonitor(
+    wnd: *window.Window,
+    mon: ?*monitor.Monitor,
+    xpos: i32,
+    ypos: i32,
+    width: i32,
+    height: i32,
+    refresh_rate: ?i32,
+) !void {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+
+    if (width < 0 or height < 0) {
+        return error.InvalidValue;
+    }
+
+    if (refresh_rate) |rate| {
+        if (rate <= 0) {
+            return error.InvalidValue;
+        }
+    }
+
+    internal_window.video_mode.width = width;
+    internal_window.video_mode.height = height;
+    internal_window.video_mode.refresh_rate = refresh_rate;
+
+    if (mon) {
+        internal_window.monitor = @ptrCast(mon);
+    }
+
+    lib.platform.setWindowMonitor(
+        internal_window,
+        internal_window.monitor,
+        xpos,
+        ypos,
+        width,
+        height,
+        refresh_rate,
+    );
+}
+
+pub fn setWindowUserPointer(wnd: *window.Window, pointer: ?*void) void {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+    internal_window.user_pointer = pointer;
+}
+
+pub fn getWindowUserPointer(wnd: *window.Window) ?*void {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+    return internal_window.user_pointer;
+}
+
+pub fn setWindowPosCallback(wnd: *window.Window, cb: ?window.WindowPosCallback) ?window.WindowPosCallback {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+    std.mem.swap(?window.WindowPosCallback, &internal_window.callbacks.pos, &cb);
+    return cb;
+}
+
+pub fn setWindowSizeCallback(wnd: *window.Window, cb: ?window.WindowSizeCallback) ?window.WindowSizeCallback {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+    std.mem.swap(?window.WindowSizeCallback, &internal_window.callbacks.size, &cb);
+    return cb;
+}
+
+pub fn setWindowCloseCallback(wnd: *window.Window, cb: ?window.WindowCloseCallback) ?window.WindowCloseCallback {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+    std.mem.swap(?window.WindowCloseCallback, &internal_window.callbacks.close, &cb);
+    return cb;
+}
+
+pub fn setWindowRefreshCallback(wnd: *window.Window, cb: ?window.WindowRefreshCallback) ?window.WindowRefreshCallback {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+    std.mem.swap(?window.WindowRefreshCallback, &internal_window.callbacks.refresh, &cb);
+    return cb;
+}
+
+pub fn setWindowFocusCallback(wnd: *window.Window, cb: ?window.WindowFocusCallback) ?window.WindowFocusCallback {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+    std.mem.swap(?window.WindowFocusCallback, &internal_window.callbacks.focus, &cb);
+    return cb;
+}
+
+pub fn setWindowIconifyCallback(wnd: *window.Window, cb: ?window.WindowIconifyCallback) ?window.WindowIconifyCallback {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+    std.mem.swap(?window.WindowIconifyCallback, &internal_window.callbacks.iconify, &cb);
+    return cb;
+}
+
+pub fn setWindowMaximiseCallback(wnd: *window.Window, cb: ?window.WindowMaximiseCallback) ?window.WindowMaximiseCallback {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+    std.mem.swap(?window.WindowMaximiseCallback, &internal_window.callbacks.maximise, &cb);
+    return cb;
+}
+
+pub fn setWindowFramebufferChangedCallback(
+    wnd: *window.Window,
+    cb: ?window.WindowFramebufferChangedCallback,
+) ?window.WindowFramebufferChangedCallback {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+    std.mem.swap(?window.WindowFramebufferChangedCallback, &internal_window.callbacks.framebuffer_changed, &cb);
+    return cb;
+}
+
+pub fn setWindowContentScaleCallback(
+    wnd: *window.Window,
+    cb: ?window.WindowContentScaleCallback,
+) ?window.WindowContentScaleCallback {
+    const internal_window: *InternalWindow = @ptrCast(wnd);
+    std.mem.swap(?window.WindowContentScaleCallback, &internal_window.callbacks.content_scale, &cb);
+    return cb;
+}
+
+pub fn pollEvents() void {
+    lib.platform.pollEvents();
+}
+
+pub fn waitEvents() void {
+    lib.platform.waitEvents();
+}
+
+pub fn waitEventsTimeout(timeout: f64) void {
+    lib.platform.waitEventsTimeout(timeout);
+}
+
+pub fn postEmptyEvent() void {
+    lib.platform.postEmptyEvent();
+}
+
+// input
+pub fn initTimer() void {
+    lib.timer.platform.init();
+}
+pub fn getTimerValue() u64 {
+    return lib.timer.platform.getTimerValue();
+}
+pub fn getTimerFrequency() u64 {
+    return lib.timer.platform.getTimerFrequency();
 }
 
 pub fn inputKey(
@@ -1388,14 +1750,14 @@ fn chooseVideoMode(
     for (mon.modes.items) |mode| {
         const colour_diff: u32 = blk: {
             var value: u32 = 0;
-            if (desired.red_bits != definitions.VideoMode.ignore_field) {
-                value += std.math.absInt(mode.red_bits - desired.red_bits);
+            if (desired.red_bits) |b| {
+                value += std.math.absInt(mode.red_bits.? - b);
             }
-            if (desired.green_bits != definitions.VideoMode.ignore_field) {
-                value += std.math.absInt(mode.green_bits - desired.green_bits);
+            if (desired.green_bits) |b| {
+                value += std.math.absInt(mode.green_bits.? - b);
             }
-            if (desired.blue_bits != definitions.VideoMode.ignore_field) {
-                value += std.math.absInt(mode.blue_bits - desired.blue_bits);
+            if (desired.blue_bits) |b| {
+                value += std.math.absInt(mode.blue_bits.? - b);
             }
             break :blk value;
         };
@@ -1404,9 +1766,9 @@ fn chooseVideoMode(
             2 + (mode.height - desired.height) ^ 2);
 
         const rate_diff: u32 = blk: {
-            if (desired.refresh_rate != definitions.VideoMode.ignore_field) {
-                break :blk std.math.absInt(mode.refresh_rate - desired.refresh_rate);
-            } else break @as(u32, std.math.maxInt(u32)) - mode.refresh_rate;
+            if (desired.refresh_rate) |rate| {
+                break :blk std.math.absInt(mode.refresh_rate.? - rate);
+            } else break @as(u32, std.math.maxInt(u32)) - mode.refresh_rate.?;
         };
 
         if ((colour_diff < least_colour_diff) or
@@ -1446,7 +1808,10 @@ fn splitBitsPerPixel(bits: i32) BitsPerPixelResult {
 }
 
 pub fn getMonitors() []*monitor.Monitor {
-    return @ptrCast(lib.monitors.items);
+    return std.mem.bytesAsSlice(
+        *monitor.Monitor,
+        std.mem.sliceAsBytes(lib.monitors.items),
+    );
 }
 
 pub fn getPrimaryMonitor() ?*monitor.Monitor {
@@ -1519,7 +1884,10 @@ pub fn getVideoModes(mon: *monitor.Monitor) []definitions.VideoMode {
     if (!refreshVideoModes(internal_monitor)) {
         return null;
     }
-    return @ptrCast(internal_monitor.modes.items);
+    return std.mem.bytesAsSlice(
+        definitions.VideoMode,
+        std.mem.sliceAsBytes(internal_monitor.modes.items),
+    );
 }
 
 pub fn getVideoMode(mon: *monitor.Monitor) definitions.VideoMode {

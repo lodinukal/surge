@@ -260,10 +260,65 @@ pub const WindowFlags = packed struct {
     maximised: bool = false,
     centre_cursor: bool = true,
     transparent_framebuffer: bool = false,
+    double_buffer: bool = true,
     hovered: bool = false,
     focus_on_show: bool = true,
     mouse_passthrough: bool = false,
-    initial_position: ?struct { i32, i32 },
+    // initial_position: ?struct { i32, i32 },
+};
+
+pub const WindowConfig = struct {
+    pub const any_position: i32 = -1;
+
+    xpos: i32 = any_position,
+    ypos: i32 = any_position,
+    width: i32 = 0,
+    height: i32 = 0,
+    title: []const u8 = "",
+    resizable: bool = true,
+    decorated: bool = true,
+    focused: bool = false,
+    auto_iconify: bool = true,
+    floating: bool = false,
+    maximised: bool = false,
+    center_cursor: bool = true,
+    focus_on_show: bool = true,
+    mouse_passthrough: bool = false,
+    scale_to_monitor: bool = false,
+    ns: struct {
+        retina: bool = true,
+        frame_name: [256]u8 = undefined,
+    },
+    x11: struct {
+        class_name: [256]u8 = undefined,
+        instance_name: [256]u8 = undefined,
+    },
+    windows: struct {
+        keymenu: bool = false,
+    },
+    wl: struct {
+        app_id: [256]u8 = undefined,
+    },
+};
+
+pub const FramebufferConfig = struct {
+    red_bits: i32 = 8,
+    green_bits: i32 = 8,
+    blue_bits: i32 = 8,
+    alpha_bits: i32 = 8,
+    depth_bits: i32 = 8,
+    stencil_bits: i32 = 8,
+    accum_red_bits: i32 = 0,
+    accum_green_bits: i32 = 0,
+    accum_blue_bits: i32 = 0,
+    accum_alpha_bits: i32 = 0,
+    aux_buffers: i32 = 0,
+    stereo: bool = false,
+    samples: i32 = 0,
+    srgb: bool = false,
+    doublebuffer: bool = true,
+    transparent: bool = false,
+    handle: usize = 0,
 };
 
 pub const CursorShape = enum {
@@ -285,12 +340,10 @@ pub const CursorShape = enum {
 pub const VideoMode = struct {
     width: i32,
     height: i32,
-    red_bits: i32,
-    green_bits: i32,
-    blue_bits: i32,
-    refresh_rate: i32,
-
-    pub const ignore_field = -1;
+    red_bits: ?i32,
+    green_bits: ?i32,
+    blue_bits: ?i32,
+    refresh_rate: ?i32,
 
     pub fn less(_: void, self: *const VideoMode, other: *const VideoMode) bool {
         return self.order(other) == .lt;
