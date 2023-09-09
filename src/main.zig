@@ -8,13 +8,6 @@ pub fn main() !void {
     var alloc = gpa.allocator();
     _ = alloc;
 
-    const p = struct {
-        y: fn () void,
-    };
-    const n = p{ .y = x };
-    n.y();
-}
-
-pub fn x() void {
-    std.debug.print("{}\n", .{1});
+    var values: [3][256]std.os.windows.WORD = [1][256]std.os.windows.WORD{[1]std.os.windows.WORD{0} ** 256} ** 3;
+    @compileLog(values);
 }

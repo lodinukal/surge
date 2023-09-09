@@ -138,7 +138,7 @@ pub const InternalPlatform = struct {
     init: fn () definitions.Error!void,
     deinit: fn () void,
 
-    getCursorPos: fn (wnd: *InternalWindow) struct { x: f64, y: f64 },
+    getCursorPos: fn (wnd: *InternalWindow) definitions.DoublePosition,
     setCursorPos: fn (wnd: *InternalWindow, x: f64, y: f64) void,
     setCursorMode: fn (wnd: *InternalWindow, mode: definitions.CursorMode) void,
     setRawMouseMotion: fn (wnd: *InternalWindow, enabled: bool) void,
@@ -158,9 +158,9 @@ pub const InternalPlatform = struct {
     updateGamepadGuid: fn (n: []u8) void,
 
     freeMonitor: fn (monitor: *InternalMonitor) void,
-    getMonitorPos: fn (monitor: *InternalMonitor) struct { x: i32, y: i32 },
-    getMonitorContentScale: fn (monitor: *InternalMonitor) struct { x: f32, y: f32 },
-    getMonitorWorkarea: fn (monitor: *InternalMonitor) struct { x: i32, y: i32, width: i32, height: i32 },
+    getMonitorPos: fn (monitor: *InternalMonitor) definitions.Position,
+    getMonitorContentScale: fn (monitor: *InternalMonitor) ?definitions.FloatPosition,
+    getMonitorWorkarea: fn (monitor: *InternalMonitor) definitions.Rect,
     getVideoModes: fn (monitor: *InternalMonitor) ?[]definitions.VideoMode,
     getVideoMode: fn (monitor: *InternalMonitor) definitions.VideoMode,
     getGammaRamp: fn (monitor: *InternalMonitor) ?definitions.GammaRamp,
@@ -170,15 +170,15 @@ pub const InternalPlatform = struct {
     destroyWindow: fn (wnd: *InternalWindow) void,
     setWindowTitle: fn (wnd: *InternalWindow, title: []const u8) void,
     setWindowIcons: fn (wnd: *InternalWindow, imgs: []*const definitions.Image) void,
-    getWindowPos: fn (wnd: *InternalWindow) struct { x: i32, y: i32 },
+    getWindowPos: fn (wnd: *InternalWindow) definitions.Position,
     setWindowPos: fn (wnd: *InternalWindow, xpos: i32, ypos: i32) void,
-    getWindowSize: fn (wnd: *InternalWindow) struct { width: i32, height: i32 },
+    getWindowSize: fn (wnd: *InternalWindow) definitions.Size,
     setWindowSize: fn (wnd: *InternalWindow, width: i32, height: i32) void,
     setWindowSizeLimits: fn (wnd: *InternalWindow, minwidth: i32, minheight: i32, maxwidth: i32, maxheight: i32) void,
     setWindowAspectRatio: fn (wnd: *InternalWindow, numer: i32, denom: i32) void,
-    getFramebufferSize: fn (wnd: *InternalWindow) struct { width: i32, height: i32 },
+    getFramebufferSize: fn (wnd: *InternalWindow) definitions.Size,
     getWindowFrameSize: fn (wnd: *InternalWindow) struct { left: i32, top: i32, right: i32, bottom: i32 },
-    getWindowContentScale: fn (wnd: *InternalWindow) struct { x: f32, y: f32 },
+    getWindowContentScale: fn (wnd: *InternalWindow) definitions.FloatPosition,
     iconifyWindow: fn (wnd: *InternalWindow) void,
     restoreWindow: fn (wnd: *InternalWindow) void,
     maximiseWindow: fn (wnd: *InternalWindow) void,
@@ -411,7 +411,7 @@ pub fn setWindowIcons(wnd: *window.Window, images: []*const definitions.Image) !
     lib.platform.setWindowIcon(internal_window, images[0]);
 }
 
-pub fn getWindowPos(wnd: *window.Window) struct { x: i32, y: i32 } {
+pub fn getWindowPos(wnd: *window.Window) definitions.Position {
     const internal_window: *InternalWindow = @ptrCast(wnd);
     return lib.platform.getWindowPos(internal_window);
 }
@@ -421,7 +421,7 @@ pub fn setWindowPos(wnd: *window.Window, xpos: i32, ypos: i32) void {
     lib.platform.setWindowPos(internal_window, xpos, ypos);
 }
 
-pub fn getWindowSize(wnd: *window.Window) struct { width: i32, height: i32 } {
+pub fn getWindowSize(wnd: *window.Window) definitions.Size {
     const internal_window: *InternalWindow = @ptrCast(wnd);
     return lib.platform.getWindowSize(internal_window);
 }
@@ -475,7 +475,7 @@ pub fn setWindowAspectRatio(wnd: *window.Window, numer: i32, denom: i32) !void {
     lib.platform.setWindowAspectRatio(internal_window, numer, denom);
 }
 
-pub fn getFramebufferSize(wnd: *window.Window) struct { width: i32, height: i32 } {
+pub fn getFramebufferSize(wnd: *window.Window) definitions.Size {
     const internal_window: *InternalWindow = @ptrCast(wnd);
     return lib.platform.getFramebufferSize(internal_window);
 }
@@ -485,7 +485,7 @@ pub fn getWindowFrameSize(wnd: *window.Window) struct { left: i32, top: i32, rig
     return lib.platform.getWindowFrameSize(internal_window);
 }
 
-pub fn getWindowContentScale(wnd: *window.Window) struct { x: f32, y: f32 } {
+pub fn getWindowContentScale(wnd: *window.Window) definitions.FloatPosition {
     const internal_window: *InternalWindow = @ptrCast(wnd);
     return lib.platform.getWindowContentScale(internal_window);
 }
@@ -1109,7 +1109,7 @@ pub fn getMouseButton(
     return internal_window.mouse_buttons[@intFromEnum(button)];
 }
 
-pub fn getCursorPos(wnd: *const window.Window) struct { x: f64, y: f64 } {
+pub fn getCursorPos(wnd: *const window.Window) definitions.DoublePosition {
     const internal_window: *InternalWindow = @ptrCast(wnd);
 
     if (internal_window.cursor_mode == .disabled) {
@@ -1721,7 +1721,7 @@ fn freeMonitor(mon: *InternalMonitor) void {
     lib.allocator.destroy(mon);
 }
 
-fn allocateGammaRamp(size: i32) !definitions.GammaRamp {
+pub fn allocateGammaRamp(size: i32) !definitions.GammaRamp {
     const ramp = definitions.GammaRamp{};
     ramp.size = size;
     ramp.red = try lib.allocator.alloc(u16, size);
@@ -1792,7 +1792,7 @@ pub fn chooseVideoMode(
 }
 
 const BitsPerPixelResult = struct { red: i32, green: i32, blue: i32 };
-fn splitBitsPerPixel(bits: i32) BitsPerPixelResult {
+pub fn splitBitsPerPixel(bits: i32) BitsPerPixelResult {
     if (bits == 32) bits = 24;
     const initial_bits_per_pixel = @divTrunc(bits, @as(i32, 3));
     var result = BitsPerPixelResult{
@@ -1824,7 +1824,7 @@ pub fn getPrimaryMonitor() ?*monitor.Monitor {
     return @ptrCast(lib.monitors.items[0]);
 }
 
-pub fn getMonitorPos(mon: *const monitor.Monitor) struct { x: i32, y: i32 } {
+pub fn getMonitorPos(mon: *const monitor.Monitor) definitions.Position {
     const internal_monitor = monitorFromPublic(mon);
     return lib.platform.getMonitorPos(internal_monitor);
 }
@@ -1850,10 +1850,7 @@ pub fn getMonitorPhysicalSize(mon: *const monitor.Monitor) struct {
     };
 }
 
-pub fn getMonitorContentScale(mon: *const monitor.Monitor) struct {
-    x: f32,
-    y: f32,
-} {
+pub fn getMonitorContentScale(mon: *const monitor.Monitor) ?definitions.FloatPosition {
     const internal_monitor = monitorFromPublic(mon);
     return lib.platform.getMonitorContentScale(internal_monitor);
 }

@@ -56,7 +56,7 @@ pub const Window = struct {
         _ = wnd;
     }
 
-    pub fn getPosition(wnd: *const Window) definitions.Error!struct { x: i32, y: i32 } {
+    pub fn getPosition(wnd: *const Window) definitions.Error!definitions.Position {
         _ = wnd;
     }
 
@@ -66,7 +66,7 @@ pub const Window = struct {
         _ = y;
     }
 
-    pub fn getSize(wnd: *const Window) definitions.Error!struct { width: i32, height: i32 } {
+    pub fn getSize(wnd: *const Window) definitions.Error!definitions.Size {
         _ = wnd;
     }
 

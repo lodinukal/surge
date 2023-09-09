@@ -1,5 +1,32 @@
 pub const std = @import("std");
 
+pub const Rect = struct {
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+};
+
+pub const Size = struct {
+    width: i32,
+    height: i32,
+};
+
+pub const Position = struct {
+    x: i32,
+    y: i32,
+};
+
+pub const DoublePosition = struct {
+    x: f64,
+    y: f64,
+};
+
+pub const FloatPosition = struct {
+    x: f32,
+    y: f32,
+};
+
 pub const ElementState = enum(u8) {
     release = 0,
     press = 1,
@@ -357,35 +384,19 @@ pub const VideoMode = struct {
         const other_area = other.width * other.height;
 
         if (self_bpp != other_bpp) {
-            if (self_bpp < other_bpp) {
-                return .lt;
-            } else {
-                return .gt;
-            }
+            return std.math.order(self_bpp, other_bpp);
         }
 
         if (self_area != other_area) {
-            if (self_area < other_area) {
-                return .lt;
-            } else {
-                return .gt;
-            }
+            return std.math.order(self_area, other_area);
         }
 
         if (self.width != other.width) {
-            if (self.width < other.width) {
-                return .lt;
-            } else {
-                return .gt;
-            }
+            return std.math.order(self.width, other.width);
         }
 
         if (self.height != other.height) {
-            if (self.height < other.height) {
-                return .lt;
-            } else {
-                return .gt;
-            }
+            return std.math.order(self.height, other.height);
         }
 
         return .eq;

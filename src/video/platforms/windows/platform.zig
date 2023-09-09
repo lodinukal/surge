@@ -670,14 +670,14 @@ pub fn connect(platform_id: std.Target.Os.Tag, platform_out: *platform.InternalP
         .getMappingName = getMappingName,
         .updateGamepadGuid = updateGamepadGuid,
 
-        .freeMonitor = undefined,
-        .getMonitorPos = undefined,
-        .getMonitorContentScale = undefined,
-        .getMonitorWorkarea = undefined,
-        .getVideoModes = undefined,
-        .getVideoMode = undefined,
-        .getGammaRamp = undefined,
-        .setGammaRamp = undefined,
+        .freeMonitor = freeMonitor,
+        .getMonitorPos = getMonitorPos,
+        .getMonitorContentScale = getMonitorContentScale,
+        .getMonitorWorkarea = getMonitorWorkarea,
+        .getVideoModes = getVideoModes,
+        .getVideoMode = getVideoMode,
+        .getGammaRamp = getGammaRamp,
+        .setGammaRamp = setGammaRamp,
 
         .createWindow = undefined,
         .destroyWindow = undefined,
@@ -1744,6 +1744,232 @@ fn pollMonitors() void {
 }
 
 fn setVideoMode(mon: *platform.InternalMonitor, desired: *const definitions.VideoMode) void {
-    const best = platform.chooseVideoMode(mon, desired);
-    _ = best;
+    const best = platform.chooseVideoMode(mon, desired) orelse return;
+
+    var current = std.mem.zeroes(definitions.VideoMode);
+    getVideoMode(mon, &current);
+    if (current.order(best) == .eq) return;
+
+    var dm = std.mem.zeroes(gdi.DEVMODEW);
+    dm.dmSize = @sizeOf(gdi.DEVMODEW);
+    dm.dmFields = gdi.DM_PELSWIDTH | gdi.DM_PELSHEIGHT | gdi.DM_BITSPERPEL | gdi.DM_DISPLAYFREQUENCY;
+    dm.dmPelsWidth = best.width;
+    dm.dmPelsHeight = best.height;
+    dm.dmBitsPerPel = best.red_bits + best.green_bits + best.blue_bits;
+    dm.dmDisplayFrequency = best.refresh_rate;
+
+    if (dm.dmBitsPerPel < 15 or dm.dmBitsPerPel >= 24) {
+        dm.dmBitsPerPel = 32;
+    }
+
+    const result = gdi.ChangeDisplaySettingsExW(
+        &mon.platform.adapter_name,
+        &dm,
+        null,
+        gdi.CDS_FULLSCREEN,
+        null,
+    );
+    if (result == .SUCCESSFUL) {
+        mon.platform.mode_changed = true;
+    } else {
+        main.setErrorString(switch (result) {
+            .BADDUALVIEW => "The system uses DualView",
+            .BADFLAGS => "An invalid set of flags was passed in",
+            .BADMODE => "The graphics mode is not supported",
+            .BADPARAM => "An invalid parameter was passed in",
+            .FAILED => "The display driver failed the specified graphics mode",
+            .NOTUPDATED => "Unable to write settings to the registry",
+            .RESTART => "The computer must be restarted in order for the graphics mode to work",
+            else => "Unknown error",
+        });
+    }
+}
+
+fn restoreVideoMode(mon: *platform.InternalMonitor) void {
+    if (mon.platform.mode_changed) {
+        gdi.ChangeDisplaySettingsExW(
+            &mon.platform.adapter_name,
+            null,
+            null,
+            gdi.CDS_FULLSCREEN,
+            null,
+        );
+        mon.platform.mode_changed = false;
+    }
+}
+
+const hi_dpi = win32.ui.hi_dpi;
+fn getHmonitorContentScale(hmonitor: gdi.HMONITOR) ?definitions.FloatPosition {
+    var result = definitions.FloatPosition{ .x = 1, .y = 1 };
+
+    var x: u32 = 0;
+    var y: u32 = 0;
+
+    if (isWindows8Point1OrGreater()) {
+        if (hi_dpi.GetDpiForMonitor(hmonitor, hi_dpi.MDT_EFFECTIVE_DPI, &x, &y) != win32.foundation.S_OK) {
+            main.setErrorString("Failed to get DPI for monitor");
+            return null;
+        }
+    } else {
+        const dc = gdi.GetDC(null);
+        defer gdi.ReleaseDC(null, dc);
+        x = gdi.GetDeviceCaps(dc, gdi.LOGPIXELSX);
+        y = gdi.GetDeviceCaps(dc, gdi.LOGPIXELSY);
+    }
+
+    result.x = @as(f32, @floatFromInt(x)) / wam.USER_DEFAULT_SCREEN_DPI;
+    result.y = @as(f32, @floatFromInt(y)) / wam.USER_DEFAULT_SCREEN_DPI;
+    return result;
+}
+
+fn freeMonitor(mon: *platform.InternalMonitor) void {
+    _ = mon;
+}
+
+fn getMonitorPos(mon: *platform.InternalMonitor) definitions.Position {
+    var dm = std.mem.zeroes(gdi.DEVMODEW);
+    dm.dmSize = @sizeOf(gdi.DEVMODEW);
+
+    gdi.EnumDisplaySettingsExW(
+        &mon.platform.adapter_name,
+        gdi.ENUM_CURRENT_SETTINGS,
+        &dm,
+        wam.EDS_ROTATEDMODE,
+    );
+
+    return definitions.Position{
+        .x = dm.Anonymous1.Anonymous2.dmPosition.x,
+        .y = dm.Anonymous1.Anonymous2.dmPosition.y,
+    };
+}
+
+fn getMonitorContentScale(monitor: *platform.InternalMonitor) ?definitions.FloatPosition {
+    return getHmonitorContentScale(monitor.platform.handle);
+}
+
+fn getMonitorWorkarea(mon: *platform.InternalMonitor) definitions.Rect {
+    var mi = std.mem.zeroes(gdi.MONITORINFOEXW);
+    mi.__AnonymousBase_winuser_L13571_C43.cbSize = @sizeOf(gdi.MONITORINFOEXW);
+    gdi.GetMonitorInfoW(mon.platform.handle, &mi);
+
+    return definitions.Rect{
+        .x = mi.rcWork.left,
+        .y = mi.rcWork.top,
+        .width = mi.rcWork.right - mi.rcWork.left,
+        .height = mi.rcWork.bottom - mi.rcWork.top,
+    };
+}
+
+fn getVideoModes(
+    mon: *platform.InternalMonitor,
+) ?[]definitions.VideoMode {
+    var index = 0;
+    var modes = std.ArrayList(*definitions.VideoMode).init(platform.lib.allocator);
+
+    loop: while (true) {
+        var dm = std.mem.zeroes(gdi.DEVMODEW);
+        dm.dmSize = @sizeOf(gdi.DEVMODEW);
+
+        if (gdi.EnumDisplaySettingsW(
+            &mon.platform.adapter_name,
+            index,
+            &dm,
+        ) != win32.zig.TRUE) {
+            break;
+        }
+
+        index += 1;
+
+        if (dm.dmBitsPerPel < 15) break;
+
+        var mode = definitions.VideoMode{
+            .width = dm.dmPelsWidth,
+            .height = dm.dmPelsHeight,
+            .red_bits = null,
+            .green_bits = null,
+            .blue_bits = null,
+            .refresh_rate = dm.dmDisplayFrequency,
+        };
+
+        const result = platform.splitBitsPerPixel(dm.dmBitsPerPel);
+        mode.red_bits = result.red;
+        mode.green_bits = result.green;
+        mode.blue_bits = result.blue;
+
+        for (modes.items) |item| {
+            if (item.order(&mode) == .eq) {
+                continue :loop;
+            }
+        }
+
+        if (mon.platform.modes_pruned) {
+            if (gdi.ChangeDisplaySettingsExW(
+                &mon.platform.adapter_name,
+                &dm,
+                null,
+                gdi.CDS_TEST,
+                null,
+            ) != gdi.DISP_CHANGE_SUCCESSFUL) {
+                continue :loop;
+            }
+        }
+
+        modes.append(mode) catch return null;
+    }
+
+    return modes.toOwnedSlice() catch return null;
+}
+
+fn getVideoMode(mon: *platform.InternalMonitor, mode: *definitions.VideoMode) void {
+    var dm = std.mem.zeroes(gdi.DEVMODEW);
+    dm.dmSize = @sizeOf(gdi.DEVMODEW);
+
+    gdi.EnumDisplaySettingsW(&mon.platform.adapter_name, gdi.ENUM_CURRENT_SETTINGS, &dm);
+
+    mode.width = dm.dmPelsWidth;
+    mode.height = dm.dmPelsHeight;
+    mode.refresh_rate = dm.dmDisplayFrequency;
+    const result = platform.splitBitsPerPixel(dm.dmBitsPerPel);
+    mode.red_bits = result.red;
+    mode.green_bits = result.green;
+    mode.blue_bits = result.blue;
+}
+
+fn getGammaRamp(mon: *platform.InternalMonitor) ?definitions.GammaRamp {
+    var dc = gdi.CreateDCW(
+        win32.zig.L("DISPLAY"),
+        &mon.platform.adapter_name,
+        null,
+        null,
+    );
+    var values: [3][256]std.os.windows.WORD = [1][256]std.os.windows.WORD{[1]std.os.windows.WORD{0} ** 256} ** 3;
+    win32.ui.color_system.GetDeviceGammaRamp(dc, @ptrCast(&values));
+    gdi.DeleteDC(dc);
+
+    var ramp = platform.allocateGammaRamp(256) catch return null;
+
+    @memcpy(ramp.red[0..256], values[0]);
+    @memcpy(ramp.green[0..256], values[1]);
+    @memcpy(ramp.blue[0..256], values[2]);
+
+    return ramp;
+}
+
+fn setGammaRamp(mon: *platform.InternalMonitor, ramp: *const definitions.GammaRamp) void {
+    var dc = gdi.CreateDCW(
+        win32.zig.L("DISPLAY"),
+        &mon.platform.adapter_name,
+        null,
+        null,
+    );
+
+    var values: [3][256]std.os.windows.WORD = [1][256]std.os.windows.WORD{[1]std.os.windows.WORD{0} ** 256} ** 3;
+
+    @memcpy(values[0], ramp.red[0..256]);
+    @memcpy(values[1], ramp.green[0..256]);
+    @memcpy(values[2], ramp.blue[0..256]);
+
+    win32.ui.color_system.SetDeviceGammaRamp(dc, @ptrCast(&values));
+
+    gdi.DeleteDC(dc);
 }
