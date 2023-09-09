@@ -127,7 +127,14 @@ pub const PlatformTimer = WindowsTimer;
 
 const library_loader = win32.system.library_loader;
 
-pub fn loadLibraries() bool {
+extern const __ImageBase: win32.system.system_services.IMAGE_DOS_HEADER;
+
+fn getInstanceHandle() win32.foundation.HINSTANCE {
+    return @ptrCast(&__ImageBase);
+}
+
+fn loadLibraries() bool {
+    platform.lib.platform_state.instance = getInstanceHandle();
     platform.lib.platform_state.ntdll.instance = library_loader.LoadLibraryW(
         "ntdll.dll",
     );
@@ -143,13 +150,13 @@ pub fn loadLibraries() bool {
     return true;
 }
 
-pub fn unloadLibraries() void {
+fn unloadLibraries() void {
     if (platform.lib.platform_state.ntdll.instance) |instance| {
         library_loader.FreeLibrary(instance);
     }
 }
 
-pub fn createKeyTables() void {
+fn createKeyTables() void {
     const keycodes = platform.lib.platform_state.keycodes;
     keycodes[0x00B] = definitions.Key.@"0";
     keycodes[0x002] = definitions.Key.@"1";
@@ -283,7 +290,7 @@ pub fn createKeyTables() void {
 const wam = win32.ui.windows_and_messaging;
 const system_services = win32.system.system_services;
 
-pub fn helperWindowProc(
+fn helperWindowProc(
     hwnd: win32.foundation.HWND,
     msg: std.os.windows.UINT,
     wparam: win32.foundation.WPARAM,
@@ -320,7 +327,7 @@ pub fn helperWindowProc(
     );
 }
 
-pub fn createHelperWindow() bool {
+fn createHelperWindow() bool {
     const wc = std.mem.zeroInit(wam.WNDCLASSEXW, .{
         .style = wam.CS_OWNDC,
         .lpfnWndProc = helperWindowProc,
@@ -452,19 +459,19 @@ fn isWindows10BuildOrGreater(build: std.os.windows.WORD) bool {
     ) == win32.foundation.STATUS_SUCCESS;
 }
 
-pub inline fn highByte(x: u16) u8 {
+inline fn highByte(x: u16) u8 {
     return @as(u8, @intCast(x >> 8));
 }
 
-pub inline fn lowByte(x: u16) u8 {
+inline fn lowByte(x: u16) u8 {
     return @as(u8, @intCast(x & 0xFF));
 }
 
-pub inline fn makeLong(low: u16, high: u16) u32 {
+inline fn makeLong(low: u16, high: u16) u32 {
     return @as(u32, @intCast(low)) | (@as(u32, @intCast(high)) << 16);
 }
 
-pub inline fn isEqualGuid(a: win32.zig.Guid, b: win32.zig.Guid) bool {
+inline fn isEqualGuid(a: win32.zig.Guid, b: win32.zig.Guid) bool {
     return std.mem.eql(u8, &a.Bytes, &b.Bytes);
 }
 
@@ -509,7 +516,7 @@ inline fn isWindows8Point1OrGreater() bool {
 }
 
 const kam = win32.ui.input.keyboard_and_mouse;
-pub fn updateKeyNames() void {
+fn updateKeyNames() void {
     const keynames = platform.lib.platform_state.keynames;
     inline for (0..std.meta.fields(definitions.Key).len) |i| {
         const key = @field(definitions.Key, i.name);
@@ -580,7 +587,7 @@ pub fn updateKeyNames() void {
     }
 }
 
-pub fn init() bool {
+fn init() bool {
     if (!loadLibraries()) return false;
 
     createKeyTables();
@@ -604,7 +611,7 @@ pub fn init() bool {
     return true;
 }
 
-pub fn deinit() void {
+fn deinit() void {
     if (platform.lib.platform_state.device_notification_handle != null) {
         system_services.UnregisterDeviceNotification(
             platform.lib.platform_state.device_notification_handle,
