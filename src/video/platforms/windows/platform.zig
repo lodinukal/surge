@@ -43,8 +43,8 @@ const WindowsState = struct {
     keynames: [std.meta.fields(definitions.Key).len][5]u8 = [1][5]u8{[5]u8{ 0, 0, 0, 0, 0 }} ** std.meta.fields(definitions.Key).len,
     restore_cursor_pos_x: f64,
     restore_cursor_pos_y: f64,
-    disabled_cursor_window: *void,
-    captured_cursor_window: *void,
+    disabled_cursor_window: ?*platform.InternalWindow = null,
+    captured_cursor_window: ?*platform.InternalWindow = null,
     raw_input: []win32.ui.input.RAWINPUT,
     dinput8: struct {
         api: ?*hid.IDirectInput8W = null,
@@ -1972,4 +1972,225 @@ fn setGammaRamp(mon: *platform.InternalMonitor, ramp: *const definitions.GammaRa
     win32.ui.color_system.SetDeviceGammaRamp(dc, @ptrCast(&values));
 
     gdi.DeleteDC(dc);
+}
+
+// window
+fn getWindowStyle(wnd: *const platform.InternalWindow) std.os.windows.DWORD {
+    var style = @intFromEnum(wam.WS_CLIPSIBLINGS) | @intFromEnum(wam.WS_CLIPCHILDREN);
+
+    if (wnd.monitor) {
+        style |= @intFromEnum(wam.WS_POPUP);
+    } else {
+        style |= @intFromEnum(wam.WS_SYSMENU) | @intFromEnum(wam.WS_MINIMIZEBOX);
+
+        if (wnd.decorated) {
+            style |= @intFromEnum(wam.WS_CAPTION);
+
+            if (wnd.resizable) {
+                style |= @intFromEnum(wam.WS_MAXIMIZEBOX) | @intFromEnum(wam.WS_THICKFRAME);
+            }
+        } else {
+            style |= @intFromEnum(wam.WS_POPUP);
+        }
+    }
+
+    return style;
+}
+
+fn getWindowExStyle(wnd: *const platform.InternalWindow) std.os.windows.DWORD {
+    var style = @intFromEnum(wam.WS_EX_APPWINDOW);
+
+    if (wnd.monitor or wnd.floating) {
+        style |= @intFromEnum(wam.WS_EX_TOPMOST);
+    }
+
+    return style;
+}
+
+fn chooseImage(images: []const definitions.Image, width: i32, height: i32) *const definitions.Image {
+    var least_diff: i32 = std.math.maxInt(i32);
+
+    var result: ?*const definitions.Image = null;
+
+    for (images) |*img| {
+        const diff = std.math.absInt(img.width * img.height - width * height);
+        if (diff < least_diff) {
+            result = img;
+            least_diff = diff;
+        }
+    }
+
+    return result.?;
+}
+
+fn createIcon(image: *const definitions.Image, xhot: i32, yhot: i32, icon: bool) ?wam.HICON {
+    var bv5h = std.mem.zeroes(gdi.BITMAPV5HEADER);
+    bv5h.bV5Size = @sizeOf(gdi.BITMAPV5HEADER);
+    bv5h.bV5Width = image.width;
+    bv5h.bV5Height = -image.height;
+    bv5h.bV5Planes = 1;
+    bv5h.bV5BitCount = 32;
+    bv5h.bV5Compression = gdi.BI_BITFIELDS;
+    bv5h.bV5RedMask = 0x00ff0000;
+    bv5h.bV5GreenMask = 0x0000ff00;
+    bv5h.bV5BlueMask = 0x000000ff;
+    bv5h.bV5AlphaMask = 0xff000000;
+
+    var dc = gdi.GetDC(null);
+    var target: ?[*]u8 = null;
+    var color = gdi.CreateDIBSection(
+        dc,
+        @ptrCast(&bv5h),
+        gdi.DIB_RGB_COLORS,
+        @ptrCast(&target),
+        null,
+        0,
+    ) orelse {
+        main.setErrorString("Failed to create RGBA bitmap");
+        return null;
+    };
+
+    var mask = gdi.CreateBitmap(
+        image.width,
+        image.height,
+        1,
+        1,
+        null,
+    ) orelse {
+        main.setErrorString("Failed to create mask bitmap");
+        gdi.DeleteObject(color);
+        return null;
+    };
+
+    const source = image.pixels;
+    for (0..(image.width * image.height)) |index| {
+        target[index * 4 + 0] = source[index * 4 + 2];
+        target[index * 4 + 1] = source[index * 4 + 1];
+        target[index * 4 + 2] = source[index * 4 + 0];
+        target[index * 4 + 3] = source[index * 4 + 3];
+    }
+
+    var info = std.mem.zeroes(wam.ICONINFO);
+    info.fIcon = icon;
+    info.xHotspot = xhot;
+    info.yHotspot = yhot;
+    info.hbmMask = mask;
+    info.hbmColor = color;
+
+    var hicon = wam.CreateIconIndirect(@ptrCast(&info)) orelse {
+        main.setErrorString(if (icon) "Failed to create icon" else "Failed to create cursor");
+        gdi.DeleteObject(color);
+        gdi.DeleteObject(mask);
+
+        return null;
+    };
+
+    gdi.DeleteObject(color);
+    gdi.DeleteObject(mask);
+
+    return hicon;
+}
+
+fn applyAspectRatio(wnd: *platform.InternalWindow, edge: i32, area: *win32.foundation.RECT) void {
+    var frame = std.mem.zeroes(win32.foundation.RECT);
+    const style = getWindowStyle(wnd);
+    const ex_style = getWindowExStyle(wnd);
+    const ratio: f32 = @as(
+        f32,
+        @floatFromInt(wnd.numer),
+    ) / @as(
+        f32,
+        @floatFromInt(wnd.denom),
+    );
+
+    if (isWindows10Version1607OrGreater()) {
+        hi_dpi.AdjustWindowRectExForDpi(
+            &frame,
+            style,
+            win32.zig.FALSE,
+            ex_style,
+            hi_dpi.GetDpiForWindow(wnd.platform.handle),
+        );
+    }
+
+    if (edge == wam.WMSZ_LEFT or edge == wam.WMSZ_BOTTOMLEFT or
+        edge == wam.WMSZ_RIGHT or edge == wam.WMSZ_BOTTOMRIGHT)
+    {
+        area.bottom = area.top + (frame.bottom - frame.top) + @as(i32, @intFromFloat(
+            @as(f32, @floatFromInt((area.right - area.left) - (frame.right - frame.left))) / ratio,
+        ));
+    } else if (edge == wam.WMSZ_TOPLEFT or edge == wam.WMSZ_TOPRIGHT) {
+        area.top = area.bottom - (frame.bottom - frame.top) - @as(i32, @intFromFloat(
+            @as(f32, @floatFromInt((area.right - area.left) - (frame.right - frame.left))) / ratio,
+        ));
+    } else if (edge == wam.WMSZ_TOP or edge == wam.WMSZ_BOTTOM) {
+        area.right = area.left + (frame.right - frame.left) + @as(i32, @intFromFloat(
+            @as(f32, @floatFromInt((area.bottom - area.top) - (frame.bottom - frame.top))) * ratio,
+        ));
+    }
+}
+
+fn updateCursorImage(wnd: *platform.InternalWindow) void {
+    if (wnd.cursor_mode == .normal or wnd.cursor_mode == .captured) {
+        if (wnd.cursor) |cursor| {
+            wam.SetCursor(cursor.platform.handle);
+        } else {
+            wam.SetCursor(wam.LoadCursorW(null, wam.IDC_ARROW));
+        }
+    } else {
+        wam.SetCursor(null);
+    }
+}
+
+fn captureCursor(wnd: *platform.InternalWindow) void {
+    var clip_rect = std.mem.zeroes(win32.foundation.RECT);
+    wam.GetClientRect(wnd.platform.handle, &clip_rect);
+    gdi.ClientToScreen(wnd.platform.handle, @ptrCast(&clip_rect.left));
+    gdi.ClientToScreen(wnd.platform.handle, @ptrCast(&clip_rect.right));
+    wam.ClipCursor(&clip_rect);
+    platform.lib.platform_state.captured_cursor_window = wnd;
+}
+
+fn releaseCursor() void {
+    wam.ClipCursor(null);
+    platform.lib.platform_state.captured_cursor_window = null;
+}
+
+fn enableRawMouseMotion(wnd: *platform.InternalWindow) void {
+    const rid = input.RAWINPUTDEVICE{
+        .usUsagePage = 0x01,
+        .usUsage = 0x02,
+        .dwFlags = 0,
+        .hwndTarget = wnd.platform.handle,
+    };
+
+    if (input.RegisterRawInputDevices(
+        &rid,
+        1,
+        @sizeOf(input.RAWINPUTDEVICE),
+    ) == win32.zig.FALSE) {
+        main.setErrorString("Failed to register raw input device");
+    }
+}
+
+fn disableRawMouseMotion(wnd: *platform.InternalWindow) void {
+    _ = wnd;
+    const rid = input.RAWINPUTDEVICE{
+        .usUsagePage = 0x01,
+        .usUsage = 0x02,
+        .dwFlags = input.RIDEV_REMOVE,
+        .hwndTarget = null,
+    };
+
+    if (input.RegisterRawInputDevices(
+        &rid,
+        1,
+        @sizeOf(input.RAWINPUTDEVICE),
+    ) == win32.zig.FALSE) {
+        main.setErrorString("Failed to unregister raw input device");
+    }
+}
+
+fn disableCursor(wnd: *platform.InternalWindow) void {
+    platform.lib.platform_state.disabled_cursor_window = wnd;
 }

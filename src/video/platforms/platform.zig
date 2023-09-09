@@ -36,7 +36,7 @@ pub const InternalWindow = struct {
     double_buffer: bool,
     video_mode: definitions.VideoMode,
     monitor: ?*monitor.Monitor,
-    cursor: ?*Cursor = null,
+    cursor: ?*InternalCursor = null,
     min_width: ?i32,
     min_height: ?i32,
     max_width: ?i32,
