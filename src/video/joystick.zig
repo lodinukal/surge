@@ -20,7 +20,6 @@ pub const Joystick = enum(u8) {
     @"14" = 13,
     @"15" = 14,
     @"16" = 15,
-    pub const last = Joystick.@"16";
 
     pub fn isJoystickPresent(joy: Joystick) definitions.Error!bool {
         _ = joy;

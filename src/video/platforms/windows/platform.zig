@@ -62,13 +62,9 @@ const WindowsState = struct {
 const WindowsMonitor = struct {
     handle: win32.graphics.gdi.HMONITOR,
     adapter_name: [32]std.os.windows.WCHAR,
-    adapter_name_len: u32,
     display_name: [32]std.os.windows.WCHAR,
-    display_name_len: u32,
     public_adapter_name: [32]u8,
-    public_adapter_name_len: u32,
     public_display_name: [32]u8,
-    public_display_name_len: u32,
     modes_pruned: bool,
     mode_changed: bool,
 };
@@ -576,15 +572,23 @@ fn updateKeyNames() void {
         }
 
         if (length >= 1) {
-            var end_index: usize = 0;
-            var it = std.unicode.Utf16LeIterator.init(&chars);
-            while (try it.nextCodepoint()) |codepoint| {
-                if (end_index >= keyname.len) break;
-                end_index += std.unicode.utf8Encode(codepoint, keyname[end_index..]) catch break;
-            }
-            return end_index;
+            utf16leToUtf8Greedy(&keyname, &chars);
+            return;
         }
     }
+}
+
+fn utf16leToUtf8Greedy(utf8: []u8, utf16le: []const u16) usize {
+    var offset: usize = 0;
+    var it = std.unicode.Utf16LeIterator.init(utf16le);
+    var temp: [16]u8 = undefined;
+    while (it.nextCodepoint() catch return offset) |codepoint| {
+        const taken = std.unicode.utf8Encode(codepoint, temp) catch break;
+        if (offset + taken >= utf8.len) break;
+        @memcpy(utf8[offset..][0..taken], temp[0..taken]);
+        offset += taken;
+    }
+    return offset;
 }
 
 fn init() bool {
@@ -1302,14 +1306,8 @@ fn deviceCallback(di: *const hid.DIDEVICEINSTANCEW, user: *void) std.os.windows.
     );
 
     var name = [1]u8{0} ** 256;
-    var end_index: usize = 0;
-    var it = std.unicode.Utf16LeIterator.init(&di.tszInstanceName);
-    if (blk: {
-        while (it.nextCodepoint() catch break :blk false) |codepoint| {
-            if (end_index >= name.len) break true;
-            end_index += std.unicode.utf8Encode(codepoint, name[end_index..]) catch break true;
-        }
-    } == false) {
+    utf16leToUtf8Greedy(&name, di.tszInstanceName);
+    {
         device.IUnknown_Release();
         main.setErrorString("Failed to enumerate objects for joystick");
         platform.lib.allocator.free(data.objects);
@@ -1556,4 +1554,196 @@ fn updateGamepadGuid(guid: []const u8) void {
     }
 }
 
-fn pollMonitors() void {}
+// monitor
+const gdi = win32.graphics.gdi;
+fn monitorCallback(
+    hmonitor: gdi.HMONITOR,
+    hdc: gdi.HDC,
+    rect: *win32.foundation.RECT,
+    data: win32.foundation.LPARAM,
+) callconv(.Win64) std.os.windows.BOOL {
+    _ = rect;
+    _ = hdc;
+
+    var mi = std.mem.zeroes(gdi.MONITORINFOEXW);
+    mi.__AnonymousBase_winuser_L13571_C43.cbSize = @sizeOf(gdi.MONITORINFOEXW);
+
+    if (gdi.GetMonitorInfoW(hmonitor, @ptrCast(&mi)) == win32.zig.TRUE) {
+        const internal_monitor: *platform.InternalMonitor = @ptrFromInt(@as(usize, @intCast(data)));
+        if (std.mem.eql(u32, &mi.szDevice, &internal_monitor.platform.adapter_name)) {
+            internal_monitor.platform.handle = hmonitor;
+        }
+    }
+
+    return win32.zig.TRUE;
+}
+
+fn createMonitor(adapter: *gdi.DISPLAY_DEVICEW, display: ?*gdi.DISPLAY_DEVICEW) ?*platform.InternalMonitor {
+    const name = blk: {
+        const source = if (display) |found_display|
+            found_display.DeviceString
+        else
+            adapter.DeviceString;
+        break :blk std.unicode.utf16leToUtf8Alloc(platform.lib.allocator, &source) catch return null;
+    };
+    defer platform.lib.allocator.free(name);
+
+    var dm = std.mem.zeroes(gdi.DEVMODEW);
+    dm.dmSize = @sizeOf(gdi.DEVMODEW);
+    gdi.EnumDisplaySettingsW(&adapter.DeviceName, gdi.ENUM_CURRENT_SETTINGS, &dm);
+
+    var dc = gdi.CreateDCW(
+        win32.zig.L("DISPLAY"),
+        &adapter.DeviceName,
+        null,
+        null,
+    );
+
+    const width_mm: i32 = if (isWindows8Point1OrGreater())
+        gdi.GetDeviceCaps(dc, gdi.HORZSIZE)
+    else
+        @intCast(dm.dmPelsWidth * 25.4 / gdi.GetDeviceCaps(dc, gdi.LOGPIXELSX));
+    const height_mm: i32 = if (isWindows8Point1OrGreater())
+        gdi.GetDeviceCaps(dc, gdi.VERTSIZE)
+    else
+        @intCast(dm.dmPelsHeight * 25.4 / gdi.GetDeviceCaps(dc, gdi.LOGPIXELSY));
+    gdi.DeleteDC(dc);
+
+    var internal_monitor = platform.allocateMonitor(
+        name,
+        width_mm,
+        height_mm,
+    ) catch return null;
+
+    if ((adapter.StateFlags & gdi.DISPLAY_DEVICE_MODESPRUNED) != 0)
+        internal_monitor.platform.modes_pruned = true;
+
+    @memcpy(&internal_monitor.platform.adapter_name, &adapter.DeviceName);
+    utf16leToUtf8Greedy(&internal_monitor.platform.public_adapter_name, &adapter.DeviceName);
+
+    if (display) |found_display| {
+        @memcpy(&internal_monitor.platform.display_name, &found_display.DeviceName);
+        utf16leToUtf8Greedy(&internal_monitor.platform.public_display_name, &found_display.DeviceName);
+    }
+
+    var rect = std.mem.zeroes(win32.foundation.RECT);
+    rect.left = dm.Anonymous1.Anonymous2.dmPosition.x;
+    rect.top = dm.Anonymous1.Anonymous2.dmPosition.y;
+    rect.right = dm.Anonymous1.Anonymous2.dmPosition.x + dm.dmPelsWidth;
+    rect.bottom = dm.Anonymous1.Anonymous2.dmPosition.y + dm.dmPelsHeight;
+
+    gdi.EnumDisplayMonitors(null, &rect, monitorCallback, @ptrCast(&internal_monitor));
+}
+
+fn pollMonitors() void {
+    var disconnected_count: i32 = platform.lib.monitors.items.len;
+    var disconnected: []?*platform.InternalMonitor = undefined;
+    if (disconnected_count > 0) {
+        disconnected = platform.lib.temp_arena_allocator.alloc(
+            ?*platform.InternalMonitor,
+            disconnected_count,
+        ) catch return;
+        for (0..disconnected_count) |index| {
+            disconnected[index] = platform.lib.monitors.items[index];
+        }
+    }
+    defer platform.lib.temp_arena.reset(.retain_capacity);
+
+    var adapter_index: usize = 0;
+    while (true) : (adapter_index += 1) {
+        var insert_first = false;
+
+        var adapter = std.mem.zeroes(gdi.DISPLAY_DEVICEW);
+        adapter.cb = @sizeOf(gdi.DISPLAY_DEVICEW);
+
+        if (gdi.EnumDisplayDevicesW(
+            null,
+            adapter_index,
+            &adapter,
+            0,
+        ) != win32.zig.TRUE) {
+            break;
+        }
+
+        if ((adapter.StateFlags & gdi.DISPLAY_DEVICE_ACTIVE) == 0) {
+            continue;
+        }
+
+        if ((adapter.StateFlags & gdi.DISPLAY_DEVICE_PRIMARY_DEVICE) != 0) {
+            insert_first = true;
+        }
+
+        var display_index: usize = 0;
+        while (true) : (display_index += 1) {
+            var display = std.mem.zeroes(gdi.DISPLAY_DEVICEW);
+            display.cb = @sizeOf(gdi.DISPLAY_DEVICEW);
+
+            if (gdi.EnumDisplayDevicesW(
+                &adapter.DeviceName,
+                display_index,
+                &display,
+                0,
+            ) != win32.zig.TRUE) {
+                break;
+            }
+
+            if ((display.StateFlags & gdi.DISPLAY_DEVICE_ACTIVE) == 0) {
+                continue;
+            }
+
+            var set = false;
+            blk: for (0..disconnected_count) |index| {
+                if (disconnected[index]) |internal_monitor| if (std.mem.eql(
+                    u32,
+                    internal_monitor.platform.display_name,
+                    display.DeviceName,
+                )) {
+                    disconnected[index] = null;
+                    gdi.EnumDisplayMonitors(
+                        null,
+                        null,
+                        monitorCallback,
+                        @ptrCast(internal_monitor),
+                    );
+                    set = true;
+                    break :blk;
+                };
+            }
+
+            if (set) continue;
+
+            var monitor = createMonitor(&adapter, &display) orelse return;
+            platform.inputMonitorConnection(monitor, true, insert_first);
+            insert_first = false;
+        }
+
+        if (display_index == 0) {
+            var set = false;
+            blk: for (0..disconnected_count) |index| {
+                if (disconnected[index]) |internal_monitor| if (std.mem.eql(
+                    u32,
+                    internal_monitor.platform.adapter_name,
+                    adapter.DeviceName,
+                )) {
+                    disconnected[index] = null;
+                    set = true;
+                    break :blk;
+                };
+            }
+
+            if (set) continue;
+
+            var monitor = createMonitor(&adapter, null) orelse return;
+            platform.inputMonitorConnection(monitor, true, insert_first);
+        }
+    }
+
+    for (disconnected) |display| if (display) |found_display| {
+        platform.inputMonitorConnection(found_display, false, false);
+    };
+}
+
+fn setVideoMode(mon: *platform.InternalMonitor, desired: *const definitions.VideoMode) void {
+    const best = platform.chooseVideoMode(mon, desired);
+    _ = best;
+}

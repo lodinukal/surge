@@ -216,6 +216,9 @@ pub const InternalPlatform = struct {
 pub const InternalLibrary = struct {
     initialised: bool = false,
     allocator: std.mem.Allocator,
+    temp_allocator: std.mem.Allocator,
+    temp_arena: std.heap.ArenaAllocator,
+    temp_arena_allocator: std.mem.Allocator,
     platform: InternalPlatform,
     cursor_head: ?*InternalCursor,
     window_head: ?*InternalWindow,
@@ -1733,7 +1736,7 @@ fn freeGammaRamp(ramp: *definitions.GammaRamp) void {
     lib.allocator.free(ramp.blue);
 }
 
-fn chooseVideoMode(
+pub fn chooseVideoMode(
     mon: *InternalMonitor,
     desired: *const definitions.VideoMode,
 ) ?*const definitions.VideoMode {

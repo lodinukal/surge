@@ -3,11 +3,14 @@ const definitions = @import("definitions.zig");
 
 const platform = @import("./platforms/platform.zig");
 
-pub fn init(allocator: std.mem.Allocator) definitions.Error!bool {
+pub fn init(allocator: std.mem.Allocator, temp_allocator: ?std.mem.Allocator) definitions.Error!bool {
     if (platform.lib.initialised) {
         return true;
     }
     platform.lib.allocator = allocator;
+    platform.lib.temp_allocator = temp_allocator orelse allocator;
+    platform.lib.temp_arena = std.heap.ArenaAllocator.init(allocator);
+    platform.lib.temp_arena_allocator = platform.lib.temp_arena.allocator();
 
     platform.initGamepadMappings();
     platform.initTimer();
