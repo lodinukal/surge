@@ -16,16 +16,16 @@ pub const ElementState = enum(u8) {
     }
 };
 
-pub const Hat = enum(u8) {
+const Hat = enum(u8) {
     centred = 0,
     up = 1,
     right = 2,
     down = 4,
     left = 8,
-    pub const right_up = Hat.right | Hat.up;
-    pub const right_down = Hat.right | Hat.down;
-    pub const left_up = Hat.left | Hat.up;
-    pub const left_down = Hat.left | Hat.down;
+    right_up = 2 | 1,
+    right_down = 2 | 4,
+    left_up = 8 | 1,
+    left_down = 8 | 4,
 };
 
 pub const Key = enum(i16) {

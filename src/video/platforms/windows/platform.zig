@@ -5,6 +5,9 @@ const main = @import("../../main.zig");
 const platform = @import("../platform.zig");
 const definitions = @import("../../definitions.zig");
 
+export const NvOptimusEnablement: std.os.windows.DWORD = 1;
+export const AmdPowerXpressRequestHighPerformance: std.os.windows.DWORD = 1;
+
 const WindowsWindow = struct {
     handle: win32.foundation.HWND,
     big_icon: win32.ui.windows_and_messaging.HICON,
@@ -26,6 +29,7 @@ const WindowsWindow = struct {
     high_surrogate: std.os.windows.WCHAR,
 };
 
+const hid = win32.devices.human_interface_device;
 const WindowsState = struct {
     instance: win32.foundation.HINSTANCE,
     helper_window_handle: ?win32.foundation.HWND,
@@ -43,7 +47,7 @@ const WindowsState = struct {
     captured_cursor_window: *void,
     raw_input: []win32.ui.input.RAWINPUT,
     dinput8: struct {
-        api: win32.devices.human_interface_device.IDirectInput8W,
+        api: ?*hid.IDirectInput8W = null,
     },
     ntdll: struct {
         instance: ?win32.foundation.HINSTANCE,
@@ -75,19 +79,23 @@ const WindowsCursor = struct {
 
 const WindowsJoyobject = struct {
     offset: i32,
-    type: i32,
+    type: JoyType,
+};
+
+const JoyType = enum(i32) {
+    axis = 0,
+    slider = 1,
+    button = 2,
+    pov = 3,
 };
 
 const WindowsJoystick = struct {
     objects: []WindowsJoyobject,
-    device: *win32.devices.human_interface_device.IDirectInputDevice8W,
+    object_count: i32 = 0,
+    device: ?*hid.IDirectInputDevice8W = null,
     index: std.os.windows.DWORD,
     guid: win32.zig.Guid,
 };
-
-pub fn detectJoystickConnection() void {}
-
-pub fn detectJoystickDisonnection() void {}
 
 const WindowsTimer = struct {
     frequency: u64,
@@ -347,7 +355,7 @@ pub fn createHelperWindow() bool {
         var dbi: system_services.DEV_BROADCAST_DEVICEINTERFACE_W = std.mem.zeroes(system_services.DEV_BROADCAST_DEVICEINTERFACE_W);
         dbi.dbcc_size = @sizeOf(system_services.DEV_BROADCAST_DEVICEINTERFACE_W);
         dbi.dbcc_devicetype = system_services.DBT_DEVTYP_DEVICEINTERFACE;
-        dbi.dbcc_classguid = win32.devices.human_interface_device.GUID_DEVINTERFACE_HID;
+        dbi.dbcc_classguid = hid.GUID_DEVINTERFACE_HID;
 
         platform.lib.platform_state.device_notification_handle = wam.RegisterDeviceNotificationW(
             platform.lib.platform_state.helper_window_handle,
@@ -450,6 +458,14 @@ pub inline fn highByte(x: u16) u8 {
 
 pub inline fn lowByte(x: u16) u8 {
     return @as(u8, @intCast(x & 0xFF));
+}
+
+pub inline fn makeLong(low: u16, high: u16) u32 {
+    return @as(u32, @intCast(low)) | (@as(u32, @intCast(high)) << 16);
+}
+
+pub inline fn isEqualGuid(a: win32.zig.Guid, b: win32.zig.Guid) bool {
+    return std.mem.eql(u8, &a.Bytes, &b.Bytes);
 }
 
 inline fn isWindows10Version1607OrGreater() bool {
@@ -637,11 +653,11 @@ pub fn connect(platform_id: std.Target.Os.Tag, platform_out: *platform.InternalP
         .getKeyScancode = undefined,
         .setClipboardString = undefined,
         .getClipboardString = undefined,
-        .initJoysticks = undefined,
-        .deinitJoysticks = undefined,
-        .pollJoystick = undefined,
-        .getMappingName = undefined,
-        .updateGamepadGuid = undefined,
+        .initJoysticks = initJoysticks,
+        .deinitJoysticks = deinitJoysticks,
+        .pollJoystick = pollJoystick,
+        .getMappingName = getMappingName,
+        .updateGamepadGuid = updateGamepadGuid,
 
         .freeMonitor = undefined,
         .getMonitorPos = undefined,
@@ -694,4 +710,843 @@ pub fn connect(platform_id: std.Target.Os.Tag, platform_out: *platform.InternalP
     return true;
 }
 
-pub fn pollMonitors() void {}
+const DInputObjectEnum = struct {
+    device: *hid.IDirectInputDevice8W,
+    objects: []WindowsJoyobject,
+    object_count: i32 = 0,
+    axis_count: i32 = 0,
+    button_count: i32 = 0,
+    pov_count: i32 = 0,
+    slider_count: i32 = 0,
+};
+
+const DIJOFS_X = @offsetOf(hid.DIJOYSTATE, "lX");
+const DIJOFS_Y = @offsetOf(hid.DIJOYSTATE, "lY");
+const DIJOFS_Z = @offsetOf(hid.DIJOYSTATE, "lZ");
+const DIJOFS_RX = @offsetOf(hid.DIJOYSTATE, "lRx");
+const DIJOFS_RY = @offsetOf(hid.DIJOYSTATE, "lRy");
+const DIJOFS_RZ = @offsetOf(hid.DIJOYSTATE, "lRz");
+fn DIJOFS_SLIDER(n: i32) u32 {
+    (return @offsetOf(hid.DIJOYSTATE, "rglSlider") +
+        (n) * @sizeOf(std.os.windows.LONG));
+}
+fn DIJOFS_POV(n: i32) u32 {
+    return (@offsetOf(hid.DIJOYSTATE, "rgdwPOV") +
+        (n) * @sizeOf(std.os.windows.DWORD));
+}
+fn DIJOFS_BUTTON(n: i32) u32 {
+    return (@offsetOf(hid.DIJOYSTATE, "rgbButtons") + (n));
+}
+
+const DIDFT_OPTIONAL: u32 = 0x80000000;
+
+const object_data_formats = [_]hid.DIOBJECTDATAFORMAT{
+    .{
+        .pguid = &hid.GUID_XAxis,
+        .dwOfs = DIJOFS_X,
+        .dwType = hid.DIDFT_AXIS | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = hid.DIDOI_ASPECTPOSITION,
+    },
+    .{
+        .pguid = &hid.GUID_YAxis,
+        .dwOfs = DIJOFS_Y,
+        .dwType = hid.DIDFT_AXIS | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = hid.DIDOI_ASPECTPOSITION,
+    },
+    .{
+        .pguid = &hid.GUID_ZAxis,
+        .dwOfs = DIJOFS_Z,
+        .dwType = hid.DIDFT_AXIS | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = hid.DIDOI_ASPECTPOSITION,
+    },
+    .{
+        .pguid = &hid.GUID_RxAxis,
+        .dwOfs = DIJOFS_RX,
+        .dwType = hid.DIDFT_AXIS | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = hid.DIDOI_ASPECTPOSITION,
+    },
+    .{
+        .pguid = &hid.GUID_RyAxis,
+        .dwOfs = DIJOFS_RY,
+        .dwType = hid.DIDFT_AXIS | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = hid.DIDOI_ASPECTPOSITION,
+    },
+    .{
+        .pguid = &hid.GUID_RzAxis,
+        .dwOfs = DIJOFS_RZ,
+        .dwType = hid.DIDFT_AXIS | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = hid.DIDOI_ASPECTPOSITION,
+    },
+    .{
+        .pguid = &hid.GUID_Slider,
+        .dwOfs = DIJOFS_SLIDER(0),
+        .dwType = hid.DIDFT_AXIS | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = hid.DIDOI_ASPECTPOSITION,
+    },
+    .{
+        .pguid = &hid.GUID_Slider,
+        .dwOfs = DIJOFS_SLIDER(1),
+        .dwType = hid.DIDFT_AXIS | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = hid.DIDOI_ASPECTPOSITION,
+    },
+    .{
+        .pguid = &hid.GUID_POV,
+        .dwOfs = DIJOFS_POV(0),
+        .dwType = hid.DIDFT_POV | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = 0,
+    },
+    .{
+        .pguid = &hid.GUID_POV,
+        .dwOfs = DIJOFS_POV(1),
+        .dwType = hid.DIDFT_POV | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = 0,
+    },
+    .{
+        .pguid = &hid.GUID_POV,
+        .dwOfs = DIJOFS_POV(2),
+        .dwType = hid.DIDFT_POV | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = 0,
+    },
+    .{
+        .pguid = &hid.GUID_POV,
+        .dwOfs = DIJOFS_POV(3),
+        .dwType = hid.DIDFT_POV | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = 0,
+    },
+    .{
+        .pguid = null,
+        .dwOfs = DIJOFS_BUTTON(0),
+        .dwType = hid.DIDFT_BUTTON | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = 0,
+    },
+    .{
+        .pguid = null,
+        .dwOfs = DIJOFS_BUTTON(1),
+        .dwType = hid.DIDFT_BUTTON | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = 0,
+    },
+    .{
+        .pguid = null,
+        .dwOfs = DIJOFS_BUTTON(2),
+        .dwType = hid.DIDFT_BUTTON | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = 0,
+    },
+    .{
+        .pguid = null,
+        .dwOfs = DIJOFS_BUTTON(3),
+        .dwType = hid.DIDFT_BUTTON | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = 0,
+    },
+    .{
+        .pguid = null,
+        .dwOfs = DIJOFS_BUTTON(4),
+        .dwType = hid.DIDFT_BUTTON | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = 0,
+    },
+    .{
+        .pguid = null,
+        .dwOfs = DIJOFS_BUTTON(5),
+        .dwType = hid.DIDFT_BUTTON | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = 0,
+    },
+    .{
+        .pguid = null,
+        .dwOfs = DIJOFS_BUTTON(6),
+        .dwType = hid.DIDFT_BUTTON | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = 0,
+    },
+    .{
+        .pguid = null,
+        .dwOfs = DIJOFS_BUTTON(7),
+        .dwType = hid.DIDFT_BUTTON | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = 0,
+    },
+    .{
+        .pguid = null,
+        .dwOfs = DIJOFS_BUTTON(8),
+        .dwType = hid.DIDFT_BUTTON | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = 0,
+    },
+    .{
+        .pguid = null,
+        .dwOfs = DIJOFS_BUTTON(9),
+        .dwType = hid.DIDFT_BUTTON | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = 0,
+    },
+    .{
+        .pguid = null,
+        .dwOfs = DIJOFS_BUTTON(10),
+        .dwType = hid.DIDFT_BUTTON | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = 0,
+    },
+    .{
+        .pguid = null,
+        .dwOfs = DIJOFS_BUTTON(11),
+        .dwType = hid.DIDFT_BUTTON | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = 0,
+    },
+    .{
+        .pguid = null,
+        .dwOfs = DIJOFS_BUTTON(12),
+        .dwType = hid.DIDFT_BUTTON | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = 0,
+    },
+    .{
+        .pguid = null,
+        .dwOfs = DIJOFS_BUTTON(13),
+        .dwType = hid.DIDFT_BUTTON | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = 0,
+    },
+    .{
+        .pguid = null,
+        .dwOfs = DIJOFS_BUTTON(14),
+        .dwType = hid.DIDFT_BUTTON | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = 0,
+    },
+    .{
+        .pguid = null,
+        .dwOfs = DIJOFS_BUTTON(15),
+        .dwType = hid.DIDFT_BUTTON | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = 0,
+    },
+    .{
+        .pguid = null,
+        .dwOfs = DIJOFS_BUTTON(16),
+        .dwType = hid.DIDFT_BUTTON | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = 0,
+    },
+    .{
+        .pguid = null,
+        .dwOfs = DIJOFS_BUTTON(17),
+        .dwType = hid.DIDFT_BUTTON | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = 0,
+    },
+    .{
+        .pguid = null,
+        .dwOfs = DIJOFS_BUTTON(18),
+        .dwType = hid.DIDFT_BUTTON | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = 0,
+    },
+    .{
+        .pguid = null,
+        .dwOfs = DIJOFS_BUTTON(19),
+        .dwType = hid.DIDFT_BUTTON | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = 0,
+    },
+    .{
+        .pguid = null,
+        .dwOfs = DIJOFS_BUTTON(20),
+        .dwType = hid.DIDFT_BUTTON | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = 0,
+    },
+    .{
+        .pguid = null,
+        .dwOfs = DIJOFS_BUTTON(21),
+        .dwType = hid.DIDFT_BUTTON | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = 0,
+    },
+    .{
+        .pguid = null,
+        .dwOfs = DIJOFS_BUTTON(22),
+        .dwType = hid.DIDFT_BUTTON | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = 0,
+    },
+    .{
+        .pguid = null,
+        .dwOfs = DIJOFS_BUTTON(23),
+        .dwType = hid.DIDFT_BUTTON | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = 0,
+    },
+    .{
+        .pguid = null,
+        .dwOfs = DIJOFS_BUTTON(24),
+        .dwType = hid.DIDFT_BUTTON | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = 0,
+    },
+    .{
+        .pguid = null,
+        .dwOfs = DIJOFS_BUTTON(25),
+        .dwType = hid.DIDFT_BUTTON | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = 0,
+    },
+    .{
+        .pguid = null,
+        .dwOfs = DIJOFS_BUTTON(26),
+        .dwType = hid.DIDFT_BUTTON | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = 0,
+    },
+    .{
+        .pguid = null,
+        .dwOfs = DIJOFS_BUTTON(27),
+        .dwType = hid.DIDFT_BUTTON | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = 0,
+    },
+    .{
+        .pguid = null,
+        .dwOfs = DIJOFS_BUTTON(28),
+        .dwType = hid.DIDFT_BUTTON | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = 0,
+    },
+    .{
+        .pguid = null,
+        .dwOfs = DIJOFS_BUTTON(29),
+        .dwType = hid.DIDFT_BUTTON | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = 0,
+    },
+    .{
+        .pguid = null,
+        .dwOfs = DIJOFS_BUTTON(30),
+        .dwType = hid.DIDFT_BUTTON | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = 0,
+    },
+    .{
+        .pguid = null,
+        .dwOfs = DIJOFS_BUTTON(31),
+        .dwType = hid.DIDFT_BUTTON | DIDFT_OPTIONAL | hid.DIDFT_ANYINSTANCE,
+        .dwFlags = 0,
+    },
+};
+
+const dataFormat = hid.DIDATAFORMAT{
+    .dwSize = @sizeOf(hid.DIDATAFORMAT),
+    .dwObjSize = @sizeOf(hid.DIOBJECTDATAFORMAT),
+    .dwFlags = hid.DIDFT_ABSAXIS,
+    .dwDataSize = @sizeOf(hid.DIJOYSTATE),
+    .dwNumObjs = object_data_formats.len,
+    .rgodf = @ptrCast(&object_data_formats),
+};
+
+const xbc = win32.ui.input.xbox_controller;
+fn getDeviceDescription(xic: *const xbc.XINPUT_CAPABILITIES) []const u8 {
+    return switch (xic.SubType) {
+        xbc.XINPUT_DEVSUBTYPE_WHEEL => "XInput Wheel",
+        xbc.XINPUT_DEVSUBTYPE_ARCADE_STICK => "XInput Arcade Stick",
+        xbc.XINPUT_DEVSUBTYPE_FLIGHT_STICK => "XInput Flight Stick",
+        xbc.XINPUT_DEVSUBTYPE_DANCE_PAD => "XInput Dance Pad",
+        xbc.XINPUT_DEVSUBTYPE_GUITAR => "XInput Guitar",
+        xbc.XINPUT_DEVSUBTYPE_GUITAR_ALTERNATE => "XInput Alternate Guitar",
+        xbc.XINPUT_DEVSUBTYPE_DRUM_KIT => "XInput Drum Kit",
+        xbc.XINPUT_DEVSUBTYPE_GUITAR_BASS => "XInput Bass Guitar",
+        xbc.XINPUT_DEVSUBTYPE_ARCADE_PAD => "XInput Arcade Pad",
+        xbc.XINPUT_DEVSUBTYPE_GAMEPAD => if ((xic.Flags & xbc.XINPUT_CAPS_WIRELESS) != 0)
+            "Wireless Xbox Controller"
+        else
+            "Xbox Controller",
+        xbc.XINPUT_DEVSUBTYPE_UNKNOWN => "XInput Unknown",
+        else => "Unknown XInput Device",
+    };
+}
+
+fn orderJoystickObjects(first: *const void, second: *const void) std.math.Order {
+    const first_object: *const WindowsJoyobject = @ptrCast(first);
+    const second_object: *const WindowsJoyobject = @ptrCast(second);
+    if (first_object.type != second_object.type) return std.math.order(
+        @as(usize, @intFromEnum(first_object.type)),
+        @as(usize, @intFromEnum(second_object.type)),
+    );
+
+    return std.math.order(
+        first_object.offset,
+        second_object.offset,
+    );
+}
+
+const input = win32.ui.input;
+fn supportsXInput(guid: *const win32.zig.Guid) bool {
+    var count: u32 = 0;
+    if (input.GetRawInputDeviceList(
+        null,
+        &count,
+        @sizeOf(input.RAWINPUTDEVICELIST),
+    ) != 0) return false;
+
+    var ridl: []input.RAWINPUTDEVICELIST = platform.lib.allocator.alloc(
+        input.RAWINPUTDEVICELIST,
+        count,
+    ) catch return false;
+    defer platform.lib.allocator.free(ridl);
+
+    const wrapped_err = blk: {
+        var x: u32 = 0;
+        x -%= 1;
+        break :blk x;
+    };
+    if (input.GetRawInputDeviceList(
+        @ptrCast(ridl),
+        &count,
+        @sizeOf(input.RAWINPUTDEVICELIST),
+    ) == wrapped_err) return false;
+
+    var result = false;
+    for (ridl) |ridli| {
+        if (ridli.dwType != input.RIM_TYPEHID) continue;
+        var rdi = std.mem.zeroes(input.RID_DEVICE_INFO);
+        rdi.cbSize = @sizeOf(input.RID_DEVICE_INFO);
+        var size = @sizeOf(input.RID_DEVICE_INFO);
+
+        if (input.GetRawInputDeviceInfoA(
+            ridli.hDevice,
+            input.RIDI_DEVICEINFO,
+            @ptrCast(&rdi),
+            &size,
+        ) == wrapped_err) continue;
+
+        if (makeLong(
+            rdi.Anonymous.hid.dwVendorId,
+            rdi.Anonymous.hid.dwProductId,
+        ) != guid.Ints.a) continue;
+
+        var name = [1]u8{0} ** 256;
+        size = name.len;
+
+        if (input.GetRawInputDeviceInfoA(
+            ridli.hDevice,
+            input.RIDI_DEVICENAME,
+            @ptrCast(&rdi),
+            &size,
+        ) == wrapped_err) break;
+
+        name[name.len - 1] = 0;
+        if (std.mem.indexOf(u8, &name, "IG_")) {
+            result = true;
+            break;
+        }
+    }
+
+    return result;
+}
+
+fn closeJoystick(joy: *platform.InternalJoystick) void {
+    platform.inputJoystickConnection(joy, false);
+
+    if (joy.platform.device) |device| {
+        device.IDirectInputDevice8W_Unacquire();
+        device.IUnknown_Release();
+    }
+
+    platform.lib.allocator.free(joy.platform.objects);
+    platform.freeJoystick(joy);
+}
+
+fn MAKEDIPROP(x: anytype) win32.zig.Guid {
+    @setRuntimeSafety(false);
+    defer @setRuntimeSafety(true);
+
+    var result = win32.zig.Guid{};
+    (&result).* = (@as(*const win32.zig.Guid, @ptrCast(&x))).*;
+    return result;
+}
+
+const DIPROP_BUFFERSIZE = MAKEDIPROP(1);
+const DIPROP_AXISMODE = MAKEDIPROP(2);
+
+const DIPROP_GRANULARITY = MAKEDIPROP(3);
+const DIPROP_RANGE = MAKEDIPROP(4);
+const DIPROP_DEADZONE = MAKEDIPROP(5);
+const DIPROP_SATURATION = MAKEDIPROP(6);
+const DIPROP_FFGAIN = MAKEDIPROP(7);
+const DIPROP_FFLOAD = MAKEDIPROP(8);
+const DIPROP_AUTOCENTER = MAKEDIPROP(9);
+
+fn deviceObjectCallback(
+    doi: *const hid.DIDEVICEOBJECTINSTANCEW,
+    user: *void,
+) callconv(.Win64) std.os.windows.BOOL {
+    const data: *DInputObjectEnum = @ptrCast(user);
+    const object: *WindowsJoyobject = data.objects[data.objects.len - 1];
+
+    if ((lowByte(doi.dwType) & hid.DIDFT_AXIS) != 0) {
+        if (isEqualGuid(hid.GUID_Slider, doi.guidType)) {
+            object.offset = DIJOFS_SLIDER(data.slider_count);
+        } else if (isEqualGuid(hid.GUID_XAxis, doi.guidType)) {
+            object.offset = DIJOFS_X;
+        } else if (isEqualGuid(hid.GUID_YAxis, doi.guidType)) {
+            object.offset = DIJOFS_Y;
+        } else if (isEqualGuid(hid.GUID_ZAxis, doi.guidType)) {
+            object.offset = DIJOFS_Z;
+        } else if (isEqualGuid(hid.GUID_RxAxis, doi.guidType)) {
+            object.offset = DIJOFS_RX;
+        } else if (isEqualGuid(hid.GUID_RyAxis, doi.guidType)) {
+            object.offset = DIJOFS_RY;
+        } else if (isEqualGuid(hid.GUID_RzAxis, doi.guidType)) {
+            object.offset = DIJOFS_RZ;
+        } else {
+            return hid.DIENUM_CONTINUE;
+        }
+
+        var dipr = std.mem.zeroes(hid.DIPROPRANGE);
+        dipr.diph.dwSize = @sizeOf(hid.DIPROPRANGE);
+        dipr.diph.dwHeaderSize = @sizeOf(hid.DIPROPHEADER);
+        dipr.diph.dwHow = hid.DIPH_BYID;
+        dipr.diph.dwObj = doi.dwType;
+        dipr.lMin = -32768;
+        dipr.lMax = 32767;
+
+        if (win32.zig.FAILED(data.device.IDirectInputDevice8W_SetProperty(&DIPROP_RANGE, &dipr.diph))) {
+            return hid.DIENUM_CONTINUE;
+        }
+
+        if (isEqualGuid(hid.GUID_Slider, doi.guidType)) {
+            object.type = JoyType.slider;
+            data.slider_count += 1;
+        } else {
+            object.type = JoyType.axis;
+            data.axis_count += 1;
+        }
+    } else if ((lowByte(doi.dwType) & hid.DIDFT_POV) != 0) {
+        object.offset = DIJOFS_POV(data.pov_count);
+        object.type = JoyType.pov;
+        data.pov_count += 1;
+    } else if ((lowByte(doi.dwType) & hid.DIDFT_BUTTON) != 0) {
+        object.offset = DIJOFS_BUTTON(data.button_count);
+        object.type = JoyType.button;
+        data.button_count += 1;
+    }
+
+    data.object_count += 1;
+    return hid.DIENUM_CONTINUE;
+}
+
+fn deviceCallback(di: *const hid.DIDEVICEINSTANCEW, user: *void) std.os.windows.BOOL {
+    _ = user;
+    for (platform.lib.joysticks) |joy| {
+        if (joy.connected) {
+            if (isEqualGuid(joy.platform.guid, di.guidInstance)) {
+                return hid.DIENUM_CONTINUE;
+            }
+        }
+    }
+
+    if (supportsXInput(di.guidProduct)) {
+        return hid.DIENUM_CONTINUE;
+    }
+
+    var device: *hid.IDirectInputDevice8W = blk: {
+        var device_opt: ?*hid.IDirectInputDevice8W = null;
+        if (win32.zig.FAILED(platform.lib.platform_state.dinput8.api.?.IDirectInput8W_CreateDevice(
+            &di.guidInstance,
+            &device_opt,
+            null,
+        ))) {
+            main.setErrorString("Failed to create joystick device");
+            return hid.DIENUM_CONTINUE;
+        }
+        break :blk device_opt orelse return hid.DIENUM_CONTINUE;
+    };
+
+    if (win32.zig.FAILED(device.IDirectInputDevice8W_SetDataFormat(&dataFormat))) {
+        device.IUnknown_Release();
+        main.setErrorString("Failed to set data format for joystick");
+        return hid.DIENUM_CONTINUE;
+    }
+
+    var dc = std.mem.zeroes(hid.DIDEVCAPS);
+    dc.dwSize = @sizeOf(hid.DIDEVCAPS);
+
+    if (win32.zig.FAILED(device.IDirectInputDevice8W_GetCapabilities(&dc))) {
+        device.IUnknown_Release();
+        main.setErrorString("Failed to get capabilities for joystick");
+        return hid.DIENUM_CONTINUE;
+    }
+
+    var dipd = std.mem.zeroes(hid.DIPROPDWORD);
+    dipd.diph.dwSize = @sizeOf(hid.DIPROPDWORD);
+    dipd.diph.dwHeaderSize = @sizeOf(hid.DIPROPHEADER);
+    dipd.diph.dwHow = hid.DIPH_DEVICE;
+    dipd.dwData = hid.DIPROPAXISMODE_ABS;
+
+    if (win32.zig.FAILED(device.IDirectInputDevice8W_SetProperty(&DIPROP_AXISMODE, &dipd.diph))) {
+        device.IUnknown_Release();
+        main.setErrorString("Failed to set axis mode for joystick");
+        return hid.DIENUM_CONTINUE;
+    }
+
+    var data = DInputObjectEnum{
+        .device = device,
+        .objects = platform.lib.allocator.alloc(
+            WindowsJoyobject,
+            dc.dwAxes + dc.dwButtons + dc.dwPOVs,
+        ),
+    };
+
+    if (win32.zig.FAILED(device.IDirectInputDevice8W_EnumObjects(
+        &deviceObjectCallback,
+        @ptrCast(&data),
+        hid.DIDFT_AXIS | hid.DIDFT_BUTTON | hid.DIDFT_POV,
+    ))) {
+        device.IUnknown_Release();
+        main.setErrorString("Failed to enumerate objects for joystick");
+        platform.lib.allocator.free(data.objects);
+        return hid.DIENUM_CONTINUE;
+    }
+
+    std.sort.pdq(
+        WindowsJoyobject,
+        data.objects,
+        {},
+        struct {
+            fn less(_: void, lhs: WindowsJoyobject, rhs: WindowsJoyobject) bool {
+                return orderJoystickObjects(
+                    @ptrCast(&lhs),
+                    @ptrCast(&rhs),
+                ) == std.math.Order.lt;
+            }
+        }.less,
+    );
+
+    var name = [1]u8{0} ** 256;
+    var end_index: usize = 0;
+    var it = std.unicode.Utf16LeIterator.init(&di.tszInstanceName);
+    if (blk: {
+        while (it.nextCodepoint() catch break :blk false) |codepoint| {
+            if (end_index >= name.len) break true;
+            end_index += std.unicode.utf8Encode(codepoint, name[end_index..]) catch break true;
+        }
+    } == false) {
+        device.IUnknown_Release();
+        main.setErrorString("Failed to enumerate objects for joystick");
+        platform.lib.allocator.free(data.objects);
+        return hid.DIENUM_STOP;
+    }
+
+    const guid: [32]u8 = blk: {
+        var result: [32]u8 = [1]u8{0} ** 32;
+        if (std.mem.eql(u8, di.guidProduct.Ints.d[2..], "PIDVID")) {
+            std.fmt.bufPrint(&result, "03000000{x:0>2}{x:0>2}0000{x:0>2}{x:0>2}0000000000000000", .{
+                @as(u8, @truncate(di.guidProduct.Ints.a)),
+                @as(u8, @truncate(di.guidProduct.Ints.a >> 8)),
+                @as(u8, @truncate(di.guidProduct.Ints.a >> 16)),
+                @as(u8, @truncate(di.guidProduct.Ints.a >> 24)),
+            }) catch {};
+        } else {
+            std.fmt.bufPrint(&result, "05000000{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}00", .{
+                name[0],
+                name[1],
+                name[2],
+                name[3],
+                name[4],
+                name[5],
+                name[6],
+                name[7],
+                name[8],
+                name[9],
+                name[10],
+            }) catch {};
+        }
+        break :blk result;
+    };
+
+    const joystick = platform.allocateJoystick(
+        name,
+        guid,
+        data.axis_count + data.slider_count,
+        data.button_count,
+        data.pov_count,
+    ) catch {
+        device.IUnknown_Release();
+        platform.lib.allocator.free(data.objects);
+        return hid.DIENUM_STOP;
+    };
+
+    joystick.platform.device = device;
+    joystick.platform.guid = di.guidInstance;
+    joystick.platform.objects = data.objects;
+    joystick.platform.object_count = data.object_count;
+
+    platform.inputJoystickConnection(joystick, true);
+    return hid.DIENUM_CONTINUE;
+}
+
+fn detectJoystickConnection() void {
+    {
+        for (0..xbc.XUSER_MAX_COUNT) |index| {
+            const joystick_index: usize = blk: {
+                for (platform.lib.joysticks, 0..) |joy, joy_index| {
+                    if (joy.connected and
+                        joy.platform.device == null and
+                        joy.platform.index == index)
+                    {
+                        break :blk joy_index;
+                    }
+                    break :blk null;
+                }
+            } orelse continue;
+            _ = joystick_index;
+
+            var xic = std.mem.zeroes(xbc.XINPUT_CAPABILITIES);
+            if (blk: {
+                break :blk @as(win32.foundation.WIN32_ERROR, @enumFromInt(
+                    xbc.XInputGetCapabilities(
+                        index,
+                        0,
+                        &xic,
+                    ),
+                ));
+            } != win32.foundation.ERROR_SUCCESS) {
+                continue;
+            }
+
+            var guid: [32]u8 = [1]u8{0} ** 32;
+            std.fmt.bufPrint(
+                &guid,
+                "78696e707574{x:0>2}000000000000000000",
+                .{xic.SubType & 0xff},
+            ) catch continue;
+
+            var joy = platform.allocateJoystick(
+                getDeviceDescription(&xic),
+                guid,
+                6,
+                10,
+                1,
+            ) catch continue;
+
+            joy.platform.index = index;
+            platform.inputJoystickConnection(joy, true);
+        }
+
+        if (platform.lib.platform_state.dinput8.api) |api| {
+            if (win32.zig.FAILED(api.IDirectInput8W_EnumDevices(
+                hid.DI8DEVCLASS_GAMECTRL,
+                &deviceCallback,
+                null,
+                hid.DIEDFL_ALLDEVICES,
+            ))) {
+                main.setErrorString("Failed to enumerate joysticks");
+                return;
+            }
+        }
+    }
+}
+
+fn detectJoystickDisonnection() void {
+    for (platform.lib.joysticks) |joy| {
+        if (joy.connected) {
+            _ = pollJoystick(&joy, .presence);
+        }
+    }
+}
+
+fn initJoysticks() bool {
+    if (win32.zig.FAILED(hid.DirectInput8Create(
+        platform.lib.platform_state.instance,
+        hid.DIRECTINPUT_VERSION,
+        &hid.IID_IDirectInput8W,
+        &platform.lib.platform_state.dinput8.api,
+        null,
+    ))) {
+        main.setErrorString("Failed to create DirectInput8 API");
+        return false;
+    }
+
+    detectJoystickConnection();
+    return true;
+}
+
+fn deinitJoysticks() void {
+    for (&platform.lib.joysticks) |*joy| {
+        closeJoystick(joy);
+    }
+
+    if (platform.lib.platform_state.dinput8.api) |api| {
+        api.IUnknown_Release();
+    }
+}
+
+fn pollJoystick(joy: *platform.InternalJoystick, mode: platform.Poll) bool {
+    if (joy.platform.device) |device| {
+        device.IDirectInputDevice8W_Poll();
+        var state = std.mem.zeroes(hid.DIJOYSTATE);
+        var result = device.IDirectInputDevice8W_GetDeviceState(
+            @sizeOf(hid.DIJOYSTATE),
+            @ptrCast(&state),
+        );
+        if (result == hid.DIERR_NOTACQUIRED or result == hid.DIERR_INPUTLOST) {
+            device.IDirectInputDevice8W_Acquire();
+            device.IDirectInputDevice8W_Poll();
+            result = device.IDirectInputDevice8W_GetDeviceState(
+                @sizeOf(hid.DIJOYSTATE),
+                @ptrCast(&state),
+            );
+        }
+
+        if (win32.zig.FAILED(result)) {
+            closeJoystick(joy);
+            return false;
+        }
+
+        if (mode == .presence) {
+            return true;
+        }
+
+        var axis_index: i32 = 0;
+        var button_index: i32 = 0;
+        var pov_index: i32 = 0;
+        for (0..joy.platform.object_count) |index| {
+            const obj = joy.platform.objects[index];
+            var data: *const u8 = @as(*const u8, &state)[obj.offset];
+            switch (obj.type) {
+                .axis, .slider => {
+                    const data_converted: *u64 = @ptrCast(data);
+                    const value: f32 = (@as(f32, @ptrFromInt(data_converted.*)) + 0.5) / 32767.5;
+                    platform.inputJoystickAxis(joy, axis_index, value);
+                    axis_index += 1;
+                },
+                .button => {
+                    const data_converted: *u8 = @ptrCast(data);
+                    const value = (data_converted.* & 0x80) != 0;
+                    platform.inputJoystickButton(
+                        joy,
+                        button_index,
+                        value,
+                    );
+                    button_index += 1;
+                },
+                .pov => {
+                    const states = [9]definitions.Hat{
+                        .up,
+                        .right_up,
+                        .right,
+                        .right_down,
+                        .down,
+                        .left_down,
+                        .left,
+                        .left_up,
+                        .center,
+                    };
+
+                    const data_converted: *u32 = @ptrCast(data);
+                    const state_index = @divTrunc(data_converted.*, 45 * hid.DI_DEGREES);
+                    if (state_index < 0 or state_index > 8) {
+                        state_index = 8;
+                    }
+                    platform.inputJoystickHat(joy, pov_index, @as(u8, @intFromEnum(
+                        states[state_index],
+                    )));
+                    pov_index += 1;
+                },
+            }
+        }
+    }
+}
+
+fn getMappingName() []const u8 {
+    return "Windows";
+}
+
+fn updateGamepadGuid(guid: []const u8) void {
+    if (std.mem.eql(u8, guid[20..], "504944564944")) {
+        var original: [32]u8 = [1]u8{0} ** 32;
+        @memcpy(&original, guid);
+        std.fmt.bufPrint(
+            &guid,
+            "03000000{s:4}0000{s:4}000000000000",
+            .{
+                original[0..4],
+                original[4..8],
+            },
+        ) catch {};
+    }
+}
+
+fn pollMonitors() void {}
