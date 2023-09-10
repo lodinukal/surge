@@ -4,7 +4,7 @@ an engine serving as a kind of intermediary between something like raylib and un
 
 ## roadmap
 
-- [ ] video/platform modules (based off the [winit](https://github.com/rust-windowing/winit) project)
+- [ ] video/platform modules (based off of GLFW)
   - [ ] win32
   - [ ] ~~linux~~
   - [ ] ~~macos~~
