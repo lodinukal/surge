@@ -35,7 +35,7 @@ pub const InternalWindow = struct {
     user_pointer: ?*void = null,
     double_buffer: bool,
     video_mode: definitions.VideoMode,
-    monitor: ?*monitor.Monitor,
+    monitor: ?*InternalMonitor,
     cursor: ?*InternalCursor = null,
     min_width: ?i32,
     min_height: ?i32,
@@ -321,8 +321,8 @@ pub fn inputWindowCloseRequest(wnd: *InternalWindow) void {
     }
 }
 
-pub fn inputWindowMonitor(wnd: *InternalWindow, mn: *InternalMonitor) void {
-    wnd.monitor = mn;
+pub fn inputWindowMonitor(wnd: ?*InternalWindow, mn: *InternalMonitor) void {
+    mn.current_window = wnd;
 }
 
 pub fn createWindow(

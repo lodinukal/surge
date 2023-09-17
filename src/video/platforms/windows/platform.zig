@@ -463,6 +463,14 @@ inline fn lowByte(x: u16) u8 {
     return @as(u8, @intCast(x & 0xFF));
 }
 
+inline fn hiword(x: isize) i32 {
+    return @as(i32, @intCast(x >> 32));
+}
+
+inline fn loword(x: isize) i32 {
+    return @as(i32, @intCast(x & 0xFFFFFFFF));
+}
+
 inline fn makeLong(low: u16, high: u16) u32 {
     return @as(u32, @intCast(low)) | (@as(u32, @intCast(high)) << 16);
 }
@@ -2275,7 +2283,7 @@ fn updateWindowStyles(wnd: *const platform.InternalWindow) void {
         rect.top,
         rect.right - rect.left,
         rect.bottom - rect.top,
-        wam.SWP_NOZORDER | wam.SWP_NOACTIVATE | wam.SWP_FRAMECHANGED,
+        @intFromEnum(wam.SWP_NOZORDER) | @intFromEnum(wam.SWP_NOACTIVATE) | @intFromEnum(wam.SWP_FRAMECHANGED),
     );
 }
 
@@ -2343,15 +2351,226 @@ fn fitToMonitor(wnd: *platform.InternalWindow) void {
         monitor_info.rcMonitor.top,
         monitor_info.rcMonitor.right - monitor_info.rcMonitor.left,
         monitor_info.rcMonitor.bottom - monitor_info.rcMonitor.top,
-        wam.SWP_NOZORDER | wam.SWP_NOACTIVATE | wam.SWP_FRAMECHANGED,
+        @intFromEnum(wam.SWP_NOZORDER) | @intFromEnum(wam.SWP_NOACTIVATE) | @intFromEnum(wam.SWP_FRAMECHANGED),
     );
 }
 
 fn acquireMonitor(wnd: *platform.InternalWindow) void {
     if (platform.lib.platform_state.acquired_monitor_count == 0) {
-        win32.system.threading.
+        win32.system.power.SetThreadExecutionState(
+            @intFromEnum(win32.system.power.ES_DISPLAY_REQUIRED) | @intFromEnum(win32.system.power.ES_CONTINUOUS),
+        );
     }
+
+    if (wnd.monitor.?.current_window == null) {
+        platform.lib.platform_state.acquired_monitor_count += 1;
+    }
+
+    setVideoMode(wnd.monitor.?, &wnd.video_mode);
+    platform.inputWindowMonitor(wnd, wnd.monitor.?);
 }
+
+fn releaseMonitor(wnd: *platform.InternalWindow) void {
+    if (wnd.monitor.?.current_window != wnd) {
+        return;
+    }
+
+    platform.lib.platform_state.acquired_monitor_count -= 1;
+
+    if (platform.lib.platform_state.acquired_monitor_count == 0) {
+        win32.system.power.SetThreadExecutionState(
+            @intFromEnum(win32.system.power.ES_CONTINUOUS),
+        );
+    }
+
+    platform.inputWindowMonitor(null, wnd.monitor.?);
+    restoreVideoMode(wnd.monitor.?);
+}
+
+fn maximiseWindowManually(wnd: *platform.InternalWindow) void {
+    var monitor_info = std.mem.zeroes(gdi.MONITORINFO);
+    gdi.GetMonitorInfoW(gdi.MonitorFromWindow(wnd.platform.handle, .NEAREST), &monitor_info);
+
+    var rect = monitor_info.rcWork;
+
+    if (wnd.max_width != null and wnd.max_width != null) {
+        rect.bottom = @min(rect.right, rect.left + wnd.max_width);
+        rect.right = @min(rect.bottom, rect.top + wnd.max_height);
+    }
+
+    var style = wam.GetWindowLongW(wnd.platform.handle, ._STYLE);
+    style |= @intFromEnum(wam.WS_MAXIMIZE);
+    wam.SetWindowLongW(wnd.platform.handle, ._STYLE, style);
+
+    if (wnd.decorated) {
+        const ex_style = wam.GetWindowLongW(wnd.platform.handle, ._EXSTYLE);
+        if (isWindows10Version1607OrGreater()) {
+            const dpi = hi_dpi.GetDpiForWindow(wnd.platform.handle);
+            hi_dpi.AdjustWindowRectExForDpi(
+                &rect,
+                style,
+                win32.zig.FALSE,
+                ex_style,
+                dpi,
+            );
+            gdi.OffsetRect(
+                &rect,
+                0,
+                hi_dpi.GetSystemMetricsForDpi(@intFromEnum(wam.SM_CYCAPTION), dpi),
+            );
+        } else {
+            wam.AdjustWindowRectEx(
+                &rect,
+                style,
+                win32.zig.FALSE,
+                ex_style,
+            );
+            gdi.OffsetRect(
+                &rect,
+                0,
+                wam.GetSystemMetrics(.CYCAPTION),
+            );
+        }
+
+        rect.bottom = @min(rect.bottom, monitor_info.rcWork.bottom);
+    }
+
+    wam.SetWindowPos(
+        wnd.platform.handle,
+        wam.HWND_TOPMOST,
+        rect.left,
+        rect.top,
+        rect.right - rect.left,
+        rect.bottom - rect.top,
+        @intFromEnum(wam.SWP_NOZORDER) | @intFromEnum(wam.SWP_NOACTIVATE) | @intFromEnum(wam.SWP_FRAMECHANGED),
+    );
+}
+
+fn windowProc(
+    hwnd: ?win32.foundation.HWND,
+    msg: std.os.windows.UINT,
+    wparam: std.os.windows.WPARAM,
+    lparam: std.os.windows.LPARAM,
+) callconv(.Win64) win32.foundation.LRESULT {
+    var wnd_opt: ?*platform.InternalWindow = wam.GetPropW(hwnd, win32.zig.L("wam_window"));
+    if (wnd_opt == null) {
+        if (msg == @intFromEnum(wam.WM_NCCREATE)) {
+            if (isWindows10Version1607OrGreater()) {
+                const cs: *const wam.CREATESTRUCTW = @ptrCast(lparam);
+                const wnd_config: ?*const definitions.WindowConfig = @ptrCast(cs.lpCreateParams);
+                if (wnd_config) |config| if (config.scale_to_monitor) {
+                    hi_dpi.EnableNonClientDpiScaling(hwnd);
+                };
+            }
+        }
+
+        return wam.DefWindowProcW(hwnd, msg, wparam, lparam);
+    }
+    const wnd = wnd_opt.?;
+
+    const result: void = switch (msg) {
+        wam.WM_MOUSEACTIVATE => {
+            if (hiword(lparam) == @intFromEnum(wam.WM_LBUTTONDOWN)) {
+                if (loword(lparam) != @intFromEnum(wam.HTCLIENT)) {
+                    wnd.platform.frame_action = true;
+                }
+            }
+        },
+        wam.WM_CAPTURECHANGED => {
+            if (wnd.platform.frame_action and lparam == 0) {
+                if (wnd.cursor_mode == .disabled) {
+                    disableCursor(wnd);
+                } else if (wnd.cursor_mode == .captured) {
+                    captureCursor(wnd);
+                }
+                wnd.platform.frame_action = false;
+            }
+        },
+        wam.WM_SETFOCUS => {
+            platform.inputWindowFocus(wnd, true);
+
+            if (!wnd.platform.frame_action) {
+                if (wnd.cursor_mode == .disabled) {
+                    disableCursor(wnd);
+                } else if (wnd.cursor_mode == .captured) {
+                    captureCursor(wnd);
+                }
+                return 0;
+            }
+        },
+        wam.WM_KILLFOCUS => {
+            if (wnd.cursor_mode == .disabled) {
+                enableCursor(wnd);
+            } else if (wnd.cursor_mode == .captured) {
+                releaseCursor();
+            }
+
+            if (wnd.monitor != null and wnd.auto_iconify) {
+                iconifyWindow(wnd);
+            }
+
+            platform.inputWindowFocus(wnd, false);
+            return 0;
+        },
+        wam.WM_SYSCOMMAND => {
+            switch (wparam & 0xfff0) {
+                gdi.SC_SCREENSAVE, SC_MONITORPOWER => {
+                    if (wnd.monitor != null) return 0;
+                },
+                SC_KEYMENU => {
+                    if (!wnd.platform.keymenu) return 0;
+                },
+                else => {},
+            }
+        },
+        wam.WM_CLOSE => {
+            platform.inputWindowCloseRequest(wnd);
+        },
+        wam.WM_INPUTLANGCHANGE => {
+            updateKeyNames();
+        },
+        wam.WM_CHAR, wam.WM_SYSCHAR => {
+            if (wparam >= 0xd800 and wparam <= 0xdbff) {
+                wnd.platform.high_surrogate = @truncate(wparam);
+            } else {
+                var cp: u32 = 0;
+
+                if (wparam >= 0xdc00 and wparam <= 0xdfff) {
+                    if (wnd.platform.high_surrogate != 0) {
+                        cp += (wnd.platform.high_surrogate - 0xd800) << 10;
+                        cp += (wparam - 0xdc00);
+                        cp += 0x10000;
+                    }
+                } else cp = @truncate(wparam);
+
+                wnd.platform.high_surrogate = 0;
+                platform.inputChar(
+                    wnd,
+                    @truncate(cp),
+                    getKeyMods(),
+                    msg != @intFromEnum(wam.WM_SYSCHAR),
+                );
+            }
+
+            if (msg == @intFromEnum(wam.WM_CHAR) or wnd.platform.keymenu) {
+                return 0;
+            }
+        },
+        WM_UNICHAR => {
+            if (wparam == wam.UNICODE_NOCHAR) {
+                return win32.zig.TRUE;
+            }
+
+            platform.inputChar(wnd, @truncate(wparam), getKeyMods(), true);
+        },
+        wam.WM_KEYDOWN, wam.WM_SYSKEYDOWN, wam.WM_KEYUP, wam.WM_SYSKEYUP => {},
+    };
+    _ = result;
+}
+
+const SC_MONITORPOWER: u32 = 0xf170;
+const SC_KEYMENU: u32 = 0xf100;
+const WM_UNICHAR: u32 = 0x0109;
 
 fn getCursorPos(wnd: *platform.InternalWindow) definitions.DoublePosition {
     _ = wnd;
@@ -2362,4 +2581,8 @@ fn setCursorPos(wnd: *platform.InternalWindow, x: f64, y: f64) void {
     _ = wnd;
     _ = x;
     _ = y;
+}
+
+fn iconifyWindow(wnd: *platform.InternalWindow) void {
+    _ = wnd;
 }
