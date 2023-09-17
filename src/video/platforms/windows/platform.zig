@@ -651,7 +651,7 @@ pub fn connect(platform_id: std.Target.Os.Tag, platform_out: *platform.InternalP
     const out = platform.InternalPlatform{
         .init = init,
         .deinit = deinit,
-        .getCursorPos = undefined,
+        .getCursorPos = getCursorPos,
         .setCursorPos = undefined,
         .setCursorMode = undefined,
         .setRawMouseMotion = undefined,
@@ -2193,4 +2193,173 @@ fn disableRawMouseMotion(wnd: *platform.InternalWindow) void {
 
 fn disableCursor(wnd: *platform.InternalWindow) void {
     platform.lib.platform_state.disabled_cursor_window = wnd;
+    const restore_pos = getCursorPos(wnd);
+
+    platform.lib.platform_state.restore_cursor_pos_x = restore_pos.x;
+    platform.lib.platform_state.restore_cursor_pos_y = restore_pos.y;
+
+    updateCursorImage(wnd);
+    platform.centreCursorInContentArea(wnd);
+    captureCursor(wnd);
+
+    if (wnd.raw_mouse_motion) {
+        enableRawMouseMotion(wnd);
+    }
+}
+
+fn enableCursor(wnd: *platform.InternalWindow) void {
+    if (wnd.raw_mouse_motion) {
+        disableRawMouseMotion(wnd);
+    }
+
+    platform.lib.platform_state.disabled_cursor_window = null;
+    releaseCursor();
+    setCursorPos(
+        wnd,
+        platform.lib.platform_state.restore_cursor_pos_x,
+        platform.lib.platform_state.restore_cursor_pos_y,
+    );
+    updateCursorImage(wnd);
+}
+
+fn isCursorInContentArea(wnd: *platform.InternalWindow) bool {
+    var cursor_pos = std.mem.zeroes(win32.foundation.POINT);
+    if (wam.GetCursorPos(&cursor_pos) == win32.zig.FALSE) {
+        return false;
+    }
+
+    if (wam.WindowFromPoint(cursor_pos) != wnd.platform.handle) {
+        return false;
+    }
+
+    var area = std.mem.zeroes(win32.foundation.RECT);
+    wam.GetClientRect(wnd.platform.handle, &area);
+    gdi.ClientToScreen(wnd.platform.handle, @ptrCast(&area.left));
+    gdi.ClientToScreen(wnd.platform.handle, @ptrCast(&area.right));
+
+    return gdi.PtInRect(&area, cursor_pos) != win32.zig.FALSE;
+}
+
+fn updateWindowStyles(wnd: *const platform.InternalWindow) void {
+    var style = wam.GetWindowLongW(wnd.platform.handle, wam.GWL_STYLE);
+    style &= ~(@intFromEnum(wam.WS_OVERLAPPEDWINDOW) | @intFromEnum(wam.WS_POPUP));
+    style |= getWindowStyle(wnd);
+
+    const rect = std.mem.zeroes(win32.foundation.RECT);
+    wam.GetClientRect(wnd.platform.handle, &rect);
+
+    if (isWindows10Version1607OrGreater()) {
+        hi_dpi.AdjustWindowRectExForDpi(
+            &rect,
+            style,
+            win32.zig.FALSE,
+            getWindowExStyle(wnd),
+            hi_dpi.GetDpiForWindow(wnd.platform.handle),
+        );
+    } else {
+        wam.AdjustWindowRectEx(
+            &rect,
+            style,
+            win32.zig.FALSE,
+            getWindowExStyle(wnd),
+        );
+    }
+
+    gdi.ClientToScreen(wnd.platform.handle, @ptrCast(&rect.left));
+    gdi.ClientToScreen(wnd.platform.handle, @ptrCast(&rect.right));
+    wam.SetWindowLongW(wnd.platform.handle, wam.GWL_STYLE, style);
+    wam.SetWindowPos(
+        wnd.platform.handle,
+        wam.HWND_TOPMOST,
+        rect.left,
+        rect.top,
+        rect.right - rect.left,
+        rect.bottom - rect.top,
+        wam.SWP_NOZORDER | wam.SWP_NOACTIVATE | wam.SWP_FRAMECHANGED,
+    );
+}
+
+fn updateFramebufferTransparency(wnd: *const platform.InternalWindow) void {
+    if (!isWindowsVistaOrGreater()) return;
+
+    var composition_enabled: win32.foundation.BOOL = win32.zig.FALSE;
+    if (win32.zig.FAILED(
+        wam.DwmIsCompositionEnabled(&composition_enabled),
+    ) or composition_enabled == win32.zig.FALSE) {
+        return;
+    }
+
+    var colour: std.os.windows.DWORD = 0;
+    var is_opaque: win32.foundation.BOOL = win32.zig.FALSE;
+    if (isWindows8OrGreater() or win32.zig.SUCCEEDED(
+        win32.graphics.dwm.DwmGetColorizationColor(
+            &colour,
+            &is_opaque,
+        ),
+    ) and !is_opaque) {
+        const region = gdi.CreateRectRgn(0, 0, -1, -1);
+        var blur_behind = std.mem.zeroes(win32.graphics.dwm.DWM_BLURBEHIND);
+        blur_behind.dwFlags = @intFromEnum(win32.graphics.dwm.DWM_BB_ENABLE) | @intFromEnum(
+            win32.graphics.dwm.DWM_BB_BLURREGION,
+        );
+        blur_behind.hRgnBlur = region;
+        blur_behind.fEnable = win32.zig.TRUE;
+
+        win32.graphics.dwm.DwmEnableBlurBehindWindow(
+            wnd.platform.handle,
+            &blur_behind,
+        );
+        gdi.DeleteObject(region);
+    } else {
+        var blur_behind = std.mem.zeroes(win32.graphics.dwm.DWM_BLURBEHIND);
+        blur_behind.dwFlags = @intFromEnum(win32.graphics.dwm.DWM_BB_ENABLE);
+
+        win32.graphics.dwm.DwmEnableBlurBehindWindow(
+            wnd.platform.handle,
+            &blur_behind,
+        );
+    }
+}
+
+fn getKeyMods() definitions.Modifiers {
+    return definitions.Modifiers{
+        .shift = (kam.GetKeyState(kam.VK_SHIFT) & 0x8000) != 0,
+        .ctrl = (kam.GetKeyState(kam.VK_CONTROL) & 0x8000) != 0,
+        .alt = (kam.GetKeyState(kam.VK_MENU) & 0x8000) != 0,
+        .super = (kam.GetKeyState(kam.VK_LWIN) & 0x8000) != 0 or
+            (kam.GetKeyState(kam.VK_RWIN) & 0x8000) != 0,
+        .caps_lock = (kam.GetKeyState(kam.VK_CAPITAL) & 0x0001) != 0,
+        .num_lock = (kam.GetKeyState(kam.VK_NUMLOCK) & 0x0001) != 0,
+    };
+}
+
+fn fitToMonitor(wnd: *platform.InternalWindow) void {
+    var monitor_info = std.mem.zeroes(gdi.MONITORINFO);
+    gdi.GetMonitorInfoW(wnd.platform.handle, &monitor_info);
+    wam.SetWindowPos(
+        wnd.platform.handle,
+        null,
+        monitor_info.rcMonitor.left,
+        monitor_info.rcMonitor.top,
+        monitor_info.rcMonitor.right - monitor_info.rcMonitor.left,
+        monitor_info.rcMonitor.bottom - monitor_info.rcMonitor.top,
+        wam.SWP_NOZORDER | wam.SWP_NOACTIVATE | wam.SWP_FRAMECHANGED,
+    );
+}
+
+fn acquireMonitor(wnd: *platform.InternalWindow) void {
+    if (platform.lib.platform_state.acquired_monitor_count == 0) {
+        win32.system.threading.
+    }
+}
+
+fn getCursorPos(wnd: *platform.InternalWindow) definitions.DoublePosition {
+    _ = wnd;
+    return .{ .x = 0.0, .y = 0.0 };
+}
+
+fn setCursorPos(wnd: *platform.InternalWindow, x: f64, y: f64) void {
+    _ = wnd;
+    _ = x;
+    _ = y;
 }
