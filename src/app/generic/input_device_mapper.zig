@@ -36,11 +36,11 @@ pub const InputDeviceId = struct {
         return InputDeviceId{ .internal_id = internal_id };
     }
 
-    pub fn get_id(self: InputDeviceId) i32 {
+    pub fn getId(self: InputDeviceId) i32 {
         return self.internal_id;
     }
 
-    pub fn is_valid(self: InputDeviceId) bool {
+    pub fn isValid(self: InputDeviceId) bool {
         return self.internal_id >= 0;
     }
 
@@ -170,7 +170,7 @@ pub const PlatformInputDeviceMapper = struct {
         self.mapped_input_devices.deinit();
     }
 
-    pub fn iterate_all_input_devices_for_user(
+    pub fn iterateAllInputDevicesForUser(
         self: *const PlatformInputDeviceMapper,
         user_id: PlatformUserId,
     ) AllInputDeviceForUserIterator {
@@ -200,7 +200,7 @@ pub const PlatformInputDeviceMapper = struct {
         }
     };
 
-    pub fn iterate_all_input_devices(self: *const PlatformInputDeviceMapper) AllInputDeviceIterator {
+    pub fn iterateAllInputDevices(self: *const PlatformInputDeviceMapper) AllInputDeviceIterator {
         if (self.virtual.iterate_all_input_devices) |f| {
             return f(self);
         }
@@ -217,7 +217,7 @@ pub const PlatformInputDeviceMapper = struct {
         }
     };
 
-    pub fn iterate_all_connected_input_devices(self: *const PlatformInputDeviceMapper) AllInputDeviceConnectedIterator {
+    pub fn iterateAllConnectedInputDevices(self: *const PlatformInputDeviceMapper) AllInputDeviceConnectedIterator {
         if (self.virtual.iterate_all_connected_input_devices) |f| {
             return f(self);
         }
@@ -242,7 +242,7 @@ pub const PlatformInputDeviceMapper = struct {
         }
     };
 
-    pub fn iterate_all_active_users(self: *const PlatformInputDeviceMapper) ActiveUserIterator {
+    pub fn iterateAllActiveUsers(self: *const PlatformInputDeviceMapper) ActiveUserIterator {
         if (self.virtual.iterate_all_active_users) |f| {
             return f(self);
         }
@@ -267,7 +267,7 @@ pub const PlatformInputDeviceMapper = struct {
         }
     };
 
-    pub fn get_user_for_unpaired_input_devices(
+    pub fn getUserForUnpairedInputDevices(
         self: *const PlatformInputDeviceMapper,
     ) PlatformUserId {
         if (self.virtual.get_user_for_unpaired_input_devices) |f| {
@@ -276,7 +276,7 @@ pub const PlatformInputDeviceMapper = struct {
         unreachable;
     }
 
-    pub fn is_unpaired_user_id(
+    pub fn isUnpairedUserId(
         self: *const PlatformInputDeviceMapper,
         platform_id: PlatformUserId,
     ) bool {
@@ -286,7 +286,7 @@ pub const PlatformInputDeviceMapper = struct {
         return platform_id == self.get_user_for_unpaired_input_devices();
     }
 
-    pub fn is_input_device_mapped_to_unpaired_user(
+    pub fn isInputDeviceMappedToUnpairedUser(
         self: *const PlatformInputDeviceMapper,
         input_device: InputDeviceId,
     ) bool {
@@ -299,21 +299,21 @@ pub const PlatformInputDeviceMapper = struct {
         return false;
     }
 
-    pub fn get_primary_platform_user(self: *const PlatformInputDeviceMapper) PlatformUserId {
+    pub fn getPrimaryPlatformUser(self: *const PlatformInputDeviceMapper) PlatformUserId {
         if (self.virtual.get_primary_platform_user) |f| {
             return f(self);
         }
         unreachable;
     }
 
-    pub fn get_default_input_device(self: *const PlatformInputDeviceMapper) InputDeviceId {
+    pub fn getDefaultInputDevice(self: *const PlatformInputDeviceMapper) InputDeviceId {
         if (self.virtual.get_default_input_device) |f| {
             return f(self);
         }
         unreachable;
     }
 
-    pub fn get_user_for_input_device(
+    pub fn getUserForInputDevice(
         self: *const PlatformInputDeviceMapper,
         device_id: InputDeviceId,
     ) PlatformUserId {
@@ -326,7 +326,7 @@ pub const PlatformInputDeviceMapper = struct {
         return PlatformUserId.none;
     }
 
-    pub fn get_primary_input_device_for_user(
+    pub fn getPrimaryInputDeviceForUser(
         self: *const PlatformInputDeviceMapper,
         user_id: PlatformUserId,
     ) InputDeviceId {
@@ -345,7 +345,7 @@ pub const PlatformInputDeviceMapper = struct {
         return found;
     }
 
-    pub fn internal_set_input_device_connection_state(
+    pub fn internalSetInputDeviceConnectionState(
         self: *PlatformInputDeviceMapper,
         device_id: InputDeviceId,
         new_state: InputDeviceConnectionState,
@@ -370,7 +370,7 @@ pub const PlatformInputDeviceMapper = struct {
         return self.internal_map_input_device_to_user(device_id, owning_user, new_state);
     }
 
-    pub fn get_input_device_connection_state(
+    pub fn getInputDeviceConnectionState(
         self: *const PlatformInputDeviceMapper,
         device_id: InputDeviceId,
     ) InputDeviceConnectionState {
@@ -388,7 +388,7 @@ pub const PlatformInputDeviceMapper = struct {
         return state;
     }
 
-    pub fn internal_map_input_device_to_user(
+    pub fn internalMapInputDeviceToUser(
         self: *PlatformInputDeviceMapper,
         device_id: InputDeviceId,
         user_id: PlatformUserId,
@@ -421,7 +421,7 @@ pub const PlatformInputDeviceMapper = struct {
         return true;
     }
 
-    pub fn internal_change_input_device_user_mapping(
+    pub fn internalChangeInputDeviceUserMapping(
         self: *PlatformInputDeviceMapper,
         device_id: InputDeviceId,
         new_user_id: PlatformUserId,
@@ -461,47 +461,47 @@ pub const PlatformInputDeviceMapper = struct {
         old_user_id: PlatformUserId,
     ) void);
 
-    pub fn get_on_user_input_device_connection_change(
+    pub fn getOnUserInputDeviceConnectionChange(
         self: *const PlatformInputDeviceMapper,
     ) *?OnUserInputDeviceConnectionChange {
         return &self.on_user_input_device_connection_change;
     }
 
-    pub fn get_on_user_input_device_pairing_change(
+    pub fn getOnUserInputDevicePairingChange(
         self: *const PlatformInputDeviceMapper,
     ) *?OnUserInputDevicePairingChange {
         return &self.on_user_input_device_pairing_change;
     }
 
-    pub fn allocate_new_user_id(self: *PlatformInputDeviceMapper) std.mem.Allocator.Error!PlatformUserId {
+    pub fn allocateNewUserId(self: *PlatformInputDeviceMapper) std.mem.Allocator.Error!PlatformUserId {
         if (self.virtual.allocate_new_user_id) |f| {
             return f(self);
         }
         unreachable;
     }
 
-    pub fn allocate_new_input_device_id(self: *PlatformInputDeviceMapper) std.mem.Allocator.Error!InputDeviceId {
+    pub fn allocateNewInputDeviceId(self: *PlatformInputDeviceMapper) std.mem.Allocator.Error!InputDeviceId {
         if (self.virtual.allocate_new_input_device_id) |f| {
             return f(self);
         }
         unreachable;
     }
 
-    pub fn _bind_core_delegates(self: *PlatformInputDeviceMapper) void {
+    pub fn BindCoreDelegates(self: *PlatformInputDeviceMapper) void {
         if (self.virtual._bind_core_delegates) |f| {
             return f(self);
         }
         //TODO: bind core delegates
     }
 
-    pub fn _unbind_core_delegates(self: *PlatformInputDeviceMapper) void {
+    pub fn UnbindCoreDelegates(self: *PlatformInputDeviceMapper) void {
         if (self.virtual._unbind_core_delegates) |f| {
             return f(self);
         }
         //TODO: unbind core delegates
     }
 
-    pub fn _on_user_login_changed_event(
+    pub fn OnUserLoginChangedEvent(
         self: *PlatformInputDeviceMapper,
         user_id: PlatformUserId,
         is_logged_in: bool,
@@ -557,24 +557,24 @@ pub const GenericPlatformInputDeviceMapper = struct {
         return self;
     }
 
-    pub fn get_user_for_unpaired_input_devices(
+    pub fn getUserForUnpairedInputDevices(
         self: *const GenericPlatformInputDeviceMapper,
     ) PlatformUserId {
         _ = self;
         return PlatformUserId.none;
     }
 
-    pub fn get_primary_platform_user(self: *const GenericPlatformInputDeviceMapper) PlatformUserId {
+    pub fn getPrimaryPlatformUser(self: *const GenericPlatformInputDeviceMapper) PlatformUserId {
         _ = self;
         return PlatformUserId.init(0);
     }
 
-    pub fn get_default_input_device(self: *const GenericPlatformInputDeviceMapper) InputDeviceId {
+    pub fn getDefaultInputDevice(self: *const GenericPlatformInputDeviceMapper) InputDeviceId {
         _ = self;
         return InputDeviceId.init(0);
     }
 
-    pub fn on_user_login_changed_event(
+    pub fn onUserLoginChangedEvent(
         self: *GenericPlatformInputDeviceMapper,
         user_id: PlatformUserId,
         is_logged_in: bool,
@@ -594,11 +594,11 @@ pub const GenericPlatformInputDeviceMapper = struct {
         }
     }
 
-    pub fn allocate_new_user_id(self: *GenericPlatformInputDeviceMapper) std.mem.Allocator.Error!PlatformUserId {
+    pub fn allocateNewUserId(self: *GenericPlatformInputDeviceMapper) std.mem.Allocator.Error!PlatformUserId {
         return PlatformUserId.init(self.root.last_platform_user_id.get_internal_id() + 1);
     }
 
-    pub fn allocate_new_input_device_id(self: *GenericPlatformInputDeviceMapper) std.mem.Allocator.Error!InputDeviceId {
+    pub fn allocateNewInputDeviceId(self: *GenericPlatformInputDeviceMapper) std.mem.Allocator.Error!InputDeviceId {
         return InputDeviceId.init(self.root.last_input_device_id.get_id() + 1);
     }
 };
