@@ -1,7 +1,6 @@
 const std = @import("std");
 
-const platform = @import("./video/platforms/platform.zig");
-const definitions = @import("./video/definitions.zig");
+const app = @import("app/generic/input_device_mapper.zig");
 
 pub const X = enum(i32) {
     a,
@@ -14,6 +13,8 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     var alloc = gpa.allocator();
     _ = alloc;
+}
 
-    @compileLog(@intFromEnum(X.a) | @intFromEnum(X.b));
+test {
+    _ = app;
 }

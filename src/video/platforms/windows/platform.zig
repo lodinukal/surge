@@ -463,12 +463,12 @@ inline fn lowByte(x: u16) u8 {
     return @as(u8, @intCast(x & 0xFF));
 }
 
-inline fn hiword(x: isize) i32 {
-    return @as(i32, @intCast(x >> 32));
+pub inline fn hiword(dword: std.os.windows.DWORD) std.os.windows.WORD {
+    return @as(std.os.windows.WORD, @bitCast(@as(u16, @intCast((dword >> 16) & 0xffff))));
 }
 
-inline fn loword(x: isize) i32 {
-    return @as(i32, @intCast(x & 0xFFFFFFFF));
+pub inline fn loword(dword: std.os.windows.DWORD) std.os.windows.WORD {
+    return @as(std.os.windows.WORD, @bitCast(@as(u16, @intCast(dword & 0xffff))));
 }
 
 inline fn makeLong(low: u16, high: u16) u32 {
@@ -2468,7 +2468,7 @@ fn windowProc(
     }
     const wnd = wnd_opt.?;
 
-    const result: void = switch (msg) {
+    switch (msg) {
         wam.WM_MOUSEACTIVATE => {
             if (hiword(lparam) == @intFromEnum(wam.WM_LBUTTONDOWN)) {
                 if (loword(lparam) != @intFromEnum(wam.HTCLIENT)) {
@@ -2563,9 +2563,21 @@ fn windowProc(
 
             platform.inputChar(wnd, @truncate(wparam), getKeyMods(), true);
         },
-        wam.WM_KEYDOWN, wam.WM_SYSKEYDOWN, wam.WM_KEYUP, wam.WM_SYSKEYUP => {},
-    };
-    _ = result;
+        wam.WM_KEYDOWN, wam.WM_SYSKEYDOWN, wam.WM_KEYUP, wam.WM_SYSKEYUP => {
+            const action: definitions.ElementState = if (hiword(lparam) & wam.KF_UP != null) .release else .press;
+            _ = action;
+            const mods = getKeyMods();
+            _ = mods;
+
+            const scancode = hiword(lparam) & (@intFromEnum(wam.KF_EXTENDED) | 0xff);
+            if (scancode == 0) {
+                scancode = kam.MapVirtualKeyW(
+                    @intCast(wparam),
+                    @intFromEnum(wam.MAPVK_VK_TO_VSC),
+                );
+            }
+        },
+    }
 }
 
 const SC_MONITORPOWER: u32 = 0xf170;

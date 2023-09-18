@@ -80,3 +80,10 @@ pub inline fn flagEmpty(x: anytype) bool {
     const Backing = @typeInfo(T).Struct.backing_integer.?;
     return @as(Backing, @bitCast(x)) == 0;
 }
+
+const _delegate = @import("delegate.zig");
+pub const Delegate = _delegate.Delegate;
+pub const delegate = _delegate.delegate;
+
+const interface = @import("interface.zig");
+pub const getRoot = interface.getRoot;
