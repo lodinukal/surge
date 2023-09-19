@@ -65,9 +65,13 @@ pub const GenericPlatformApplicationMisc = struct {
 
     pub fn requestMinimise() void {}
 
-    pub fn isThisApplicationForeground() bool {}
+    pub fn isThisApplicationForeground() bool {
+        return false;
+    }
 
-    pub fn requiresVirtualKeyboard() bool {}
+    pub fn requiresVirtualKeyboard() bool {
+        return false;
+    }
 
     pub inline fn pumpMessages(from_main_loop: bool) void {
         _ = from_main_loop;

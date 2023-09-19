@@ -19,8 +19,8 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     var alloc = gpa.allocator();
 
+    _ = std.os.windows.kernel32.SetConsoleOutputCP(65001);
     std.debug.print("{!s}\n", .{pam.WindowsPlatformApplicationMisc.clipboardPaste(alloc)});
-    pam.WindowsPlatformApplicationMisc.clipboardCopy("hi bloxit");
 }
 
 test {
