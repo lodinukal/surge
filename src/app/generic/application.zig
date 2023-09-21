@@ -1,6 +1,11 @@
 const std = @import("std");
 
+const common = @import("../../core/common.zig");
+
 const math = @import("../../core/math.zig");
+
+const platform = @import("../platform.zig");
+const Cursor = @import("cursor.zig").Cursor;
 
 pub const ModifierKey = packed struct {
     control: bool = false,
@@ -91,4 +96,63 @@ pub const MonitorInfo = struct {
     work_rect: PlatformRect,
     is_primary: bool = false,
     dpi: i32 = 0,
+};
+
+pub const DisplayMetrics = struct {
+    primary_display_width: i32 = 0,
+    primary_display_height: i32 = 0,
+    monitor_info: std.ArrayList(MonitorInfo),
+    primary_display_work_rect: PlatformRect,
+    virtual_display_rect: PlatformRect,
+
+    pub fn rebuildDisplayMetrics(self: *DisplayMetrics) void {
+        self.primary_display_width = 0;
+        self.primary_display_height = 0;
+        self.monitor_info = std.ArrayList(MonitorInfo).init(0, null);
+        self.primary_display_work_rect = PlatformRect.init(null, null, null, null);
+        self.virtual_display_rect = PlatformRect.init(null, null, null, null);
+    }
+
+    pub fn getMonitorWorkAreaFromPoint(self: *const DisplayMetrics, point: *const math.Vector2(i32)) PlatformRect {
+        for (self.monitor_info.items) |mi| {
+            if (mi.display_rect.contains(point.x, point.y)) {
+                return mi.work_rect;
+            }
+        }
+        return PlatformRect.init(null, null, null, null);
+    }
+};
+
+pub const WindowTitleAlignment = enum {
+    left,
+    center,
+    right,
+};
+
+pub const GenericApplication = struct {
+    const Self = @This();
+    virtual: struct {
+        deinit: fn (self: *Self) void,
+    } = undefined,
+    cursor: *Cursor,
+    on_virtual_keyboard_shown: ?OnVirtualKeyboardShown = null,
+    on_virtual_keyboard_hidden: ?OnVirtualKeyboardHidden = null,
+
+    pub const OnVirtualKeyboardShown = common.Delegate(fn (
+        rect: PlatformRect,
+    ) void);
+    pub const OnVirtualKeyboardHidden = common.Delegate(fn () void);
+
+    pub fn init(cursor: *Cursor) GenericApplication {
+        return GenericApplication{
+            .cursor = cursor,
+        };
+    }
+};
+
+pub const WindowSizeLimits = struct {
+    min_width: ?f32,
+    min_height: ?f32,
+    max_width: ?f32,
+    max_height: ?f32,
 };

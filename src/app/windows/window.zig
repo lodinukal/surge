@@ -5,6 +5,7 @@ const math = @import("../../core/math.zig");
 const win32 = @import("win32");
 
 const application = @import("../generic/application.zig");
+const WindowsApplication = @import("application.zig").WindowsApplication;
 
 const window = @import("../generic/window.zig");
 const GenericWindow = window.GenericWindow;
@@ -12,7 +13,7 @@ const GenericWindow = window.GenericWindow;
 pub const WindowsWindow = struct {
     root: GenericWindow,
 
-    owning_application: *Application,
+    owning_application: *WindowsApplication,
     hwnd: win32.foundation.HWND,
     region_width: i32,
     region_height: i32,

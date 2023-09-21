@@ -2,6 +2,8 @@ const std = @import("std");
 
 const math = @import("../../core/math.zig");
 
+const message_handler = @import("message_handler.zig");
+
 pub const WindowType = enum {
     normal,
     menu,
@@ -21,13 +23,6 @@ pub const WindowActivationPolicy = enum {
     never,
     always,
     first_shown,
-};
-
-pub const WindowSizeLimits = struct {
-    min_width: ?f32,
-    min_height: ?f32,
-    max_width: ?f32,
-    max_height: ?f32,
 };
 
 pub const GenericWindowDefinition = struct {
@@ -58,7 +53,7 @@ pub const GenericWindowDefinition = struct {
     opacity: f32,
     corner_radius: i32,
 
-    size_limits: WindowSizeLimits,
+    size_limits: message_handler.WindowSizeLimits,
 
     manual_dpi_scaling: bool = false,
 };
