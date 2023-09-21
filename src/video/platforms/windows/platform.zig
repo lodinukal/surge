@@ -291,7 +291,7 @@ fn helperWindowProc(
     msg: std.os.windows.UINT,
     wparam: win32.foundation.WPARAM,
     lparam: win32.foundation.LPARAM,
-) callconv(.Win64) win32.foundation.LRESULT {
+) callconv(std.os.windows.WINAPI) win32.foundation.LRESULT {
     blk: {
         switch (msg) {
             wam.WM_DISPLAYCHANGE => {
@@ -1170,7 +1170,7 @@ const DIPROP_AUTOCENTER = MAKEDIPROP(9);
 fn deviceObjectCallback(
     doi: *const hid.DIDEVICEOBJECTINSTANCEW,
     user: *void,
-) callconv(.Win64) std.os.windows.BOOL {
+) callconv(std.os.windows.WINAPI) std.os.windows.BOOL {
     const data: *DInputObjectEnum = @ptrCast(user);
     const object: *WindowsJoyobject = data.objects[data.objects.len - 1];
 
@@ -1569,7 +1569,7 @@ fn monitorCallback(
     hdc: gdi.HDC,
     rect: *win32.foundation.RECT,
     data: win32.foundation.LPARAM,
-) callconv(.Win64) std.os.windows.BOOL {
+) callconv(std.os.windows.WINAPI) std.os.windows.BOOL {
     _ = rect;
     _ = hdc;
 
@@ -2451,7 +2451,7 @@ fn windowProc(
     msg: std.os.windows.UINT,
     wparam: std.os.windows.WPARAM,
     lparam: std.os.windows.LPARAM,
-) callconv(.Win64) win32.foundation.LRESULT {
+) callconv(std.os.windows.WINAPI) win32.foundation.LRESULT {
     var wnd_opt: ?*platform.InternalWindow = wam.GetPropW(hwnd, win32.zig.L("wam_window"));
     if (wnd_opt == null) {
         if (msg == @intFromEnum(wam.WM_NCCREATE)) {

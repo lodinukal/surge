@@ -81,7 +81,7 @@ pub fn tryTheme(wnd: foundation.HWND, preferred_theme: ?theme.Theme) theme.Theme
 const SetWindowCompositionAttribute = *fn (
     wnd: foundation.HWND,
     attr: *WINDOWCOMPOSITIONATTRIBDATA,
-) callconv(.Win64) foundation.BOOL;
+) callconv(std.os.windows.WINAPI) foundation.BOOL;
 
 const WINDOWCOMPOSITIONATTRIB = u32;
 const WCA_USEDARKMODECOLORS: WINDOWCOMPOSITIONATTRIB = 26;

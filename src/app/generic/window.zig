@@ -120,7 +120,11 @@ pub const GenericWindow = struct {
         setNativeWindowButtonsVisibility: ?fn (self: *Self, visible: bool) void = null,
     } = undefined,
 
-    pub fn init() GenericWindow {}
+    pub fn init() GenericWindow {
+        return GenericWindow{
+            .definition = .{},
+        };
+    }
 
     pub fn deinit(self: *GenericWindow) void {
         if (self.virtual.deinit) |f| {
