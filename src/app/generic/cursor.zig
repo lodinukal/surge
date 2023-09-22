@@ -27,23 +27,23 @@ pub const Cursor = struct {
     const CursorHandle = *anyopaque;
     virtual: struct {
         deinit: ?fn (this: *Self) void = null,
-        create_from_file: ?fn (this: *Self, path: []const u8, hotspot: math.Vector2(f32)) ?CursorHandle = null,
-        is_cursor_from_rgba_buffer_supported: ?fn (this: *const Self) bool = null,
-        create_from_rgba_buffer: ?fn (
+        createFromFile: ?fn (this: *Self, path: []const u8, hotspot: math.Vector2(f32)) ?CursorHandle = null,
+        isCursorFromRgbaBufferSupported: ?fn (this: *const Self) bool = null,
+        createFromRgbaBuffer: ?fn (
             this: *Self,
             pixels: []const u8,
             width: i32,
             height: i32,
             hotspot: math.Vector2(f32),
         ) ?CursorHandle = null,
-        get_position: ?fn (this: *const Self) math.Vector2(f32) = null,
-        set_position: ?fn (this: *Self, x: i32, y: i32) void = null,
-        get_type: ?fn (this: *const Self) MouseCursor = null,
-        set_type: ?fn (this: *Self, cursor: MouseCursor) void = null,
-        get_size: ?fn (this: *const Self) math.Vector2(f32) = null,
+        getPosition: ?fn (this: *const Self) math.Vector2(f32) = null,
+        setPosition: ?fn (this: *Self, x: i32, y: i32) void = null,
+        getType: ?fn (this: *const Self) MouseCursor = null,
+        setType: ?fn (this: *Self, cursor: MouseCursor) void = null,
+        getSize: ?fn (this: *const Self) math.Vector2(f32) = null,
         show: ?fn (this: *Self, showing: bool) void = null,
         lock: ?fn (this: *Self, bounds: ?*const application.PlatformRect) void = null,
-        set_type_shape: ?fn (this: *Self, cursor: MouseCursor, handle: CursorHandle) void = null,
+        setTypeShape: ?fn (this: *Self, cursor: MouseCursor, handle: CursorHandle) void = null,
     },
 
     pub fn deinit(this: *Self) void {
@@ -53,14 +53,14 @@ pub const Cursor = struct {
     }
 
     pub fn createFromFile(this: *Self, path: []const u8, hotspot: math.Vector2(f32)) ?CursorHandle {
-        if (this.virtual.create_from_file) |f| {
+        if (this.virtual.createFromFile) |f| {
             return f(this, path, hotspot);
         }
         return null;
     }
 
     pub fn isCursorFromRgbaBufferSupported(this: *const Self) bool {
-        if (this.virtual.is_cursor_from_rgba_buffer_supported) |f| {
+        if (this.virtual.isCursorFromRgbaBufferSupported) |f| {
             return f(this);
         }
         return false;
@@ -73,40 +73,40 @@ pub const Cursor = struct {
         height: i32,
         hotspot: math.Vector2(f32),
     ) ?CursorHandle {
-        if (this.virtual.create_from_rgba_buffer) |f| {
+        if (this.virtual.createFromRgbaBuffer) |f| {
             return f(this, pixels, width, height, hotspot);
         }
         return null;
     }
 
     pub fn getPosition(this: *const Self) math.Vector2(f32) {
-        if (this.virtual.get_position) |f| {
+        if (this.virtual.getPosition) |f| {
             return f(this);
         }
         unreachable;
     }
 
     pub fn setPosition(this: *Self, x: i32, y: i32) void {
-        if (this.virtual.set_position) |f| {
+        if (this.virtual.setPosition) |f| {
             f(this, x, y);
         }
     }
 
     pub fn getType(this: *const Self) MouseCursor {
-        if (this.virtual.get_type) |f| {
+        if (this.virtual.getType) |f| {
             return f(this);
         }
         unreachable;
     }
 
     pub fn setType(this: *Self, cursor: MouseCursor) void {
-        if (this.virtual.set_type) |f| {
+        if (this.virtual.setType) |f| {
             f(this, cursor);
         }
     }
 
     pub fn getSize(this: *const Self) math.Vector2(f32) {
-        if (this.virtual.get_size) |f| {
+        if (this.virtual.getSize) |f| {
             return f(this);
         }
         unreachable;
@@ -125,7 +125,7 @@ pub const Cursor = struct {
     }
 
     pub fn setTypeShape(this: *Self, cursor: MouseCursor, handle: CursorHandle) void {
-        if (this.virtual.set_type_shape) |f| {
+        if (this.virtual.setTypeShape) |f| {
             f(this, cursor, handle);
         }
     }
