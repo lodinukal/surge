@@ -4,7 +4,7 @@ const int_point = @import("int_point.zig");
 
 pub fn Vector2(comptime T: type) type {
     if (comptime !std.meta.trait.isFloat(T)) {
-        @compileError("IntPoint only supports floating types");
+        @compileError("Vector2 only supports floating types");
     }
 
     return struct {
@@ -144,7 +144,10 @@ pub fn Vector2(comptime T: type) type {
         }
 
         pub inline fn normalise(self: Self) Self {
-            return self / Self{ .x = self.length(), .y = self.length() };
+            return self.div(Self{
+                .x = self.length(),
+                .y = self.length(),
+            });
         }
 
         pub inline fn getRotated(self: Self, degrees: T) Self {
