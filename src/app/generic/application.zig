@@ -6,6 +6,7 @@ const math = @import("../../core/math.zig");
 
 const platform = @import("../platform.zig");
 const Cursor = @import("cursor.zig").Cursor;
+const GenericApplicationMessageHandler = @import("message_handler.zig").GenericApplicationMessageHandler;
 
 pub const ModifierKey = packed struct {
     control: bool = false,
@@ -132,21 +133,79 @@ pub const WindowTitleAlignment = enum {
 pub const GenericApplication = struct {
     const Self = @This();
     virtual: struct {
-        deinit: fn (self: *Self) void,
+        deinit: ?fn (self: *Self) void = null,
+        setMessageHandler: ?fn (
+            self: *Self,
+            message_handler: *GenericApplicationMessageHandler,
+        ) void = null,
+        getMessageHandler: ?fn (
+            self: *Self,
+        ) *GenericApplicationMessageHandler = null,
+        pollGameDeviceState: ?fn (
+            self: *Self,
+            delta: f32,
+        ) void = null,
+        pumpMessages: ?fn (
+            self: *Self,
+            delta: f32,
+        ) void = null,
     } = undefined,
     cursor: *Cursor,
+    message_handler: *GenericApplicationMessageHandler,
     on_virtual_keyboard_shown: ?OnVirtualKeyboardShown = null,
     on_virtual_keyboard_hidden: ?OnVirtualKeyboardHidden = null,
+    on_display_metrics_changed: ?OnDisplayMetricsChanged = null,
 
     pub const OnVirtualKeyboardShown = common.Delegate(fn (
         rect: PlatformRect,
     ) void);
     pub const OnVirtualKeyboardHidden = common.Delegate(fn () void);
+    pub const OnDisplayMetricsChanged = common.Delegate(fn (
+        metrics: *const DisplayMetrics,
+    ) void);
 
     pub fn init(cursor: *Cursor) GenericApplication {
         return GenericApplication{
             .cursor = cursor,
         };
+    }
+
+    pub fn setMessageHandler(
+        self: *GenericApplication,
+        message_handler: *GenericApplicationMessageHandler,
+    ) void {
+        if (self.virtual.setMessageHandler) |f| {
+            f(self, message_handler);
+        }
+        self.message_handler = message_handler;
+    }
+
+    pub fn getMessageHandler(
+        self: *GenericApplication,
+    ) *GenericApplicationMessageHandler {
+        if (self.virtual.getMessageHandler) |f| {
+            return f(self);
+        }
+        return self.message_handler;
+    }
+
+    pub fn pollGameDeviceState(
+        self: *GenericApplication,
+        delta: f32,
+    ) void {
+        if (self.virtual.pollGameDeviceState) |f| {
+            f(self, delta);
+        }
+    }
+
+    pub fn pumpMessages(self: *GenericApplication, delta: f32) void {
+        if (self.virtual.pumpMessages) |f| {
+            f(self, delta);
+        }
+    }
+
+    pub fn _broadcastDisplayMetricsChanged(self: *GenericApplication, metrics: *const DisplayMetrics) void {
+        self.on_display_metrics_changed.?.broadcast(.{metrics});
     }
 };
 
