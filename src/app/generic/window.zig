@@ -119,7 +119,7 @@ pub const GenericWindow = struct {
 
     pub fn init() GenericWindow {
         return GenericWindow{
-            .definition = .{},
+            .definition = undefined,
         };
     }
 

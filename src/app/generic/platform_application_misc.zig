@@ -225,3 +225,5 @@ pub const GenericPlatformApplicationMisc = struct {
         return false;
     }
 };
+
+pub const PlatformApplicationMisc = GenericPlatformApplicationMisc.PlatformBind;
