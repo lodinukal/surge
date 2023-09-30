@@ -46,7 +46,7 @@ pub const Cursor = struct {
         lock: fn (this: *Self, bounds: ?*const application.PlatformRect) void,
         setTypeShape: fn (this: *Self, cursor: MouseCursor, handle: CursorHandle) void,
     });
-    virtual: ?*const Virtual,
+    virtual: ?*const Virtual = null,
 
     pub fn deinit(this: *Self) void {
         if (this.virtual) |v| if (v.deinit) |f| {

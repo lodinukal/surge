@@ -151,7 +151,7 @@ pub const GenericApplication = struct {
             delta: f32,
         ) void,
     });
-    virtual: ?*const Virtual,
+    virtual: ?*const Virtual = null,
     cursor: *Cursor,
     message_handler: *GenericApplicationMessageHandler,
     on_virtual_keyboard_shown: ?OnVirtualKeyboardShown = null,
