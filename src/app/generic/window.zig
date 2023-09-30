@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const interface = @import("../../core/interface.zig");
 const math = @import("../../core/math.zig");
 
 const message_handler = @import("message_handler.zig");
@@ -75,8 +76,7 @@ pub const WindowDrawAttentionParameters = struct {
 
 pub const GenericWindow = struct {
     const Self = @This();
-    definition: GenericWindowDefinition,
-    virtual: struct {
+    pub const Virtual = interface.VirtualTable(struct {
         deinit: ?fn (self: *Self) void = null,
         reshapeWindow: ?fn (self: *Self, x: i32, y: i32, width: i32, height: i32) void = null,
         getFullscreenInfo: ?fn (self: *const Self, x: ?*i32, y: ?*i32, width: ?*i32, height: ?*i32) void = null,
@@ -113,7 +113,9 @@ pub const GenericWindow = struct {
         setManualManageDpiChanges: ?fn (self: *Self, manual_manage_dpi_changes: bool) void = null,
         drawAttention: ?fn (self: *Self, parameters: *const WindowDrawAttentionParameters) void = null,
         setNativeWindowButtonsVisibility: ?fn (self: *Self, visible: bool) void = null,
-    } = undefined,
+    });
+    definition: GenericWindowDefinition,
+    virtual: ?*const Self.Virtual = null,
 
     pub fn init() GenericWindow {
         return GenericWindow{
@@ -122,232 +124,232 @@ pub const GenericWindow = struct {
     }
 
     pub fn deinit(self: *GenericWindow) void {
-        if (self.virtual.deinit) |f| {
+        if (self.virtual) |v| if (v.deinit) |f| {
             f(&self);
-        }
+        };
     }
 
     pub fn reshapeWindow(self: *GenericWindow, x: i32, y: i32, width: i32, height: i32) void {
-        if (self.virtual.reshapeWindow) |f| {
+        if (self.virtual) |v| if (v.reshapeWindow) |f| {
             f(self, x, y, width, height);
-        }
+        };
     }
 
     pub fn getFullscreenInfo(self: *const GenericWindow, x: ?*i32, y: ?*i32, width: ?*i32, height: ?*i32) void {
-        if (self.virtual.getFullscreenInfo) |f| {
+        if (self.virtual) |v| if (v.getFullscreenInfo) |f| {
             f(self, x, y, width, height);
-        }
+        };
     }
 
     pub fn moveWindowTo(self: *GenericWindow, x: i32, y: i32) void {
-        if (self.virtual.moveWindowTo) |f| {
+        if (self.virtual) |v| if (v.moveWindowTo) |f| {
             f(self, x, y);
-        }
+        };
     }
 
     pub fn bringToFront(self: *GenericWindow, force: ?bool) void {
-        if (self.virtual.bringToFront) |f| {
+        if (self.virtual) |v| if (v.bringToFront) |f| {
             f(self, force orelse false);
-        }
+        };
     }
 
     pub fn forceToFront(self: *GenericWindow) void {
-        if (self.virtual.forceToFront) |f| {
+        if (self.virtual) |v| if (v.forceToFront) |f| {
             f(self);
-        }
+        };
     }
 
     pub fn cleanup(self: *GenericWindow) void {
-        if (self.virtual.cleanup) |f| {
+        if (self.virtual) |v| if (v.cleanup) |f| {
             f(self);
-        }
+        };
     }
 
     pub fn minimise(self: *GenericWindow) void {
-        if (self.virtual.minimise) |f| {
+        if (self.virtual) |v| if (v.minimise) |f| {
             f(self);
-        }
+        };
     }
 
     pub fn maximise(self: *GenericWindow) void {
-        if (self.virtual.maximise) |f| {
+        if (self.virtual) |v| if (v.maximise) |f| {
             f(self);
-        }
+        };
     }
 
     pub fn restore(self: *GenericWindow) void {
-        if (self.virtual.restore) |f| {
+        if (self.virtual) |v| if (v.restore) |f| {
             f(self);
-        }
+        };
     }
 
     pub fn show(self: *GenericWindow) void {
-        if (self.virtual.show) |f| {
+        if (self.virtual) |v| if (v.show) |f| {
             f(self);
-        }
+        };
     }
 
     pub fn hide(self: *GenericWindow) void {
-        if (self.virtual.hide) |f| {
+        if (self.virtual) |v| if (v.hide) |f| {
             f(self);
-        }
+        };
     }
 
     pub fn setWindowMode(self: *GenericWindow, new_mode: WindowMode) void {
-        if (self.virtual.setWindowMode) |f| {
+        if (self.virtual) |v| if (v.setWindowMode) |f| {
             f(self, new_mode);
-        }
+        };
     }
 
     pub fn getWindowMode(self: *const GenericWindow) WindowMode {
-        if (self.virtual.getWindowMode) |f| {
+        if (self.virtual) |v| if (v.getWindowMode) |f| {
             return f(self);
-        }
+        };
         return WindowMode.windowed;
     }
 
     pub fn isMaximised(self: *const GenericWindow) bool {
-        if (self.virtual.isMaximised) |f| {
+        if (self.virtual) |v| if (v.isMaximised) |f| {
             return f(self);
-        }
+        };
         return true;
     }
 
     pub fn isMinimised(self: *const GenericWindow) bool {
-        if (self.virtual.isMinimised) |f| {
+        if (self.virtual) |v| if (v.isMinimised) |f| {
             return f(self);
-        }
+        };
         return false;
     }
 
     pub fn isVisible(self: *const GenericWindow) bool {
-        if (self.virtual.isVisible) |f| {
+        if (self.virtual) |v| if (v.isVisible) |f| {
             return f(self);
-        }
+        };
         return true;
     }
 
     pub fn getRestoredDimensions(self: *GenericWindow, x: ?*i32, y: ?*i32, width: ?*i32, height: ?*i32) bool {
-        if (self.virtual.getRestoredDimensions) |f| {
+        if (self.virtual) |v| if (v.getRestoredDimensions) |f| {
             f(self, x, y, width, height);
-        }
+        };
         return false;
     }
 
     pub fn setWindowFocus(self: *GenericWindow) void {
-        if (self.virtual.setWindowFocus) |f| {
+        if (self.virtual) |v| if (v.setWindowFocus) |f| {
             f(self);
-        }
+        };
     }
 
     pub fn setOpacity(self: *GenericWindow, opacity: f32) void {
-        if (self.virtual.setOpacity) |f| {
+        if (self.virtual) |v| if (v.setOpacity) |f| {
             f(self, opacity);
-        }
+        };
     }
 
     pub fn enable(self: *GenericWindow, should_enable: bool) void {
-        if (self.virtual.enable) |f| {
+        if (self.virtual) |v| if (v.enable) |f| {
             f(self, should_enable);
-        }
+        };
     }
 
     pub fn isPointInWindow(self: *const GenericWindow, x: i32, y: i32) bool {
-        if (self.virtual.isPointInWindow) |f| {
+        if (self.virtual) |v| if (v.isPointInWindow) |f| {
             return f(self, x, y);
-        }
+        };
         return true;
     }
 
     pub fn getWindowBorderSize(self: *const GenericWindow) i32 {
-        if (self.virtual.getWindowBorderSize) |f| {
+        if (self.virtual) |v| if (v.getWindowBorderSize) |f| {
             return f(self);
-        }
+        };
         return 0;
     }
 
     pub fn getWindowTitleBarSize(self: *const GenericWindow) i32 {
-        if (self.virtual.getWindowTitleBarSize) |f| {
+        if (self.virtual) |v| if (v.getWindowTitleBarSize) |f| {
             return f(self);
-        }
+        };
         return 0;
     }
 
     pub fn getOsWindowHandle(self: *const GenericWindow) ?*void {
-        if (self.virtual.getOsWindowHandle) |f| {
+        if (self.virtual) |v| if (v.getOsWindowHandle) |f| {
             return f(self);
-        }
+        };
         return null;
     }
 
     pub fn isForegroundWindow(self: *const GenericWindow) bool {
-        if (self.virtual.isForegroundWindow) |f| {
+        if (self.virtual) |v| if (v.isForegroundWindow) |f| {
             return f(self);
-        }
+        };
         return true;
     }
 
     pub fn isFullscreenSupported(self: *const GenericWindow) bool {
-        if (self.virtual.isFullscreenSupported) |f| {
+        if (self.virtual) |v| if (v.isFullscreenSupported) |f| {
             return f(self);
-        }
+        };
         return true;
     }
 
     pub fn setText(self: *GenericWindow, text: []const u8) void {
-        if (self.virtual.setText) |f| {
+        if (self.virtual) |v| if (v.setText) |f| {
             f(self, text);
-        }
+        };
     }
 
     pub fn getDefinition(self: *const GenericWindow) *const GenericWindowDefinition {
-        if (self.virtual.getDefinition) |f| {
+        if (self.virtual) |v| if (v.getDefinition) |f| {
             return f(self);
-        }
+        };
         return &self.definition;
     }
 
     pub fn adjustCachedSize(self: *GenericWindow, size: *math.Vector2(f32)) void {
-        if (self.virtual.adjustCachedSize) |f| {
+        if (self.virtual) |v| if (v.adjustCachedSize) |f| {
             f(self, size);
-        }
+        };
     }
 
     pub fn getDpiScaleFactor(self: *const GenericWindow) f32 {
-        if (self.virtual.getDpiScaleFactor) |f| {
+        if (self.virtual) |v| if (v.getDpiScaleFactor) |f| {
             return f(self);
-        }
+        };
         return 1.0;
     }
 
     pub fn setDpiScaleFactor(self: *GenericWindow, dpi_scale_factor: f32) void {
-        if (self.virtual.setDpiScaleFactor) |f| {
+        if (self.virtual) |v| if (v.setDpiScaleFactor) |f| {
             f(self, dpi_scale_factor);
-        }
+        };
     }
 
     pub fn isManualManageDpiChanges(self: *const GenericWindow) bool {
-        if (self.virtual.isManualManageDpiChanges) |f| {
+        if (self.virtual) |v| if (v.isManualManageDpiChanges) |f| {
             return f(self);
-        }
+        };
         return false;
     }
 
     pub fn setManualManageDpiChanges(self: *GenericWindow, manual_manage_dpi_changes: bool) void {
-        if (self.virtual.setManualManageDpiChanges) |f| {
+        if (self.virtual) |v| if (v.setManualManageDpiChanges) |f| {
             f(self, manual_manage_dpi_changes);
-        }
+        };
     }
 
     pub fn drawAttention(self: *GenericWindow, parameters: *const WindowDrawAttentionParameters) void {
-        if (self.virtual.drawAttention) |f| {
+        if (self.virtual) |v| if (v.drawAttention) |f| {
             f(self, parameters);
-        }
+        };
     }
 
     pub fn setNativeWindowButtonsVisibility(self: *GenericWindow, visible: bool) void {
-        if (self.virtual.setNativeWindowButtonsVisibility) |f| {
+        if (self.virtual) |v| if (v.setNativeWindowButtonsVisibility) |f| {
             f(self, visible);
-        }
+        };
     }
 };

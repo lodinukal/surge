@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const interface = @import("../../core/interface.zig");
 const math = @import("../../core/math.zig");
 
 const GenericWindow = @import("window.zig").GenericWindow;
@@ -253,132 +254,132 @@ pub const WindowSizeLimits = struct {
 
 pub const GenericApplicationMessageHandler = struct {
     const Self = @This();
-    virtual: struct {
-        deinit: ?fn (*Self) void = null,
-        shouldProcessUserInputMessages: ?fn (
+    pub const Virtual = interface.VirtualTable(struct {
+        deinit: fn (*Self) void,
+        shouldProcessUserInputMessages: fn (
             *const Self,
             wnd: *const GenericWindow,
-        ) bool = null,
-        onKeyChar: ?fn (
+        ) bool,
+        onKeyChar: fn (
             *Self,
             codepoint: u32,
             is_repeat: bool,
-        ) bool = null,
-        onKeyDown: ?fn (
+        ) bool,
+        onKeyDown: fn (
             *Self,
             key: i32,
             char: u32,
             is_repeat: bool,
-        ) bool = null,
-        onKeyUp: ?fn (
+        ) bool,
+        onKeyUp: fn (
             *Self,
             key: i32,
             char: u32,
             is_repeat: bool,
-        ) bool = null,
-        onInputLanguageChange: ?fn (
+        ) bool,
+        onInputLanguageChange: fn (
             *Self,
             lang: []const u8,
-        ) void = null,
-        onMouseDown: ?fn (
+        ) void,
+        onMouseDown: fn (
             *Self,
             wnd: *const GenericWindow,
             button: MouseButtons,
             pos: math.Vector2(f32),
-        ) bool = null,
-        onMouseUp: ?fn (
+        ) bool,
+        onMouseUp: fn (
             *Self,
             wnd: *const GenericWindow,
             pos: math.Vector2(f32),
-        ) bool = null,
-        onMouseDoubleClick: ?fn (
+        ) bool,
+        onMouseDoubleClick: fn (
             *Self,
             wnd: *const GenericWindow,
             button: MouseButtons,
             pos: math.Vector2(f32),
-        ) bool = null,
-        onMouseWheel: ?fn (
+        ) bool,
+        onMouseWheel: fn (
             *Self,
             delta: f32,
             pos: math.Vector2(f32),
-        ) bool = null,
-        onMouseMove: ?fn (*Self) bool = null,
-        onRawMouseMove: ?fn (*Self, x: i32, y: i32) bool = null,
-        onCursorSet: ?fn (*Self) void = null,
-        onControllerAnalog: ?fn (
+        ) bool,
+        onMouseMove: fn (*Self) bool,
+        onRawMouseMove: fn (*Self, x: i32, y: i32) bool,
+        onCursorSet: fn (*Self) void,
+        onControllerAnalog: fn (
             *Self,
             key: GamepadKeys,
             platform_user_id: input_device_mapper.PlatformUserId,
             input_device_id: input_device_mapper.InputDeviceId,
             analog_value: f32,
-        ) bool = null,
-        onControllerButtonPressed: ?fn (
+        ) bool,
+        onControllerButtonPressed: fn (
             *Self,
             key: GamepadKeys,
             platform_user_id: input_device_mapper.PlatformUserId,
             input_device_id: input_device_mapper.InputDeviceId,
             is_repeat: bool,
-        ) bool = null,
-        onControllerButtonReleased: ?fn (
+        ) bool,
+        onControllerButtonReleased: fn (
             *Self,
             key: GamepadKeys,
             platform_user_id: input_device_mapper.PlatformUserId,
             input_device_id: input_device_mapper.InputDeviceId,
-        ) bool = null,
-        onBeginGesture: ?fn (*Self) void = null,
-        onTouchGesture: ?fn (
+        ) bool,
+        onBeginGesture: fn (*Self) void,
+        onTouchGesture: fn (
             *Self,
             gesture_type: GestureEvent,
             delta: math.Vector2(f32),
             wheel_delta: f32,
             is_inverted: bool,
-        ) bool = null,
-        onEndGesture: ?fn (*Self) void = null,
-        onTouchStarted: ?fn (
+        ) bool,
+        onEndGesture: fn (*Self) void,
+        onTouchStarted: fn (
             *Self,
             wnd: *GenericWindow,
             location: math.Vector2(f32),
             force: f32,
             platform_user_id: input_device_mapper.PlatformUserId,
             device_id: input_device_mapper.InputDeviceId,
-        ) bool = null,
-        onTouchMoved: ?fn (
+        ) bool,
+        onTouchMoved: fn (
             *Self,
             location: math.Vector2(f32),
             force: f32,
             index: i32,
             platform_user_id: input_device_mapper.PlatformUserId,
             device_id: input_device_mapper.InputDeviceId,
-        ) bool = null,
-        onTouchEnded: ?fn (
+        ) bool,
+        onTouchEnded: fn (
             *Self,
             location: math.Vector2(f32),
             index: i32,
             platform_user_id: input_device_mapper.PlatformUserId,
             device_id: input_device_mapper.InputDeviceId,
-        ) bool = null,
-        onTouchForceChanged: ?fn (
-            *Self,
-            location: math.Vector2(f32),
-            force: f32,
-            index: i32,
-            platform_user_id: input_device_mapper.PlatformUserId,
-            device_id: input_device_mapper.InputDeviceId,
-        ) bool = null,
-        onTouchFirstMove: ?fn (
+        ) bool,
+        onTouchForceChanged: fn (
             *Self,
             location: math.Vector2(f32),
             force: f32,
             index: i32,
             platform_user_id: input_device_mapper.PlatformUserId,
             device_id: input_device_mapper.InputDeviceId,
-        ) bool = null,
-        shouldSimulateGesture: ?fn (
+        ) bool,
+        onTouchFirstMove: fn (
+            *Self,
+            location: math.Vector2(f32),
+            force: f32,
+            index: i32,
+            platform_user_id: input_device_mapper.PlatformUserId,
+            device_id: input_device_mapper.InputDeviceId,
+        ) bool,
+        shouldSimulateGesture: fn (
             *Self,
             gesture: GestureEvent,
             enable: bool,
-        ) void = null,
-        onMotionDetected: ?fn (
+        ) void,
+        onMotionDetected: fn (
             *Self,
             tilt: math.Vector3(f32),
             rotation_rate: math.Vector3(f32),
@@ -386,183 +387,184 @@ pub const GenericApplicationMessageHandler = struct {
             acceleration: math.Vector3(f32),
             platform_user_id: input_device_mapper.PlatformUserId,
             device_id: input_device_mapper.InputDeviceId,
-        ) bool = null,
-        onSizeChanged: ?fn (
+        ) bool,
+        onSizeChanged: fn (
             *Self,
             wnd: *GenericWindow,
             width: i32,
             height: i32,
             minimised: bool,
-        ) bool = null,
-        onOsPaint: ?fn (
+        ) bool,
+        onOsPaint: fn (
             *Self,
             wnd: *GenericWindow,
-        ) void = null,
-        getSizeLimitsForWindow: ?fn (
+        ) void,
+        getSizeLimitsForWindow: fn (
             *const Self,
             wnd: *GenericWindow,
-        ) ?WindowSizeLimits = null,
-        onResizingWindow: ?fn (
+        ) ?WindowSizeLimits,
+        onResizingWindow: fn (
             *Self,
             wnd: *GenericWindow,
-        ) void = null,
-        beginReshapingWindow: ?fn (
+        ) void,
+        beginReshapingWindow: fn (
             *Self,
             wnd: *GenericWindow,
-        ) bool = null,
-        finishedReshapingWindow: ?fn (
+        ) bool,
+        finishedReshapingWindow: fn (
             *Self,
             wnd: *GenericWindow,
-        ) void = null,
-        handleDpiScaleChanged: ?fn (
+        ) void,
+        handleDpiScaleChanged: fn (
             *Self,
             wnd: *GenericWindow,
-        ) void = null,
-        signalSystemDpiChanged: ?fn (
+        ) void,
+        signalSystemDpiChanged: fn (
             *Self,
             wnd: *GenericWindow,
-        ) void = null,
-        onMovedWindow: ?fn (
+        ) void,
+        onMovedWindow: fn (
             *Self,
             wnd: *GenericWindow,
             x: i32,
             y: i32,
-        ) void = null,
-        onWindowActivationChanged: ?fn (
+        ) void,
+        onWindowActivationChanged: fn (
             *Self,
             wnd: *GenericWindow,
             activation_type: WindowActivation,
-        ) bool = null,
-        onApplicationActivationChanged: ?fn (
+        ) bool,
+        onApplicationActivationChanged: fn (
             *Self,
             is_active: bool,
-        ) bool = null,
-        onConvertibleLaptopModeChanged: ?fn (
+        ) bool,
+        onConvertibleLaptopModeChanged: fn (
             *Self,
-        ) bool = null,
-        getWindowZoneForPaint: ?fn (
+        ) bool,
+        getWindowZoneForPaint: fn (
             *Self,
             wnd: *GenericWindow,
             x: i32,
             y: i32,
-        ) WindowZone = null,
-        onWindowClose: ?fn (
+        ) WindowZone,
+        onWindowClose: fn (
             *Self,
             wnd: *GenericWindow,
-        ) void = null,
-        onDragEnterText: ?fn (
-            *Self,
-            wnd: *GenericWindow,
-            text: []const u8,
-        ) DropEffect = null,
-        onDragEnterFiles: ?fn (
-            *Self,
-            wnd: *GenericWindow,
-            files: []const []const u8,
-        ) DropEffect = null,
-        onDragEnterExternal: ?fn (
+        ) void,
+        onDragEnterText: fn (
             *Self,
             wnd: *GenericWindow,
             text: []const u8,
+        ) DropEffect,
+        onDragEnterFiles: fn (
+            *Self,
+            wnd: *GenericWindow,
             files: []const []const u8,
-        ) DropEffect = null,
-        onDragOver: ?fn (
+        ) DropEffect,
+        onDragEnterExternal: fn (
             *Self,
             wnd: *GenericWindow,
-        ) DropEffect = null,
-        onDragLeave: ?fn (
+            text: []const u8,
+            files: []const []const u8,
+        ) DropEffect,
+        onDragOver: fn (
             *Self,
             wnd: *GenericWindow,
-        ) void = null,
-        onDragDrop: ?fn (
+        ) DropEffect,
+        onDragLeave: fn (
             *Self,
             wnd: *GenericWindow,
-        ) DropEffect = null,
-        onWindowAction: ?fn (
+        ) void,
+        onDragDrop: fn (
+            *Self,
+            wnd: *GenericWindow,
+        ) DropEffect,
+        onWindowAction: fn (
             *Self,
             wnd: *GenericWindow,
             action: WindowAction,
-        ) bool = null,
-        setCursorPos: ?fn (
+        ) bool,
+        setCursorPos: fn (
             *Self,
             pos: math.Vector2(f32),
-        ) void = null,
-    } = undefined,
+        ) void,
+    });
+    virtual: ?*const Virtual = null,
 
     pub fn deinit(this: *Self) void {
-        if (this.virtual.deinit) |f| {
+        if (this.virtual) |v| if (v.deinit) |f| {
             f(this);
-        }
+        };
     }
 
     pub fn shouldProcessUserInputMessages(this: *const Self, wnd: *const GenericWindow) bool {
-        if (this.virtual.shouldProcessUserInputMessages) |f| {
+        if (this.virtual) |v| if (v.shouldProcessUserInputMessages) |f| {
             return f(this, wnd);
-        }
+        };
         return false;
     }
 
     pub fn onKeyChar(this: *Self, codepoint: u32, is_repeat: bool) bool {
-        if (this.virtual.onKeyChar) |f| {
+        if (this.virtual) |v| if (v.onKeyChar) |f| {
             return f(this, codepoint, is_repeat);
-        }
+        };
         return false;
     }
 
     pub fn onKeyDown(this: *Self, key: i32, char: u32, is_repeat: bool) bool {
-        if (this.virtual.onKeyDown) |f| {
+        if (this.virtual) |v| if (v.onKeyDown) |f| {
             return f(this, key, char, is_repeat);
-        }
+        };
         return false;
     }
 
     pub fn onKeyUp(this: *Self, key: i32, char: u32, is_repeat: bool) bool {
-        if (this.virtual.onKeyUp) |f| {
+        if (this.virtual) |v| if (v.onKeyUp) |f| {
             return f(this, key, char, is_repeat);
-        }
+        };
         return false;
     }
 
     pub fn onInputLanguageChange(this: *Self, lang: []const u8) void {
-        if (this.virtual.onInputLanguageChange) |f| {
+        if (this.virtual) |v| if (v.onInputLanguageChange) |f| {
             f(this, lang);
-        }
+        };
     }
 
     pub fn onMouseDown(this: *Self, wnd: *const GenericWindow, button: MouseButtons, pos: math.Vector2(f32)) bool {
-        if (this.virtual.onMouseDown) |f| {
+        if (this.virtual) |v| if (v.onMouseDown) |f| {
             return f(this, wnd, button, pos);
-        }
+        };
         return false;
     }
 
     pub fn onMouseUp(this: *Self, wnd: *const GenericWindow, pos: math.Vector2(f32)) bool {
-        if (this.virtual.onMouseUp) |f| {
+        if (this.virtual) |v| if (v.onMouseUp) |f| {
             return f(this, wnd, pos);
-        }
+        };
         return false;
     }
 
     pub fn onMouseDoubleClick(this: *Self, wnd: *const GenericWindow, button: MouseButtons, pos: math.Vector2(f32)) bool {
-        if (this.virtual.onMouseDoubleClick) |f| {
+        if (this.virtual) |v| if (v.onMouseDoubleClick) |f| {
             return f(this, wnd, button, pos);
-        }
+        };
         return false;
     }
 
     pub fn onMouseWheel(this: *Self, delta: f32, pos: math.Vector2(f32)) bool {
-        if (this.virtual.onMouseWheel) |f| {
+        if (this.virtual) |v| if (v.onMouseWheel) |f| {
             return f(this, delta, pos);
-        }
+        };
         return false;
     }
 
     pub fn onMouseMove(
         this: *Self,
     ) bool {
-        if (this.virtual.onMouseMove) |f| {
+        if (this.virtual) |v| if (v.onMouseMove) |f| {
             return f(this);
-        }
+        };
         return false;
     }
 
@@ -571,18 +573,18 @@ pub const GenericApplicationMessageHandler = struct {
         x: i32,
         y: i32,
     ) bool {
-        if (this.virtual.onRawMouseMove) |f| {
+        if (this.virtual) |v| if (v.onRawMouseMove) |f| {
             return f(this, x, y);
-        }
+        };
         return false;
     }
 
     pub fn onCursorSet(
         this: *Self,
     ) void {
-        if (this.virtual.onCursorSet) |f| {
+        if (this.virtual) |v| if (v.onCursorSet) |f| {
             f(this);
-        }
+        };
     }
 
     pub fn onControllerAnalog(
@@ -592,9 +594,9 @@ pub const GenericApplicationMessageHandler = struct {
         input_device_id: input_device_mapper.InputDeviceId,
         analog_value: f32,
     ) bool {
-        if (this.virtual.onControllerAnalog) |f| {
+        if (this.virtual) |v| if (v.onControllerAnalog) |f| {
             return f(this, key, platform_user_id, input_device_id, analog_value);
-        }
+        };
         return false;
     }
 
@@ -605,9 +607,9 @@ pub const GenericApplicationMessageHandler = struct {
         input_device_id: input_device_mapper.InputDeviceId,
         is_repeat: bool,
     ) bool {
-        if (this.virtual.onControllerButtonPressed) |f| {
+        if (this.virtual) |v| if (v.onControllerButtonPressed) |f| {
             return f(this, key, platform_user_id, input_device_id, is_repeat);
-        }
+        };
         return false;
     }
 
@@ -617,18 +619,18 @@ pub const GenericApplicationMessageHandler = struct {
         platform_user_id: input_device_mapper.PlatformUserId,
         input_device_id: input_device_mapper.InputDeviceId,
     ) bool {
-        if (this.virtual.onControllerButtonReleased) |f| {
+        if (this.virtual) |v| if (v.onControllerButtonReleased) |f| {
             return f(this, key, platform_user_id, input_device_id);
-        }
+        };
         return false;
     }
 
     pub fn onBeginGesture(
         this: *Self,
     ) void {
-        if (this.virtual.onBeginGesture) |f| {
+        if (this.virtual) |v| if (v.onBeginGesture) |f| {
             f(this);
-        }
+        };
     }
 
     pub fn onTouchGesture(
@@ -638,18 +640,18 @@ pub const GenericApplicationMessageHandler = struct {
         wheel_delta: f32,
         is_inverted: bool,
     ) bool {
-        if (this.virtual.onTouchGesture) |f| {
+        if (this.virtual) |v| if (v.onTouchGesture) |f| {
             return f(this, gesture_type, delta, wheel_delta, is_inverted);
-        }
+        };
         return false;
     }
 
     pub fn onEndGesture(
         this: *Self,
     ) void {
-        if (this.virtual.onEndGesture) |f| {
+        if (this.virtual) |v| if (v.onEndGesture) |f| {
             f(this);
-        }
+        };
     }
 
     pub fn onTouchStarted(
@@ -660,7 +662,7 @@ pub const GenericApplicationMessageHandler = struct {
         platform_user_id: input_device_mapper.PlatformUserId,
         device_id: input_device_mapper.InputDeviceId,
     ) bool {
-        if (this.virtual.onTouchStarted) |f| {
+        if (this.virtual) |v| if (v.onTouchStarted) |f| {
             return f(
                 this,
                 wnd,
@@ -669,7 +671,7 @@ pub const GenericApplicationMessageHandler = struct {
                 platform_user_id,
                 device_id,
             );
-        }
+        };
         return false;
     }
 
@@ -681,7 +683,7 @@ pub const GenericApplicationMessageHandler = struct {
         platform_user_id: input_device_mapper.PlatformUserId,
         device_id: input_device_mapper.InputDeviceId,
     ) bool {
-        if (this.virtual.onTouchMoved) |f| {
+        if (this.virtual) |v| if (v.onTouchMoved) |f| {
             return f(
                 this,
                 location,
@@ -690,7 +692,7 @@ pub const GenericApplicationMessageHandler = struct {
                 platform_user_id,
                 device_id,
             );
-        }
+        };
         return false;
     }
 
@@ -701,7 +703,7 @@ pub const GenericApplicationMessageHandler = struct {
         platform_user_id: input_device_mapper.PlatformUserId,
         device_id: input_device_mapper.InputDeviceId,
     ) bool {
-        if (this.virtual.onTouchEnded) |f| {
+        if (this.virtual) |v| if (v.onTouchEnded) |f| {
             return f(
                 this,
                 location,
@@ -709,7 +711,7 @@ pub const GenericApplicationMessageHandler = struct {
                 platform_user_id,
                 device_id,
             );
-        }
+        };
         return false;
     }
 
@@ -721,7 +723,7 @@ pub const GenericApplicationMessageHandler = struct {
         platform_user_id: input_device_mapper.PlatformUserId,
         device_id: input_device_mapper.InputDeviceId,
     ) bool {
-        if (this.virtual.onTouchForceChanged) |f| {
+        if (this.virtual) |v| if (v.onTouchForceChanged) |f| {
             return f(
                 this,
                 location,
@@ -730,7 +732,7 @@ pub const GenericApplicationMessageHandler = struct {
                 platform_user_id,
                 device_id,
             );
-        }
+        };
         return false;
     }
 
@@ -742,7 +744,7 @@ pub const GenericApplicationMessageHandler = struct {
         platform_user_id: input_device_mapper.PlatformUserId,
         device_id: input_device_mapper.InputDeviceId,
     ) bool {
-        if (this.virtual.onTouchFirstMove) |f| {
+        if (this.virtual) |v| if (v.onTouchFirstMove) |f| {
             return f(
                 this,
                 location,
@@ -751,7 +753,7 @@ pub const GenericApplicationMessageHandler = struct {
                 platform_user_id,
                 device_id,
             );
-        }
+        };
         return false;
     }
 
@@ -760,9 +762,9 @@ pub const GenericApplicationMessageHandler = struct {
         gesture: GestureEvent,
         enable: bool,
     ) void {
-        if (this.virtual.shouldSimulateGesture) |f| {
+        if (this.virtual) |v| if (v.shouldSimulateGesture) |f| {
             f(this, gesture, enable);
-        }
+        };
     }
 
     pub fn onMotionDetected(
@@ -774,7 +776,7 @@ pub const GenericApplicationMessageHandler = struct {
         platform_user_id: input_device_mapper.PlatformUserId,
         device_id: input_device_mapper.InputDeviceId,
     ) bool {
-        if (this.virtual.onMotionDetected) |f| {
+        if (this.virtual) |v| if (v.onMotionDetected) |f| {
             return f(
                 this,
                 tilt,
@@ -784,7 +786,7 @@ pub const GenericApplicationMessageHandler = struct {
                 platform_user_id,
                 device_id,
             );
-        }
+        };
         return false;
     }
 
@@ -795,9 +797,9 @@ pub const GenericApplicationMessageHandler = struct {
         height: i32,
         minimised: bool,
     ) bool {
-        if (this.virtual.onSizeChanged) |f| {
+        if (this.virtual) |v| if (v.onSizeChanged) |f| {
             return f(this, wnd, width, height, minimised);
-        }
+        };
         return false;
     }
 
@@ -805,18 +807,18 @@ pub const GenericApplicationMessageHandler = struct {
         this: *Self,
         wnd: *GenericWindow,
     ) void {
-        if (this.virtual.onOsPaint) |f| {
+        if (this.virtual) |v| if (v.onOsPaint) |f| {
             f(this, wnd);
-        }
+        };
     }
 
     pub fn getSizeLimitsForWindow(
         this: *const Self,
         wnd: *GenericWindow,
     ) ?WindowSizeLimits {
-        if (this.virtual.getSizeLimitsForWindow) |f| {
+        if (this.virtual) |v| if (v.getSizeLimitsForWindow) |f| {
             return f(this, wnd);
-        }
+        };
         return null;
     }
 
@@ -824,18 +826,18 @@ pub const GenericApplicationMessageHandler = struct {
         this: *Self,
         wnd: *GenericWindow,
     ) void {
-        if (this.virtual.onResizingWindow) |f| {
+        if (this.virtual) |v| if (v.onResizingWindow) |f| {
             f(this, wnd);
-        }
+        };
     }
 
     pub fn beginReshapingWindow(
         this: *Self,
         wnd: *GenericWindow,
     ) bool {
-        if (this.virtual.beginReshapingWindow) |f| {
+        if (this.virtual) |v| if (v.beginReshapingWindow) |f| {
             return f(this, wnd);
-        }
+        };
         return false;
     }
 
@@ -843,27 +845,27 @@ pub const GenericApplicationMessageHandler = struct {
         this: *Self,
         wnd: *GenericWindow,
     ) void {
-        if (this.virtual.finishedReshapingWindow) |f| {
+        if (this.virtual) |v| if (v.finishedReshapingWindow) |f| {
             f(this, wnd);
-        }
+        };
     }
 
     pub fn handleDpiScaleChanged(
         this: *Self,
         wnd: *GenericWindow,
     ) void {
-        if (this.virtual.handleDpiScaleChanged) |f| {
+        if (this.virtual) |v| if (v.handleDpiScaleChanged) |f| {
             f(this, wnd);
-        }
+        };
     }
 
     pub fn signalSystemDpiChanged(
         this: *Self,
         wnd: *GenericWindow,
     ) void {
-        if (this.virtual.signalSystemDpiChanged) |f| {
+        if (this.virtual) |v| if (v.signalSystemDpiChanged) |f| {
             f(this, wnd);
-        }
+        };
     }
 
     pub fn onMovedWindow(
@@ -872,9 +874,9 @@ pub const GenericApplicationMessageHandler = struct {
         x: i32,
         y: i32,
     ) void {
-        if (this.virtual.onMovedWindow) |f| {
+        if (this.virtual) |v| if (v.onMovedWindow) |f| {
             f(this, wnd, x, y);
-        }
+        };
     }
 
     pub fn onWindowActivationChanged(
@@ -882,9 +884,9 @@ pub const GenericApplicationMessageHandler = struct {
         wnd: *GenericWindow,
         activation_type: WindowActivation,
     ) bool {
-        if (this.virtual.onWindowActivationChanged) |f| {
+        if (this.virtual) |v| if (v.onWindowActivationChanged) |f| {
             return f(this, wnd, activation_type);
-        }
+        };
         return false;
     }
 
@@ -892,18 +894,18 @@ pub const GenericApplicationMessageHandler = struct {
         this: *Self,
         is_active: bool,
     ) bool {
-        if (this.virtual.onApplicationActivationChanged) |f| {
+        if (this.virtual) |v| if (v.onApplicationActivationChanged) |f| {
             return f(this, is_active);
-        }
+        };
         return false;
     }
 
     pub fn onConvertibleLaptopModeChanged(
         this: *Self,
     ) bool {
-        if (this.virtual.onConvertibleLaptopModeChanged) |f| {
+        if (this.virtual) |v| if (v.onConvertibleLaptopModeChanged) |f| {
             return f(this);
-        }
+        };
         return false;
     }
 
@@ -913,9 +915,9 @@ pub const GenericApplicationMessageHandler = struct {
         x: i32,
         y: i32,
     ) WindowZone {
-        if (this.virtual.getWindowZoneForPaint) |f| {
+        if (this.virtual) |v| if (v.getWindowZoneForPaint) |f| {
             return f(this, wnd, x, y);
-        }
+        };
         return WindowZone.not_in_window;
     }
 
@@ -923,9 +925,9 @@ pub const GenericApplicationMessageHandler = struct {
         this: *Self,
         wnd: *GenericWindow,
     ) void {
-        if (this.virtual.onWindowClose) |f| {
+        if (this.virtual) |v| if (v.onWindowClose) |f| {
             return f(this, wnd);
-        }
+        };
     }
 
     pub fn onDragEnterText(
@@ -933,9 +935,9 @@ pub const GenericApplicationMessageHandler = struct {
         wnd: *GenericWindow,
         text: []const u8,
     ) DropEffect {
-        if (this.virtual.onDragEnterText) |f| {
+        if (this.virtual) |v| if (v.onDragEnterText) |f| {
             return f(this, wnd, text);
-        }
+        };
         return DropEffect.none;
     }
 
@@ -944,9 +946,9 @@ pub const GenericApplicationMessageHandler = struct {
         wnd: *GenericWindow,
         files: []const []const u8,
     ) DropEffect {
-        if (this.virtual.onDragEnterFiles) |f| {
+        if (this.virtual) |v| if (v.onDragEnterFiles) |f| {
             return f(this, wnd, files);
-        }
+        };
         return DropEffect.none;
     }
 
@@ -956,9 +958,9 @@ pub const GenericApplicationMessageHandler = struct {
         text: []const u8,
         files: []const []const u8,
     ) DropEffect {
-        if (this.virtual.onDragEnterExternal) |f| {
+        if (this.virtual) |v| if (v.onDragEnterExternal) |f| {
             return f(this, wnd, text, files);
-        }
+        };
         return DropEffect.none;
     }
 
@@ -966,9 +968,9 @@ pub const GenericApplicationMessageHandler = struct {
         this: *Self,
         wnd: *GenericWindow,
     ) DropEffect {
-        if (this.virtual.onDragOver) |f| {
+        if (this.virtual) |v| if (v.onDragOver) |f| {
             return f(this, wnd);
-        }
+        };
         return DropEffect.none;
     }
 
@@ -976,18 +978,18 @@ pub const GenericApplicationMessageHandler = struct {
         this: *Self,
         wnd: *GenericWindow,
     ) void {
-        if (this.virtual.onDragLeave) |f| {
+        if (this.virtual) |v| if (v.onDragLeave) |f| {
             f(this, wnd);
-        }
+        };
     }
 
     pub fn onDragDrop(
         this: *Self,
         wnd: *GenericWindow,
     ) DropEffect {
-        if (this.virtual.onDragDrop) |f| {
+        if (this.virtual) |v| if (v.onDragDrop) |f| {
             return f(this, wnd);
-        }
+        };
         return DropEffect.none;
     }
 
@@ -996,9 +998,9 @@ pub const GenericApplicationMessageHandler = struct {
         wnd: *GenericWindow,
         action: WindowAction,
     ) bool {
-        if (this.virtual.onWindowAction) |f| {
+        if (this.virtual) |v| if (v.onWindowAction) |f| {
             return f(this, wnd, action);
-        }
+        };
         return false;
     }
 
@@ -1006,8 +1008,8 @@ pub const GenericApplicationMessageHandler = struct {
         this: *Self,
         pos: math.Vector2(f32),
     ) void {
-        if (this.virtual.setCursorPos) |f| {
+        if (this.virtual) |v| if (v.setCursorPos) |f| {
             f(this, pos);
-        }
+        };
     }
 };

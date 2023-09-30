@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const common = @import("../../core/common.zig");
+const interface = @import("../../core/interface.zig");
 
 const math = @import("../../core/math.zig");
 
@@ -132,24 +133,25 @@ pub const WindowTitleAlignment = enum {
 
 pub const GenericApplication = struct {
     const Self = @This();
-    virtual: struct {
-        deinit: ?fn (self: *Self) void = null,
-        setMessageHandler: ?fn (
+    pub const Virtual = interface.VirtualTable(struct {
+        deinit: fn (self: *Self) void,
+        setMessageHandler: fn (
             self: *Self,
             message_handler: *GenericApplicationMessageHandler,
-        ) void = null,
-        getMessageHandler: ?fn (
+        ) void,
+        getMessageHandler: fn (
             self: *Self,
-        ) *GenericApplicationMessageHandler = null,
-        pollGameDeviceState: ?fn (
-            self: *Self,
-            delta: f32,
-        ) void = null,
-        pumpMessages: ?fn (
+        ) *GenericApplicationMessageHandler,
+        pollGameDeviceState: fn (
             self: *Self,
             delta: f32,
-        ) void = null,
-    } = undefined,
+        ) void,
+        pumpMessages: fn (
+            self: *Self,
+            delta: f32,
+        ) void,
+    });
+    virtual: ?*const Virtual,
     cursor: *Cursor,
     message_handler: *GenericApplicationMessageHandler,
     on_virtual_keyboard_shown: ?OnVirtualKeyboardShown = null,
@@ -174,18 +176,18 @@ pub const GenericApplication = struct {
         self: *GenericApplication,
         message_handler: *GenericApplicationMessageHandler,
     ) void {
-        if (self.virtual.setMessageHandler) |f| {
+        if (self.virtual) |v| if (v.setMessageHandler) |f| {
             f(self, message_handler);
-        }
+        };
         self.message_handler = message_handler;
     }
 
     pub fn getMessageHandler(
         self: *GenericApplication,
     ) *GenericApplicationMessageHandler {
-        if (self.virtual.getMessageHandler) |f| {
+        if (self.virtual) |v| if (v.getMessageHandler) |f| {
             return f(self);
-        }
+        };
         return self.message_handler;
     }
 
@@ -193,15 +195,15 @@ pub const GenericApplication = struct {
         self: *GenericApplication,
         delta: f32,
     ) void {
-        if (self.virtual.pollGameDeviceState) |f| {
+        if (self.virtual) |v| if (v.pollGameDeviceState) |f| {
             f(self, delta);
-        }
+        };
     }
 
     pub fn pumpMessages(self: *GenericApplication, delta: f32) void {
-        if (self.virtual.pumpMessages) |f| {
+        if (self.virtual) |v| if (v.pumpMessages) |f| {
             f(self, delta);
-        }
+        };
     }
 
     pub fn _broadcastDisplayMetricsChanged(self: *GenericApplication, metrics: *const DisplayMetrics) void {
