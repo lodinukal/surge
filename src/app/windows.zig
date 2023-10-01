@@ -105,12 +105,14 @@ const WindowsWindow = struct {
 
     fn buildWindow(self: *WindowsWindow) !win32.foundation.HWND {
         const descriptor = self.descriptor;
+        var stack_allocator = std.heap.stackFallback(1024, self.allocator());
+        var temp_allocator = stack_allocator.get();
         const converted_title = std.unicode.utf8ToUtf16LeWithNull(
-            self.allocator(),
+            temp_allocator,
             descriptor.title,
         ) catch
             return WindowsError.Utf16ToUtf8Failed;
-        defer self.allocator().free(converted_title);
+        defer temp_allocator.free(converted_title);
         var hwnd = win32.ui.windows_and_messaging.CreateWindowExW(
             win32.ui.windows_and_messaging.WINDOW_EX_STYLE.initFlags(.{}),
             class_name,
