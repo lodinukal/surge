@@ -16,7 +16,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const exe = b.addExecutable(.{
-        .name = "engine",
+        .name = "bean",
         .link_libc = true,
         // In this case the main source file is merely a path, however, in more
         // complicated build scripts, this could be a generated file.
