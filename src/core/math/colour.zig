@@ -65,7 +65,7 @@ pub const LinearColour = struct {
             const non_negative_g = @max(0.0, self.components.g);
             const non_negative_b = @max(0.0, self.components.b);
 
-            var exponent = 1 + @as(i32, @bitCast(@log2(@fabs(primary))));
+            var exponent = 1 + @as(i32, @bitCast(@log2(@abs(primary))));
             const scale = std.math.ldexp(@as(f32, 1.0), -exponent + 8);
 
             const r = @as(u8, @min(255, @as(i32, @round(non_negative_r * scale))));

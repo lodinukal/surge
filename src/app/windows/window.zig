@@ -6,7 +6,8 @@ const math = @import("../../core/math.zig");
 const win32 = @import("win32");
 
 const application = @import("../generic/application.zig");
-const WindowsApplication = @import("application.zig").WindowsApplication;
+const windows_application = @import("application.zig");
+const WindowsApplication = windows_application.WindowsApplication;
 
 const platform_application_misc = @import("../generic/platform_application_misc.zig");
 const PlatformApplicationMisc = platform_application_misc.PlatformApplicationMisc;
@@ -62,26 +63,31 @@ pub const WindowsWindow = struct {
     pub const app_window_class = win32.zig.L("app-class");
 
     pub fn init() WindowsWindow {
-        return WindowsWindow{
-            .root = GenericWindow.init(),
-            .hwnd = null,
-            .window_mode = .windowed,
-            .aspect_ratio = 1.0,
-            .is_visible = false,
-            .is_first_time_visible = false,
-            .initially_minimised = false,
-            .initially_maximised = false,
-            .dpi_scale_factor = 1.0,
-            .pre_fullscreen_window_placement = std.mem.zeroes(
-                win32.ui.windows_and_messaging.WINDOWPLACEMENT,
-            ),
-            .pre_parent_minimised_window_placement = blk: {
-                var placement = std.mem.zeroes(
+        return outer: {
+            var x = WindowsWindow{
+                .root = GenericWindow.init(),
+                .hwnd = null,
+                .window_mode = .windowed,
+                .aspect_ratio = 1.0,
+                .is_visible = false,
+                .is_first_time_visible = false,
+                .initially_minimised = false,
+                .initially_maximised = false,
+                .dpi_scale_factor = 1.0,
+                .pre_fullscreen_window_placement = std.mem.zeroes(
                     win32.ui.windows_and_messaging.WINDOWPLACEMENT,
-                );
-                placement.length = @sizeOf(win32.ui.windows_and_messaging.WINDOWPLACEMENT);
-                break :blk placement;
-            },
+                ),
+                .pre_parent_minimised_window_placement = blk: {
+                    var placement = std.mem.zeroes(
+                        win32.ui.windows_and_messaging.WINDOWPLACEMENT,
+                    );
+                    placement.length = @sizeOf(win32.ui.windows_and_messaging.WINDOWPLACEMENT);
+                    break :blk placement;
+                },
+            };
+            x.root.virtual = WindowsWindow.virtual;
+
+            break :outer x;
         };
     }
 
@@ -95,7 +101,6 @@ pub const WindowsWindow = struct {
     ) WindowsWindow {
         _ = show_immediately;
         wnd.root.definition = window_definition;
-        wnd.root.virtual = virtual;
 
         wnd.owning_application = app;
 
@@ -278,10 +283,10 @@ pub const WindowsWindow = struct {
                 window_style |= @intFromEnum(win32.ui.windows_and_messaging.WS_THICKFRAME);
             }
 
-            _ = win32.ui.windows_and_messaging.SetWindowLongPtrA(
+            _ = win32.ui.windows_and_messaging.SetWindowLongA(
                 wnd.hwnd,
                 @enumFromInt(win32.ui.windows_and_messaging.GWL_STYLE),
-                @intCast(window_style),
+                window_style,
             );
 
             var set_window_position_flags: u32 = @intFromEnum(win32.ui.windows_and_messaging.SWP_NOZORDER) |
@@ -340,7 +345,7 @@ pub const WindowsWindow = struct {
 
     pub fn onTransparencySupportChanged(self: *WindowsWindow, new: window.WindowTransparency) void {
         if (self.root.definition.transparency == .per_pixel) {
-            const style = win32.ui.windows_and_messaging.GetWindowLongPtrA(
+            const style = win32.ui.windows_and_messaging.GetWindowLongA(
                 self.hwnd,
                 win32.ui.windows_and_messaging.GWL_EXSTYLE,
             );
@@ -462,17 +467,36 @@ pub const WindowsWindow = struct {
     }
 
     pub fn disableTouchFeedback(self: *WindowsWindow) void {
-        _ = self;
+        const enabled: std.os.windows.BOOL = win32.zig.FALSE;
+        win32.ui.controls.SetWindowFeedbackSetting(
+            self.hwnd,
+            win32.ui.controls.FEEDBACK_TOUCH_CONTACTVISUALIZATION,
+            0,
+            @sizeOf(std.os.windows.BOOL),
+            @ptrCast(&enabled),
+        );
+        win32.ui.controls.SetWindowFeedbackSetting(
+            self.hwnd,
+            win32.ui.controls.FEEDBACK_TOUCH_TAP,
+            0,
+            @sizeOf(std.os.windows.BOOL),
+            @ptrCast(&enabled),
+        );
+        win32.ui.controls.SetWindowFeedbackSetting(
+            self.hwnd,
+            win32.ui.controls.FEEDBACK_TOUCH_PRESSANDHOLD,
+            0,
+            @sizeOf(std.os.windows.BOOL),
+            @ptrCast(&enabled),
+        );
     }
 
-    pub fn setOpacity(self: *WindowsWindow, opacity: f32) void {
-        const byte_opacity: std.os.windows.BYTE = @intFromFloat(@trunc(opacity * 255.0));
-        _ = win32.ui.windows_and_messaging.SetLayeredWindowAttributes(
-            self.hwnd,
-            0,
-            byte_opacity,
-            win32.ui.windows_and_messaging.LWA_ALPHA,
-        );
+    pub fn adjustWindowRegion(self: *WindowsWindow, width: i32, height: i32) void {
+        self.region_width = width;
+        self.region_height = height;
+
+        var region = self.makeWindowRegionObject(true);
+        _ = win32.graphics.gdi.SetWindowRgn(self.hwnd, region, win32.zig.TRUE);
     }
 
     pub fn reshapeWindow(self: *WindowsWindow, new_x: i32, new_y: i32, new_width: i32, new_height: i32) void {
@@ -553,8 +577,140 @@ pub const WindowsWindow = struct {
         }
     }
 
-    pub fn isMaximised(self: *const WindowsWindow) bool {
-        return win32.ui.windows_and_messaging.IsZoomed(self.hwnd) == win32.zig.TRUE;
+    pub fn getFullscreenInfo(self: *const WindowsWindow, x: *i32, y: *i32, width: *i32, height: *i32) bool {
+        var true_fullscreen = self.window_mode == .fullscreen;
+
+        var monitor = win32.graphics.gdi.MonitorFromWindow(self.hwnd, if (true_fullscreen) win32.graphics.gdi.MONITOR_DEFAULTTOPRIMARY else win32.graphics.gdi.MONITOR_DEFAULTTONEAREST);
+        var monitor_info = std.mem.zeroes(win32.graphics.gdi.MONITORINFO);
+        monitor_info.cbSize = @sizeOf(win32.graphics.gdi.MONITORINFO);
+        _ = win32.graphics.gdi.GetMonitorInfoW(monitor, &monitor_info);
+
+        x.* = monitor_info.rcMonitor.left;
+        y.* = monitor_info.rcMonitor.top;
+        width.* = monitor_info.rcMonitor.right - monitor_info.rcMonitor.left;
+        height.* = monitor_info.rcMonitor.bottom - monitor_info.rcMonitor.top;
+
+        return true;
+    }
+
+    pub fn moveWindowTo(self: *WindowsWindow, x: i32, y: i32) void {
+        var use_x = x;
+        var use_y = y;
+        if (self.root.definition.has_os_border) {
+            const window_style = win32.ui.windows_and_messaging.GetWindowLongA(
+                self.hwnd,
+                win32.ui.windows_and_messaging.GWL_STYLE,
+            );
+            const window_ex_style = win32.ui.windows_and_messaging.GetWindowLongA(
+                self.hwnd,
+                win32.ui.windows_and_messaging.GWL_EXSTYLE,
+            );
+
+            var border_rect = win32.foundation.RECT{
+                .left = 0,
+                .top = 0,
+                .right = 0,
+                .bottom = 0,
+            };
+            _ = win32.ui.windows_and_messaging.AdjustWindowRectEx(
+                &border_rect,
+                @enumFromInt(window_style),
+                false,
+                @enumFromInt(window_ex_style),
+            );
+
+            use_x += border_rect.left;
+            use_y += border_rect.top;
+        }
+        win32.ui.windows_and_messaging.SetWindowPos(
+            self.hwnd,
+            null,
+            use_x,
+            use_y,
+            0,
+            0,
+            @intFromEnum(win32.ui.windows_and_messaging.SWP_NOZORDER) | @intFromEnum(
+                win32.ui.windows_and_messaging.SWP_NOSIZE,
+            ) | @intFromEnum(
+                win32.ui.windows_and_messaging.SWP_NOACTIVATE,
+            ),
+        );
+    }
+
+    pub fn bringToFront(self: *WindowsWindow, force: bool) void {
+        if (self.isRegularWindow()) {
+            if (win32.ui.windows_and_messaging.IsIconic(self.hwnd) == win32.zig.TRUE) {
+                win32.ui.windows_and_messaging.ShowWindow(
+                    self.hwnd,
+                    win32.ui.windows_and_messaging.SW_RESTORE,
+                );
+            } else {
+                win32.ui.input.keyboard_and_mouse.SetActiveWindow(self.hwnd);
+            }
+        } else {
+            const HWND_TOP = win32.zig.typedConst(win32.foundation.HWND, @as(i32, 0));
+            var insert_after = HWND_TOP;
+            var flags: u32 = @intFromEnum(win32.ui.windows_and_messaging.SWP_NOMOVE) | @intFromEnum(
+                win32.ui.windows_and_messaging.SWP_NOSIZE,
+            ) | @intFromEnum(
+                win32.ui.windows_and_messaging.SWP_NOOWNERZORDER,
+            );
+            if (!force) {
+                flags |= @intFromEnum(win32.ui.windows_and_messaging.SWP_NOACTIVATE);
+            }
+            if (self.root.definition.is_topmost_window) {
+                insert_after = win32.ui.windows_and_messaging.HWND_TOPMOST;
+            }
+
+            _ = win32.ui.windows_and_messaging.SetWindowPos(
+                self.hwnd,
+                insert_after,
+                0,
+                0,
+                0,
+                0,
+                flags,
+            );
+        }
+    }
+
+    pub fn forceToFront(self: *WindowsWindow) void {
+        win32.ui.windows_and_messaging.SetForegroundWindow(self.hwnd);
+    }
+
+    pub fn destroy(self: *WindowsWindow) void {
+        if (self.reference_count.load(.Monotonic) > 0 and win32.ui.windows_and_messaging.IsWindow(self.hwnd)) {
+            const result = win32.system.ole.RevokeDragDrop(self.hwnd);
+            if (result == win32.foundation.S_OK) {
+                //TODO(logging): log.assert(count == 0, "Not all refs released {}", self.hwnd);
+            }
+        }
+
+        win32.ui.windows_and_messaging.DestroyWindow(self.hwnd);
+    }
+
+    pub fn minimise(self: *WindowsWindow) void {
+        if (!self.is_first_time_visible) {
+            win32.ui.windows_and_messaging.ShowWindow(
+                self.hwnd,
+                win32.ui.windows_and_messaging.SW_MINIMIZE,
+            );
+        } else {
+            self.initially_minimised = true;
+            self.initially_maximised = false;
+        }
+    }
+
+    pub fn maximise(self: *WindowsWindow) void {
+        if (!self.is_first_time_visible) {
+            win32.ui.windows_and_messaging.ShowWindow(
+                self.hwnd,
+                win32.ui.windows_and_messaging.SW_MAXIMIZE,
+            );
+        } else {
+            self.initially_maximised = true;
+            self.initially_minimised = false;
+        }
     }
 
     pub fn restore(self: *const WindowsWindow) void {
@@ -569,12 +725,341 @@ pub const WindowsWindow = struct {
         }
     }
 
-    pub fn adjustWindowRegion(self: *WindowsWindow, width: i32, height: i32) void {
-        self.region_width = width;
-        self.region_height = height;
+    pub fn show(self: *const WindowsWindow) void {
+        if (!self.is_visible) {
+            self.is_visible = true;
 
-        var region = self.makeWindowRegionObject(true);
-        _ = win32.graphics.gdi.SetWindowRgn(self.hwnd, region, win32.zig.TRUE);
+            var should_activate = false;
+            if (self.root.definition.accepts_input) {
+                should_activate = self.root.definition.activation_policy == .always;
+                if (self.is_first_time_visible and self.root.definition.activation_policy == .first_shown) {
+                    should_activate = true;
+                }
+            }
+
+            var show_window_command = if (should_activate)
+                win32.ui.windows_and_messaging.SW_SHOW
+            else
+                win32.ui.windows_and_messaging.SW_SHOWNOACTIVATE;
+            if (self.is_first_time_visible) {
+                self.is_first_time_visible = false;
+                if (self.initially_minimised) {
+                    show_window_command = if (should_activate)
+                        win32.ui.windows_and_messaging.SW_MINIMIZE
+                    else
+                        win32.ui.windows_and_messaging.SW_SHOWMINNOACTIVE;
+                } else if (self.initially_maximised) {
+                    show_window_command = if (should_activate)
+                        win32.ui.windows_and_messaging.SW_SHOWMAXIMIZED
+                    else
+                        win32.ui.windows_and_messaging.SW_MAXIMIZE;
+                }
+            }
+
+            win32.ui.windows_and_messaging.ShowWindow(
+                self.hwnd,
+                show_window_command,
+            );
+        }
+    }
+
+    pub fn hide(self: *WindowsWindow) void {
+        if (self.is_visible) {
+            self.is_visible = false;
+            win32.ui.windows_and_messaging.ShowWindow(
+                self.hwnd,
+                win32.ui.windows_and_messaging.SW_HIDE,
+            );
+        }
+    }
+
+    pub fn setWindowMode(self: *WindowsWindow, mode: window.WindowMode) void {
+        if (self.window_mode == mode)
+            return;
+
+        var previous_mode = self.window_mode;
+        self.window_mode = mode;
+
+        const true_fullscreen = mode == .fullscreen;
+
+        var window_style = win32.ui.windows_and_messaging.GetWindowLongA(
+            self.hwnd,
+            win32.ui.windows_and_messaging.GWL_STYLE,
+        );
+        const fullscreen_mode_style: i32 = @intFromEnum(win32.ui.windows_and_messaging.WS_POPUP);
+
+        var windowed_mode_style = @intFromEnum(
+            win32.ui.windows_and_messaging.WS_OVERLAPPED,
+        ) | @intFromEnum(
+            win32.ui.windows_and_messaging.WS_SYSMENU,
+        ) | @intFromEnum(
+            win32.ui.windows_and_messaging.WS_CAPTION,
+        );
+        if (self.isRegularWindow()) {
+            if (self.root.definition.has_toolbar_maximise_button) {
+                windowed_mode_style |= @intFromEnum(win32.ui.windows_and_messaging.WS_MAXIMIZEBOX);
+            }
+
+            if (self.root.definition.has_toolbar_minimise_button) {
+                windowed_mode_style |= @intFromEnum(win32.ui.windows_and_messaging.WS_MINIMIZEBOX);
+            }
+
+            if (self.root.definition.has_sizing_frame) {
+                windowed_mode_style |= @intFromEnum(win32.ui.windows_and_messaging.WS_THICKFRAME);
+            } else {
+                windowed_mode_style |= @intFromEnum(win32.ui.windows_and_messaging.WS_BORDER);
+            }
+        } else {
+            windowed_mode_style |= @intFromEnum(
+                win32.ui.windows_and_messaging.WS_BORDER,
+            ) | @intFromEnum(
+                win32.ui.windows_and_messaging.WS_POPUP,
+            );
+        }
+
+        if (mode == .windowed_fullscreen or mode == .fullscreen) {
+            if (previous_mode == .windowed) {
+                self.pre_fullscreen_window_placement.length = @sizeOf(win32.ui.windows_and_messaging.WINDOWPLACEMENT);
+                _ = win32.ui.windows_and_messaging.GetWindowPlacement(
+                    self.hwnd,
+                    &self.pre_fullscreen_window_placement,
+                );
+            }
+
+            window_style &= ~windowed_mode_style;
+            window_style |= fullscreen_mode_style;
+
+            _ = win32.ui.windows_and_messaging.SetWindowLongA(
+                self.hwnd,
+                win32.ui.windows_and_messaging.GWL_STYLE,
+                window_style,
+            );
+            _ = win32.ui.windows_and_messaging.SetWindowPos(
+                self.hwnd,
+                null,
+                0,
+                0,
+                0,
+                0,
+                @intFromEnum(
+                    win32.ui.windows_and_messaging.SWP_NOMOVE,
+                ) | @intFromEnum(
+                    win32.ui.windows_and_messaging.SWP_NOSIZE,
+                ) | @intFromEnum(
+                    win32.ui.windows_and_messaging.SWP_NOZORDER,
+                ) | @intFromEnum(
+                    win32.ui.windows_and_messaging.SWP_FRAMECHANGED,
+                ),
+            );
+
+            if (true_fullscreen) {
+                _ = win32.ui.windows_and_messaging.ShowWindow(self.hwnd, win32.ui.windows_and_messaging.SW_SHOW);
+            }
+
+            var client_rect = win32.foundation.RECT{
+                .left = 0,
+                .top = 0,
+                .right = 0,
+                .bottom = 0,
+            };
+            _ = win32.ui.windows_and_messaging.GetClientRect(self.hwnd, &client_rect);
+
+            var monitor = win32.graphics.gdi.MonitorFromWindow(
+                self.hwnd,
+                if (true_fullscreen) win32.graphics.gdi.MONITOR_DEFAULTTOPRIMARY else win32.graphics.gdi.MONITOR_DEFAULTTONEAREST,
+            );
+            var monitor_info = std.mem.zeroes(win32.graphics.gdi.MONITORINFO);
+            monitor_info.cbSize = @sizeOf(win32.graphics.gdi.MONITORINFO);
+            _ = win32.graphics.gdi.GetMonitorInfoW(monitor, &monitor_info);
+
+            var monitor_width = monitor_info.rcMonitor.right - monitor_info.rcMonitor.left;
+            var target_client_width = if (true_fullscreen)
+                @min(monitor_width, client_rect.right - client_rect.left)
+            else
+                monitor_width;
+
+            var monitor_height = monitor_info.rcMonitor.bottom - monitor_info.rcMonitor.top;
+            var target_client_height = if (true_fullscreen)
+                @min(monitor_height, client_rect.bottom - client_rect.top)
+            else
+                monitor_height;
+
+            self.reshapeWindow(
+                monitor_info.rcMonitor.left,
+                monitor_info.rcMonitor.top,
+                target_client_width,
+                target_client_height,
+            );
+        } else {
+            window_style &= ~fullscreen_mode_style;
+            window_style |= windowed_mode_style;
+
+            _ = win32.ui.windows_and_messaging.SetWindowLongA(
+                self.hwnd,
+                win32.ui.windows_and_messaging.GWL_STYLE,
+                window_style,
+            );
+            _ = win32.ui.windows_and_messaging.SetWindowPos(
+                self.hwnd,
+                null,
+                0,
+                0,
+                0,
+                0,
+                @intFromEnum(
+                    win32.ui.windows_and_messaging.SWP_NOMOVE,
+                ) | @intFromEnum(
+                    win32.ui.windows_and_messaging.SWP_NOSIZE,
+                ) | @intFromEnum(
+                    win32.ui.windows_and_messaging.SWP_NOZORDER,
+                ) | @intFromEnum(
+                    win32.ui.windows_and_messaging.SWP_FRAMECHANGED,
+                ),
+            );
+
+            if (self.pre_fullscreen_window_placement.length != 0) {
+                _ = win32.ui.windows_and_messaging.SetWindowPlacement(
+                    self.hwnd,
+                    &self.pre_fullscreen_window_placement,
+                );
+            }
+
+            var icon: ?win32.ui.windows_and_messaging.HICON = @ptrCast(win32.ui.windows_and_messaging.GetClassLongPtr(
+                self.hwnd,
+                win32.ui.windows_and_messaging.GCLP_HICON,
+            ));
+            if (icon) |ic| {
+                _ = win32.ui.windows_and_messaging.SendMessageW(
+                    self.hwnd,
+                    win32.ui.windows_and_messaging.WM_SETICON,
+                    win32.ui.windows_and_messaging.ICON_SMALL,
+                    @bitCast(@intFromPtr(ic)),
+                );
+            }
+        }
+    }
+
+    pub fn isMaximised(self: *const WindowsWindow) bool {
+        return win32.ui.windows_and_messaging.IsZoomed(self.hwnd) == win32.zig.TRUE;
+    }
+
+    pub fn isMinimised(self: *const WindowsWindow) bool {
+        return win32.ui.windows_and_messaging.IsIconic(self.hwnd) == win32.zig.TRUE;
+    }
+
+    pub fn isVisible(self: *const WindowsWindow) bool {
+        return self.is_visible;
+    }
+
+    pub fn getRestoredDimensions(self: *WindowsWindow, x: *i32, y: *i32, width: *i32, height: *i32) bool {
+        var window_placement = std.mem.zeroes(win32.ui.windows_and_messaging.WINDOWPLACEMENT);
+        window_placement.length = @sizeOf(win32.ui.windows_and_messaging.WINDOWPLACEMENT);
+
+        if (win32.ui.windows_and_messaging.GetWindowPlacement(self.hwnd, &window_placement) != win32.zig.FALSE) {
+            const restored = window_placement.rcNormalPosition;
+            x.* = restored.left;
+            y.* = restored.top;
+            width.* = restored.right - restored.left;
+            height.* = restored.bottom - restored.top;
+
+            const window_ex_style = win32.ui.windows_and_messaging.GetWindowLongA(
+                self.hwnd,
+                win32.ui.windows_and_messaging.GWL_EXSTYLE,
+            );
+
+            if ((window_ex_style & @intFromEnum(win32.ui.windows_and_messaging.WS_EX_TOOLWINDOW)) == 0) {
+                const true_fullscreen = self.window_mode == .fullscreen;
+                var monitor = win32.graphics.gdi.MonitorFromWindow(
+                    self.hwnd,
+                    if (true_fullscreen)
+                        win32.graphics.gdi.MONITOR_DEFAULTTOPRIMARY
+                    else
+                        win32.graphics.gdi.MONITOR_DEFAULTTONEAREST,
+                );
+                var monitor_info = std.mem.zeroes(win32.graphics.gdi.MONITORINFO);
+                monitor_info.cbSize = @sizeOf(win32.graphics.gdi.MONITORINFO);
+                _ = win32.graphics.gdi.GetMonitorInfoW(monitor, &monitor_info);
+
+                x.* += monitor_info.rcMonitor.right - monitor_info.rcMonitor.left;
+                y.* += monitor_info.rcMonitor.bottom - monitor_info.rcMonitor.top;
+            }
+
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    pub fn isManualManageDpiChanges(self: *const WindowsWindow) bool {
+        return self.handle_manual_dpi_changes;
+    }
+
+    pub fn setManualManageDpiChanges(self: *WindowsWindow, value: bool) void {
+        self.handle_manual_dpi_changes = value;
+    }
+
+    pub fn adjustCachedSize(self: *const WindowsWindow, size: *math.Vector2(f32)) void {
+        if (self.root.definition.changes_often) {
+            size.* = math.Vector2(f32).init(self.virtual_width, self.virtual_height);
+        } else if (self.hwnd) |hwnd| {
+            var client_rect = win32.foundation.RECT{
+                .left = 0,
+                .top = 0,
+                .right = 0,
+                .bottom = 0,
+            };
+            _ = win32.ui.windows_and_messaging.GetClientRect(hwnd, &client_rect);
+
+            size.* = math.Vector2(f32).init(
+                client_rect.right - client_rect.left,
+                client_rect.bottom - client_rect.top,
+            );
+        }
+    }
+
+    pub fn onParentWindowMinimised(self: *WindowsWindow) void {
+        _ = win32.ui.windows_and_messaging.GetWindowPlacement(self.hwnd, &self.pre_minimise_window_placement);
+    }
+
+    pub fn onParentWindowRestored(self: *WindowsWindow) void {
+        _ = win32.ui.windows_and_messaging.SetWindowPlacement(self.hwnd, &self.pre_minimise_window_placement);
+    }
+
+    pub fn setWindowFocus(self: *WindowsWindow) void {
+        if (win32.ui.input.keyboard_and_mouse.GetFocus() != self.hwnd) {
+            win32.ui.input.keyboard_and_mouse.SetFocus(self.hwnd);
+        }
+    }
+
+    pub fn setOpacity(self: *WindowsWindow, opacity: f32) void {
+        const byte_opacity: std.os.windows.BYTE = @intFromFloat(@trunc(opacity * 255.0));
+        _ = win32.ui.windows_and_messaging.SetLayeredWindowAttributes(
+            self.hwnd,
+            0,
+            byte_opacity,
+            win32.ui.windows_and_messaging.LWA_ALPHA,
+        );
+    }
+
+    pub fn enable(self: *WindowsWindow, should_enable: bool) void {
+        win32.ui.input.keyboard_and_mouse.EnableWindow(
+            self.hwnd,
+            if (should_enable) win32.zig.TRUE else win32.zig.FALSE,
+        );
+    }
+
+    pub fn isEnabled(self: *const WindowsWindow) bool {
+        return win32.ui.input.keyboard_and_mouse.IsWindowEnabled(self.hwnd) == win32.zig.TRUE;
+    }
+
+    pub fn isPointInWindow(self: *const WindowsWindow, x: i32, y: i32) bool {
+        var result = false;
+
+        var region = self.makeWindowRegionObject(false);
+        result = win32.graphics.gdi.PtInRegion(region, x, y) == win32.zig.TRUE;
+        _ = win32.graphics.gdi.DeleteObject(region);
+
+        return result;
     }
 
     pub fn getWindowBorderSize(self: *const WindowsWindow) i32 {
@@ -587,6 +1072,46 @@ pub const WindowsWindow = struct {
         _ = win32.ui.windows_and_messaging.GetWindowInfo(self.hwnd, &window_info);
 
         return window_info.cxWindowBorders;
+    }
+
+    pub fn getWindowTitleBarSize(self: *const WindowsWindow) i32 {
+        _ = self;
+        return win32.ui.windows_and_messaging.GetSystemMetrics(
+            win32.ui.windows_and_messaging.SM_CYCAPTION,
+        );
+    }
+
+    pub fn isForegroundWindow(self: *const WindowsWindow) bool {
+        return win32.ui.windows_and_messaging.GetForegroundWindow() == self.hwnd;
+    }
+
+    pub fn isFullscreenSupported(self: *const WindowsWindow) bool {
+        _ = self;
+        return win32.ui.windows_and_messaging.GetSystemMetrics(
+            win32.ui.windows_and_messaging.SM_REMOTESESSION,
+        ) == win32.zig.FALSE;
+    }
+
+    pub fn drawAttention(self: *WindowsWindow, parameters: *const window.WindowDrawAttentionParameters) void {
+        var flash_info = std.mem.zeroes(win32.ui.windows_and_messaging.FLASHWINFO);
+        flash_info.cbSize = @sizeOf(win32.ui.windows_and_messaging.FLASHWINFO);
+        flash_info.hwnd = self.hwnd;
+
+        switch (parameters.type) {
+            .until_activated => {
+                flash_info.dwFlags = @intFromEnum(win32.ui.windows_and_messaging.FLASHW_TRAY) | @intFromEnum(
+                    win32.ui.windows_and_messaging.FLASHW_TIMERNOFG,
+                );
+            },
+            .stop => {
+                flash_info.dwFlags = @intFromEnum(win32.ui.windows_and_messaging.FLASHW_STOP);
+            },
+            else => {
+                //TODO(logging): log.assert(false, "Unsupported draw attention type {}", parameters.type);
+            },
+        }
+
+        _ = win32.ui.windows_and_messaging.FlashWindowEx(&flash_info);
     }
 
     pub fn isRegularWindow(self: *const WindowsWindow) bool {
@@ -632,6 +1157,10 @@ pub const WindowsWindow = struct {
     }
 
     // IDropTarget
+    fn decipherOleData(
+
+    ) windows_application.OLE
+
     fn DragEnter(
         vt: *win32.system.ole.IDropTarget.VTable,
         pDataObj: ?*win32.system.ole.IDataObject,

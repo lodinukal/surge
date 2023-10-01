@@ -298,4 +298,17 @@ pub const WindowsPlatformApplicationMisc = struct {
             .dedicated_video_memory = best_desc.DedicatedVideoMemory,
         };
     }
+
+    pub const ConcurrencyModel = enum(u8) {
+        single = 0,
+        multi = 1,
+    };
+    pub fn coInitialise(mode: ?ConcurrencyModel) bool {
+        const use_mode = mode orelse .single;
+        const hr = win32.system.com.CoInitializeEx(
+            null,
+            if (use_mode == .single) .APARTMENTTHREADED else .MULTITHREADED,
+        );
+        return hr == @intFromEnum(win32.foundation.S_OK) or hr == @intFromEnum(win32.foundation.S_FALSE);
+    }
 };

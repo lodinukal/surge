@@ -98,6 +98,7 @@ pub const GenericWindow = struct {
         setWindowFocus: fn (self: *Self) void,
         setOpacity: fn (self: *Self, opacity: f32) void,
         enable: fn (self: *Self, enable: bool) void,
+        isEnabled: fn (self: *const Self) bool,
         isPointInWindow: fn (self: *const Self, x: i32, y: i32) bool,
         getWindowBorderSize: fn (self: *const Self) i32,
         getWindowTitleBarSize: fn (self: *const Self) i32,
@@ -125,7 +126,7 @@ pub const GenericWindow = struct {
 
     pub fn deinit(self: *GenericWindow) void {
         if (self.virtual) |v| if (v.deinit) |f| {
-            f(&self);
+            f(self);
         };
     }
 
@@ -252,6 +253,13 @@ pub const GenericWindow = struct {
         if (self.virtual) |v| if (v.enable) |f| {
             f(self, should_enable);
         };
+    }
+
+    pub fn isEnabled(self: *const GenericWindow) bool {
+        if (self.virtual) |v| if (v.isEnabled) |f| {
+            return f(self);
+        };
+        return true;
     }
 
     pub fn isPointInWindow(self: *const GenericWindow, x: i32, y: i32) bool {
