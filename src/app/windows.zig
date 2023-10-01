@@ -37,13 +37,13 @@ const WindowsApplication = struct {
     pub fn pumpEvents(self: *WindowsApplication) void {
         _ = self;
         var msg = std.mem.zeroes(win32.ui.windows_and_messaging.MSG);
-        if (win32.ui.windows_and_messaging.PeekMessageW(
+        while (win32.ui.windows_and_messaging.PeekMessageW(
             &msg,
             null,
             0,
             0,
             .REMOVE,
-        ) == win32.zig.TRUE) {
+        ) != win32.zig.FALSE) {
             _ = win32.ui.windows_and_messaging.TranslateMessage(&msg);
             _ = win32.ui.windows_and_messaging.DispatchMessageW(&msg);
         }
@@ -96,7 +96,16 @@ const WindowsWindow = struct {
             win32.ui.windows_and_messaging.WINDOW_EX_STYLE.initFlags(.{}),
             class_name,
             converted_title,
-            win32.ui.windows_and_messaging.WS_OVERLAPPEDWINDOW,
+            win32.ui.windows_and_messaging.WINDOW_STYLE.initFlags(.{
+                .CLIPCHILDREN = 1,
+                .CLIPSIBLINGS = 1,
+                .SYSMENU = 1,
+                .GROUP = 1,
+                .CAPTION = 1,
+                .THICKFRAME = 1,
+                .TABSTOP = 1,
+                .VISIBLE = 1,
+            }),
             win32.ui.windows_and_messaging.CW_USEDEFAULT,
             win32.ui.windows_and_messaging.CW_USEDEFAULT,
             descriptor.width orelse win32.ui.windows_and_messaging.CW_USEDEFAULT,
@@ -107,14 +116,21 @@ const WindowsWindow = struct {
             @ptrCast(self),
         ) orelse return WindowsError.HwndCreationFailed;
 
+        _ = win32.ui.windows_and_messaging.SetWindowLongPtrW(
+            hwnd,
+            .P_USERDATA,
+            @intCast(@intFromPtr(self)),
+        );
+
         return hwnd;
     }
 
     pub fn deinit(self: *WindowsWindow) void {
-        if (self.hwnd) |*hwnd| {
-            _ = win32.ui.windows_and_messaging.DestroyWindow(hwnd.*);
-            self.hwnd = null;
+        std.debug.print("deinit", .{});
+        if (self.hwnd) |hwnd| {
+            _ = win32.ui.windows_and_messaging.DestroyWindow(hwnd);
         }
+        self.hwnd = null;
     }
 
     pub fn show(self: *WindowsWindow, should_show: bool) void {
@@ -129,32 +145,24 @@ const WindowsWindow = struct {
         self.should_close = should_close;
     }
 
+    fn windowFromHwnd(hwnd: win32.foundation.HWND) ?*WindowsWindow {
+        return @ptrFromInt(@as(
+            usize,
+            @intCast(win32.ui.windows_and_messaging.GetWindowLongPtrW(
+                hwnd,
+                .P_USERDATA,
+            )),
+        ));
+    }
+
     fn windowProc(
         wnd: win32.foundation.HWND,
         msg: std.os.windows.UINT,
         wparam: std.os.windows.WPARAM,
         lparam: std.os.windows.LPARAM,
     ) callconv(std.os.windows.WINAPI) std.os.windows.LRESULT {
-        var window: *WindowsWindow = window: {
-            var window_opt: ?*WindowsWindow = null;
-            if (msg == win32.ui.windows_and_messaging.WM_NCCREATE) {
-                var cs: *win32.ui.windows_and_messaging.CREATESTRUCTW = @ptrFromInt(@as(usize, @bitCast(lparam)));
-                window_opt = @alignCast(@ptrCast(cs.lpCreateParams));
-                window_opt.?.hwnd = wnd;
-                _ = win32.ui.windows_and_messaging.SetWindowLongPtrW(
-                    wnd,
-                    win32.ui.windows_and_messaging.GWLP_USERDATA,
-                    @bitCast(@intFromPtr(window_opt)),
-                );
-            } else {
-                window_opt = @ptrFromInt(@as(usize, @bitCast(
-                    win32.ui.windows_and_messaging.GetWindowLongPtrW(
-                        wnd,
-                        win32.ui.windows_and_messaging.GWLP_USERDATA,
-                    ),
-                )));
-            }
-            break :window (window_opt orelse return win32.ui.windows_and_messaging.DefWindowProcW(
+        var window: ?*WindowsWindow = window: {
+            break :window (windowFromHwnd(wnd) orelse return win32.ui.windows_and_messaging.DefWindowProcW(
                 wnd,
                 msg,
                 wparam,
@@ -162,17 +170,15 @@ const WindowsWindow = struct {
             ));
         };
 
+        std.debug.print("windowProc: {}\n", .{msg});
         switch (msg) {
             win32.ui.windows_and_messaging.WM_CLOSE => {
-                window.setShouldClose(true);
-                return 0;
+                if (window) |w| w.setShouldClose(true);
             },
-            win32.ui.windows_and_messaging.WM_DESTROY => {
-                window.setShouldClose(true);
-                return 0;
-            },
-            else => return win32.ui.windows_and_messaging.DefWindowProcW(wnd, msg, wparam, lparam),
+            else => {},
         }
+
+        return win32.ui.windows_and_messaging.DefWindowProcW(wnd, msg, wparam, lparam);
     }
 };
 

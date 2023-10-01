@@ -24,5 +24,5 @@ pub fn main() !void {
     while (!window.shouldClose()) {
         application.pumpEvents();
     }
-    std.debug.print("hi\n", .{});
+    std.debug.print("done\n", .{});
 }
