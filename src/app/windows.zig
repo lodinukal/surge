@@ -17,21 +17,18 @@ const WindowsError = error{
 };
 
 const WindowsApplication = struct {
-    base: *app.Application,
+    base: *app.Application = undefined,
 
-    pub fn init(base: *app.Application) !WindowsApplication {
-        return .{
-            .base = base,
-        };
+    pub fn init(self: *WindowsApplication, base: *app.Application) !void {
+        self.base = base;
     }
 
     pub fn deinit(self: *WindowsApplication) void {
         _ = self;
     }
 
-    pub fn createWindow(self: *WindowsApplication, descriptor: app.WindowDescriptor) !WindowsWindow {
-        var window = try WindowsWindow.init(self.base.allocator, self, descriptor);
-        return window;
+    pub fn initWindow(self: *WindowsApplication, window: *WindowsWindow, descriptor: app.WindowDescriptor) !void {
+        try window.init(self, descriptor);
     }
 
     pub fn pumpEvents(self: *WindowsApplication) !void {
@@ -48,27 +45,28 @@ const WindowsApplication = struct {
             _ = std.os.windows.user32.dispatchMessageW(&msg);
         }
     }
+
+    pub inline fn allocator(self: *WindowsApplication) std.mem.Allocator {
+        return self.base.allocator;
+    }
 };
 
 const WindowsWindow = struct {
-    allocator: std.mem.Allocator,
     application: *WindowsApplication,
     hwnd: ?win32.foundation.HWND = null,
 
     should_close: bool = false,
     descriptor: app.WindowDescriptor,
 
-    pub fn init(allocator: std.mem.Allocator, application: *WindowsApplication, descriptor: app.WindowDescriptor) !WindowsWindow {
-        try registerClassOnce();
-        return .{
-            .allocator = allocator,
-            .application = application,
-            .descriptor = descriptor,
-        };
+    pub inline fn allocator(self: *WindowsWindow) std.mem.Allocator {
+        return self.application.allocator();
     }
 
-    pub fn build(self: *WindowsWindow) !void {
-        self.hwnd = try self.buildWindow();
+    pub fn init(window: *WindowsWindow, application: *WindowsApplication, descriptor: app.WindowDescriptor) !void {
+        try registerClassOnce();
+        window.application = application;
+        window.descriptor = descriptor;
+        window.hwnd = try window.buildWindow();
     }
 
     var class_registered: bool = false;
@@ -108,11 +106,11 @@ const WindowsWindow = struct {
     fn buildWindow(self: *WindowsWindow) !win32.foundation.HWND {
         const descriptor = self.descriptor;
         const converted_title = std.unicode.utf8ToUtf16LeWithNull(
-            self.allocator,
+            self.allocator(),
             descriptor.title,
         ) catch
             return WindowsError.Utf16ToUtf8Failed;
-        defer self.allocator.free(converted_title);
+        defer self.allocator().free(converted_title);
         var hwnd = win32.ui.windows_and_messaging.CreateWindowExW(
             win32.ui.windows_and_messaging.WINDOW_EX_STYLE.initFlags(.{}),
             class_name,

@@ -4,48 +4,19 @@ const platform = @import("platform.zig").impl;
 
 pub const Application = struct {
     allocator: std.mem.Allocator,
-    windows: std.ArrayList(*Window),
 
-    platform_application: platform.Application,
+    platform_application: platform.Application = undefined,
 
-    fn init(allocator: std.mem.Allocator) !Application {
-        return .{
-            .allocator = allocator,
-            .windows = std.ArrayList(*Window).init(allocator),
-            .platform_application = undefined,
-        };
+    pub fn init(self: *Application) !void {
+        try self.platform_application.init(self);
     }
 
-    fn build(self: *Application) !void {
-        self.platform_application = try platform.Application.init(self);
-    }
-
-    pub fn create(allocator: std.mem.Allocator) !*Application {
-        const app: *Application = try allocator.create(Application);
-        app.* = try Application.init(allocator);
-        try app.build();
-        return app;
-    }
-
-    pub fn destroy(self: *Application) void {
-        self.deinit();
-        self.allocator.destroy(self);
-    }
-
-    fn deinit(self: *Application) void {
-        self.windows.deinit();
+    pub fn deinit(self: *Application) void {
         self.platform_application.deinit();
     }
 
-    pub fn createWindow(self: *Application, descriptor: WindowDescriptor) !*Window {
-        const wnd: *Window = try self.allocator.create(Window);
-        wnd.* = .{
-            .allocator = self.allocator,
-            .platform_window = try self.platform_application.createWindow(descriptor),
-        };
-        try wnd.platform_window.build();
-        // try self.windows.append(wnd);
-        return wnd;
+    pub fn initWindow(self: *Application, window: *Window, descriptor: WindowDescriptor) !void {
+        try self.platform_application.initWindow(&window.platform_window, descriptor);
     }
 
     pub fn pumpEvents(self: *Application) !void {
@@ -66,16 +37,10 @@ pub const FullscreenType = enum {
 };
 
 pub const Window = struct {
-    allocator: std.mem.Allocator,
-    platform_window: platform.Window,
+    platform_window: platform.Window = undefined,
 
-    fn deinit(self: *Window) void {
+    pub fn deinit(self: *Window) void {
         self.platform_window.deinit();
-    }
-
-    pub fn destroy(self: *Window) void {
-        self.deinit();
-        self.allocator.destroy(self);
     }
 
     pub fn show(self: *Window, should_show: bool) void {

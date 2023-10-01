@@ -7,19 +7,30 @@ const interface = @import("core/interface.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    var alloc = gpa.allocator();
+    defer gpa.deinit();
+    var gpa_alloc = gpa.allocator();
 
-    var application = try app.Application.create(alloc);
-    defer application.destroy();
+    var arena = std.heap.ArenaAllocator.init(gpa_alloc);
+    defer arena.deinit();
+    var alloc = arena.allocator();
 
-    var window = try application.createWindow(.{
-        .title = "window",
+    var application = app.Application{
+        .allocator = alloc,
+    };
+    try application.init();
+    defer application.deinit();
+
+    var window = app.Window{};
+    try application.initWindow(&window, .{
+        .title = "!",
         .width = 800,
         .height = 600,
     });
-    defer window.destroy();
+    defer window.deinit();
 
     window.show(true);
+
+    std.debug.print("mem: {}\n", .{arena.queryCapacity()});
 
     while (!window.shouldClose()) {
         try application.pumpEvents();
