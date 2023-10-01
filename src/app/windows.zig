@@ -34,18 +34,18 @@ const WindowsApplication = struct {
         return window;
     }
 
-    pub fn pumpEvents(self: *WindowsApplication) void {
+    pub fn pumpEvents(self: *WindowsApplication) !void {
         _ = self;
-        var msg = std.mem.zeroes(win32.ui.windows_and_messaging.MSG);
-        while (win32.ui.windows_and_messaging.PeekMessageW(
+        var msg: std.os.windows.user32.MSG = undefined;
+        while (try std.os.windows.user32.peekMessageW(
             &msg,
             null,
             0,
             0,
-            .REMOVE,
-        ) != win32.zig.FALSE) {
-            _ = win32.ui.windows_and_messaging.TranslateMessage(&msg);
-            _ = win32.ui.windows_and_messaging.DispatchMessageW(&msg);
+            std.os.windows.user32.PM_REMOVE,
+        ) == true) {
+            _ = std.os.windows.user32.translateMessage(&msg);
+            _ = std.os.windows.user32.dispatchMessageW(&msg);
         }
     }
 };
@@ -56,15 +56,19 @@ const WindowsWindow = struct {
     hwnd: ?win32.foundation.HWND = null,
 
     should_close: bool = false,
+    descriptor: app.WindowDescriptor,
 
     pub fn init(allocator: std.mem.Allocator, application: *WindowsApplication, descriptor: app.WindowDescriptor) !WindowsWindow {
         try registerClassOnce();
-        var wnd: WindowsWindow = .{
+        return .{
             .allocator = allocator,
             .application = application,
+            .descriptor = descriptor,
         };
-        wnd.hwnd = try buildWindow(&wnd, descriptor);
-        return wnd;
+    }
+
+    pub fn build(self: *WindowsWindow) !void {
+        self.hwnd = try self.buildWindow();
     }
 
     var class_registered: bool = false;
@@ -76,16 +80,33 @@ const WindowsWindow = struct {
         class_registered = true;
 
         var wc = std.mem.zeroes(win32.ui.windows_and_messaging.WNDCLASSW);
-        wc.style = win32.ui.windows_and_messaging.WNDCLASS_STYLES.initFlags(.{ .VREDRAW = 1, .HREDRAW = 1 });
+        wc.style = win32.ui.windows_and_messaging.WNDCLASS_STYLES.initFlags(.{
+            .VREDRAW = 1,
+            .HREDRAW = 1,
+            .OWNDC = 1,
+            .DBLCLKS = 1,
+        });
         wc.lpfnWndProc = WindowsWindow.windowProc;
         wc.hInstance = try getHInstance();
-        wc.hCursor = null;
-        wc.hbrBackground = null;
+        wc.hCursor = win32.ui.windows_and_messaging.LoadCursorW(
+            null,
+            win32.ui.windows_and_messaging.IDC_ARROW,
+        );
+        wc.hbrBackground = win32.graphics.gdi.GetStockObject(.WHITE_BRUSH);
         wc.lpszClassName = class_name;
+        wc.cbClsExtra = 0;
+        wc.cbWndExtra = 0;
+        wc.hIcon = win32.ui.windows_and_messaging.LoadIconW(
+            null,
+            win32.ui.windows_and_messaging.IDI_APPLICATION,
+        );
+        wc.lpszMenuName = null;
+
         if (win32.ui.windows_and_messaging.RegisterClassW(&wc) == 0) return WindowsError.ClassRegistrationFailed;
     }
 
-    fn buildWindow(self: *WindowsWindow, descriptor: app.WindowDescriptor) !win32.foundation.HWND {
+    fn buildWindow(self: *WindowsWindow) !win32.foundation.HWND {
+        const descriptor = self.descriptor;
         const converted_title = std.unicode.utf8ToUtf16LeWithNull(
             self.allocator,
             descriptor.title,
@@ -126,7 +147,6 @@ const WindowsWindow = struct {
     }
 
     pub fn deinit(self: *WindowsWindow) void {
-        std.debug.print("deinit", .{});
         if (self.hwnd) |hwnd| {
             _ = win32.ui.windows_and_messaging.DestroyWindow(hwnd);
         }
@@ -161,8 +181,26 @@ const WindowsWindow = struct {
         wparam: std.os.windows.WPARAM,
         lparam: std.os.windows.LPARAM,
     ) callconv(std.os.windows.WINAPI) std.os.windows.LRESULT {
-        var window: ?*WindowsWindow = window: {
-            break :window (windowFromHwnd(wnd) orelse return win32.ui.windows_and_messaging.DefWindowProcW(
+        var window: *WindowsWindow = window: {
+            var window_opt: ?*WindowsWindow = null;
+            if (msg == win32.ui.windows_and_messaging.WM_NCCREATE) {
+                var cs: *win32.ui.windows_and_messaging.CREATESTRUCTW = @ptrFromInt(@as(usize, @bitCast(lparam)));
+                window_opt = @alignCast(@ptrCast(cs.lpCreateParams));
+                window_opt.?.hwnd = wnd;
+                _ = win32.ui.windows_and_messaging.SetWindowLongPtrW(
+                    wnd,
+                    win32.ui.windows_and_messaging.GWLP_USERDATA,
+                    @bitCast(@intFromPtr(window_opt)),
+                );
+            } else {
+                window_opt = @ptrFromInt(
+                    @as(usize, @bitCast(win32.ui.windows_and_messaging.GetWindowLongPtrW(
+                        wnd,
+                        win32.ui.windows_and_messaging.GWLP_USERDATA,
+                    ))),
+                );
+            }
+            break :window (window_opt orelse return win32.ui.windows_and_messaging.DefWindowProcW(
                 wnd,
                 msg,
                 wparam,
@@ -170,10 +208,10 @@ const WindowsWindow = struct {
             ));
         };
 
-        std.debug.print("windowProc: {}\n", .{msg});
         switch (msg) {
             win32.ui.windows_and_messaging.WM_CLOSE => {
-                if (window) |w| w.setShouldClose(true);
+                // std.debug.print("{*}\n", .{window});
+                window.setShouldClose(true);
             },
             else => {},
         }

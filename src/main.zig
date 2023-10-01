@@ -9,20 +9,19 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     var alloc = gpa.allocator();
 
-    var application = try app.Application.init(alloc);
-    defer application.deinit();
+    var application = try app.Application.create(alloc);
+    defer application.destroy();
 
     var window = try application.createWindow(.{
         .title = "window",
         .width = 800,
         .height = 600,
     });
-    defer window.deinit();
+    defer window.destroy();
 
     window.show(true);
 
     while (!window.shouldClose()) {
-        application.pumpEvents();
+        try application.pumpEvents();
     }
-    std.debug.print("done\n", .{});
 }
