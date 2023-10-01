@@ -7,7 +7,7 @@ const interface = @import("core/interface.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer gpa.deinit();
+    defer _ = gpa.deinit();
     var gpa_alloc = gpa.allocator();
 
     var arena = std.heap.ArenaAllocator.init(gpa_alloc);
