@@ -17,37 +17,48 @@ const WindowsError = error{
 };
 
 const WindowsApplication = struct {
-    base: *app.Application = undefined,
+    fn getBase(self: *WindowsApplication) *app.Application {
+        return @fieldParentPtr(app.Application, "platform_application", self);
+    }
 
-    pub fn init(self: *WindowsApplication, base: *app.Application) !void {
-        self.base = base;
+    pub inline fn allocator(self: *WindowsApplication) std.mem.Allocator {
+        return self.getBase().allocator;
+    }
+
+    pub fn init(self: *WindowsApplication) !void {
+        _ = self;
     }
 
     pub fn deinit(self: *WindowsApplication) void {
         _ = self;
     }
 
-    pub fn initWindow(self: *WindowsApplication, base: *app.Window, window: *WindowsWindow, descriptor: app.WindowDescriptor) !void {
-        try window.init(base, self, descriptor);
-    }
-
     pub fn pumpEvents(self: *WindowsApplication) !void {
         _ = self;
         var msg: win32.ui.windows_and_messaging.MSG = undefined;
-        while (win32.ui.windows_and_messaging.PeekMessageW(
-            &msg,
-            null,
-            0,
-            0,
-            win32.ui.windows_and_messaging.PM_REMOVE,
-        ) != -1) {
+        while (result: {
+            var x = win32.ui.windows_and_messaging.PeekMessageW(
+                &msg,
+                null,
+                0,
+                0,
+                win32.ui.windows_and_messaging.PM_REMOVE,
+            );
+            if (x == 0) break :result false;
+            if (x != -1) break :result true;
+            switch (win32.foundation.GetLastError()) {
+                .ERROR_INVALID_WINDOW_HANDLE => unreachable,
+                .ERROR_INVALID_PARAMETER => unreachable,
+                else => |err| return std.os.windows.unexpectedError(@enumFromInt(
+                    @intFromEnum(
+                        err,
+                    ),
+                )),
+            }
+        }) {
             _ = win32.ui.windows_and_messaging.TranslateMessage(&msg);
             _ = win32.ui.windows_and_messaging.DispatchMessageW(&msg);
         }
-    }
-
-    pub inline fn allocator(self: *WindowsApplication) std.mem.Allocator {
-        return self.base.allocator;
     }
 };
 
@@ -55,8 +66,6 @@ const WindowsWindow = struct {
     var class_registered: bool = false;
     const class_name = win32.zig.L("app");
 
-    base: *app.Window = undefined,
-    application: *WindowsApplication,
     hwnd: ?win32.foundation.HWND = null,
 
     should_close: bool = false,
@@ -64,14 +73,16 @@ const WindowsWindow = struct {
 
     non_fullscreen_window_placement: win32.ui.windows_and_messaging.WINDOWPLACEMENT = undefined,
 
-    pub inline fn allocator(self: *WindowsWindow) std.mem.Allocator {
-        return self.application.allocator();
+    fn getBase(self: *WindowsWindow) *app.Window {
+        return @fieldParentPtr(app.Window, "platform_window", self);
     }
 
-    pub fn init(self: *WindowsWindow, base: *app.Window, application: *WindowsApplication, descriptor: app.WindowDescriptor) !void {
+    pub inline fn allocator(self: *WindowsWindow) std.mem.Allocator {
+        return self.getBase().allocator();
+    }
+
+    pub fn init(self: *WindowsWindow, descriptor: app.WindowDescriptor) !void {
         try registerClassOnce();
-        self.base = base;
-        self.application = application;
         self.descriptor = descriptor;
         self.hwnd = try self.buildWindow();
     }
@@ -170,16 +181,7 @@ const WindowsWindow = struct {
         self.should_close = should_close;
     }
 
-    const HWND_TOP: ?win32.foundation.HWND = null;
-    pub fn setFullscreen(
-        self: *WindowsWindow,
-        mode: app.FullscreenMode,
-    ) void {
-        if (mode == self.descriptor.fullscreen_mode) {
-            return;
-        }
-        const previous_mode = self.descriptor.fullscreen_mode;
-        self.descriptor.fullscreen_mode = mode;
+    fn updateStyle(self: *WindowsWindow) void {
         var current_style = win32.ui.windows_and_messaging.GetWindowLongW(
             self.hwnd,
             ._STYLE,
@@ -195,6 +197,19 @@ const WindowsWindow = struct {
             ._STYLE,
             current_style,
         );
+    }
+
+    const HWND_TOP: ?win32.foundation.HWND = null;
+    pub fn setFullscreen(
+        self: *WindowsWindow,
+        mode: app.FullscreenMode,
+    ) void {
+        if (mode == self.descriptor.fullscreen_mode) {
+            return;
+        }
+        const previous_mode = self.descriptor.fullscreen_mode;
+        self.descriptor.fullscreen_mode = mode;
+        self.updateStyle();
 
         if (previous_mode == .windowed and mode == .fullscreen) {
             self.non_fullscreen_window_placement.length = @sizeOf(win32.ui.windows_and_messaging.WINDOWPLACEMENT);
@@ -363,7 +378,6 @@ const WindowsWindow = struct {
 
         switch (msg) {
             win32.ui.windows_and_messaging.WM_CLOSE => {
-                // std.debug.print("{*}\n", .{window});
                 window.setShouldClose(true);
             },
             win32.ui.windows_and_messaging.WM_KEYDOWN => {

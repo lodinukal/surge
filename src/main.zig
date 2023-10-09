@@ -14,19 +14,15 @@ pub fn main() !void {
     defer arena.deinit();
     var alloc = arena.allocator();
 
-    var application = app.Application{
-        .allocator = alloc,
-    };
-    try application.init();
-    defer application.deinit();
+    var application = try app.Application.create(alloc);
+    defer application.destroy();
 
-    var window = app.Window{};
-    try application.initWindow(&window, .{
+    var window = try application.createWindow(.{
         .title = "!",
         .width = 800,
         .height = 600,
     });
-    defer window.deinit();
+    defer window.destroy();
 
     window.show(true);
 
@@ -35,4 +31,6 @@ pub fn main() !void {
     while (!window.shouldClose()) {
         try application.pumpEvents();
     }
+
+    std.debug.print("mem: {}\n", .{arena.queryCapacity()});
 }

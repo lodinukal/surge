@@ -7,16 +7,31 @@ pub const Application = struct {
 
     platform_application: platform.Application = undefined,
 
-    pub fn init(self: *Application) !void {
-        try self.platform_application.init(self);
+    pub fn create(allocator: std.mem.Allocator) !*Application {
+        var app: *Application = try allocator.create(Application);
+        app.allocator = allocator;
+        try app.init();
+        return app;
     }
 
-    pub fn deinit(self: *Application) void {
+    pub fn destroy(self: *Application) void {
+        self.deinit();
+        self.allocator.destroy(self);
+    }
+
+    fn init(self: *Application) !void {
+        try self.platform_application.init();
+    }
+
+    fn deinit(self: *Application) void {
         self.platform_application.deinit();
     }
 
-    pub fn initWindow(self: *Application, window: *Window, descriptor: WindowDescriptor) !void {
-        try self.platform_application.initWindow(window, &window.platform_window, descriptor);
+    pub fn createWindow(self: *Application, descriptor: WindowDescriptor) !*Window {
+        var window: *Window = try self.allocator.create(Window);
+        window.application = self;
+        try window.platform_window.init(descriptor);
+        return window;
     }
 
     pub fn pumpEvents(self: *Application) !void {
@@ -45,8 +60,18 @@ pub const FullscreenMode = enum {
 
 pub const Window = struct {
     platform_window: platform.Window = undefined,
+    application: *Application = undefined,
 
-    pub fn deinit(self: *Window) void {
+    pub inline fn allocator(self: *const Window) std.mem.Allocator {
+        return self.application.allocator;
+    }
+
+    pub fn destroy(self: *Window) void {
+        self.deinit();
+        self.allocator().destroy(self);
+    }
+
+    fn deinit(self: *Window) void {
         self.platform_window.deinit();
     }
 
