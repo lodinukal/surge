@@ -54,7 +54,6 @@ pub const WindowDescriptor = struct {
 
 pub const FullscreenMode = enum {
     windowed,
-    borderless,
     fullscreen,
 };
 
