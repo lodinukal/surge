@@ -16,7 +16,7 @@ pub const Application = struct {
     }
 
     pub fn initWindow(self: *Application, window: *Window, descriptor: WindowDescriptor) !void {
-        try self.platform_application.initWindow(&window.platform_window, descriptor);
+        try self.platform_application.initWindow(window, &window.platform_window, descriptor);
     }
 
     pub fn pumpEvents(self: *Application) !void {
@@ -26,11 +26,18 @@ pub const Application = struct {
 
 pub const WindowDescriptor = struct {
     title: []const u8,
-    width: ?i32 = 800,
-    height: ?i32 = 600,
+    width: i32 = 800,
+    height: i32 = 600,
+    x: ?i32 = null,
+    y: ?i32 = null,
+    is_popup: bool = false,
+    fullscreen_mode: FullscreenMode = FullscreenMode.windowed,
+    borderless: bool = false,
+    resizable: bool = true,
+    open_minimised: bool = false,
 };
 
-pub const FullscreenType = enum {
+pub const FullscreenMode = enum {
     windowed,
     borderless,
     fullscreen,
@@ -55,3 +62,43 @@ pub const Window = struct {
         self.platform_window.setShouldClose(should_close);
     }
 };
+
+pub fn enumFromValue(comptime E: type, value: anytype) E {
+    const typeInfo = @typeInfo(@TypeOf(value));
+    if (typeInfo == std.builtin.Type.EnumLiteral) {
+        return @as(E, value);
+    } else if (comptime std.meta.trait.isIntegral(@TypeOf(value))) {
+        return @enumFromInt(value);
+    } else if (@TypeOf(value) == E) {
+        return value;
+    } else {
+        @compileError("enumFromValue: invalid type: " ++ @TypeOf(value));
+    }
+}
+
+pub fn orEnum(comptime E: type, other: anytype) E {
+    var result = @intFromEnum(enumFromValue(E, other.@"0"));
+    inline for (other, 0..) |o, i| {
+        if (i == 0) continue;
+        result |= @intFromEnum(enumFromValue(E, o));
+    }
+    return @enumFromInt(result);
+}
+
+pub fn andEnum(comptime E: type, other: anytype) E {
+    var result = @intFromEnum(enumFromValue(E, other.@"0"));
+    inline for (other, 0..) |o, i| {
+        if (i == 0) continue;
+        result &= @intFromEnum(enumFromValue(E, o));
+    }
+    return @enumFromInt(result);
+}
+
+pub fn xorEnum(comptime E: type, other: anytype) E {
+    var result = @intFromEnum(enumFromValue(E, other.@"0"));
+    inline for (other, 0..) |o, i| {
+        if (i == 0) continue;
+        result ^= @intFromEnum(enumFromValue(E, o));
+    }
+    return @enumFromInt(result);
+}
