@@ -40,6 +40,7 @@ pub const Application = struct {
     }
 
     pub fn pumpEvents(self: *Application) !void {
-        return self.platform_application.pumpEvents();
+        try self.platform_application.pumpEvents();
+        self.input.process();
     }
 };

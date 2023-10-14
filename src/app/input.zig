@@ -10,7 +10,7 @@ pub const Input = struct {
     pub const BufferedEventsList = struct {
         const EventPair = struct {
             InputObject,
-            *void,
+            ?*void,
         };
         buffers: [buffered_event_buffer_count]std.ArrayList(EventPair),
         current_buffer: std.atomic.Atomic(usize),
@@ -34,9 +34,9 @@ pub const Input = struct {
             }
         }
 
-        pub fn append(self: *BufferedEventsList, event: InputObject) !void {
+        pub fn append(self: *BufferedEventsList, ep: EventPair) !void {
             var buffer = &self.buffers[self.current_buffer.load(.Acquire)];
-            try buffer.append(event);
+            try buffer.append(ep);
         }
 
         pub fn clear(self: *BufferedEventsList) void {
@@ -74,28 +74,16 @@ pub const Input = struct {
     touch_began_callback: ?TouchBeganCallback = null,
     touch_changed_callback: ?TouchChangedCallback = null,
     touch_ended_callback: ?TouchEndedCallback = null,
-    keyboard_callback: ?KeyboardCallback = null,
-    gamepad_callback: ?GamepadCallback = null,
-    text_input_callback: ?TextInputCallback = null,
-    mouse_moved_callback: ?MouseMovedCallback = null,
-    mouse_wheel_callback: ?MouseWheelCallback = null,
-    mouse_button_callback: ?MouseButtonCallback = null,
     input_type_updated_callback: ?InputTypeUpdatedCallback = null,
 
-    const FocusedChangedCallback = *fn (bool) void;
-    const InputBeganCallback = *fn (InputObject) void;
-    const InputChangedCallback = *fn (InputObject) void;
-    const InputEndedCallback = *fn (InputObject) void;
-    const TouchBeganCallback = *fn (InputObject) void;
-    const TouchChangedCallback = *fn (InputObject) void;
-    const TouchEndedCallback = *fn (InputObject) void;
-    const KeyboardCallback = *fn (InputObject) void;
-    const GamepadCallback = *fn (InputObject) void;
-    const TextInputCallback = *fn (InputObject) void;
-    const MouseMovedCallback = *fn (InputObject) void;
-    const MouseWheelCallback = *fn (InputObject) void;
-    const MouseButtonCallback = *fn (InputObject) void;
-    const InputTypeUpdatedCallback = *fn (InputType) void;
+    const FocusedChangedCallback = *const fn (bool) void;
+    const InputBeganCallback = *const fn (InputObject) void;
+    const InputChangedCallback = *const fn (InputObject) void;
+    const InputEndedCallback = *const fn (InputObject) void;
+    const TouchBeganCallback = *const fn (InputObject) void;
+    const TouchChangedCallback = *const fn (InputObject) void;
+    const TouchEndedCallback = *const fn (InputObject) void;
+    const InputTypeUpdatedCallback = *const fn (InputType) void;
 
     pub fn create(allocator: std.mem.Allocator) !*Input {
         var self: *Input = try allocator.create(Input);
@@ -115,7 +103,7 @@ pub const Input = struct {
         self.keyboard_enabled = false;
         self.gamepad_enabled = false;
         switch (platform.this_platform) {
-            .windows, .osx => {
+            .windows, .osx, .linux => {
                 self.last_input_type = .mousemove;
                 self.mouse_enabled = true;
                 self.keyboard_enabled = true;
@@ -148,12 +136,6 @@ pub const Input = struct {
         self.touch_began_callback = null;
         self.touch_changed_callback = null;
         self.touch_ended_callback = null;
-        self.keyboard_callback = null;
-        self.gamepad_callback = null;
-        self.text_input_callback = null;
-        self.mouse_moved_callback = null;
-        self.mouse_wheel_callback = null;
-        self.mouse_button_callback = null;
         self.input_type_updated_callback = null;
     }
 
@@ -201,15 +183,56 @@ pub const Input = struct {
 
     fn updateCurrentMousePosition(self: *Input, input_object: *InputObject) void {
         if (input_object.type == .mousemove) {
-            self.current_mouse_position = input_object.position;
+            var rounded = input_object.position.round();
+            self.current_mouse_position = math.Vector2i.init(@intFromFloat(rounded.x), @intFromFloat(rounded.y));
         }
     }
 
-    fn processInput(self: *Input, input_object: *InputObject, native_input_object: *void, input_state: InputState) void {
-        _ = input_state;
+    fn processInput(self: *Input, input_object: *InputObject, native_input_object: ?*void, input_state: InputState) void {
         _ = native_input_object;
         self.updateLastInputType(input_object);
         self.updateCurrentMousePosition(input_object);
+
+        if (input_object.type == .focus) {
+            if (self.focused_changed_callback) |cb| {
+                cb(input_object.input_state == .begin);
+            }
+            return;
+        }
+
+        switch (input_state) {
+            .begin => {
+                if (self.input_began_callback) |cb| {
+                    cb(input_object.*);
+                }
+                if (input_object.isTouch()) {
+                    if (self.touch_began_callback) |cb| {
+                        cb(input_object.*);
+                    }
+                }
+            },
+            .change => {
+                if (self.input_changed_callback) |cb| {
+                    cb(input_object.*);
+                }
+                if (input_object.isTouch()) {
+                    if (self.touch_changed_callback) |cb| {
+                        cb(input_object.*);
+                    }
+                }
+            },
+            .end => {
+                if (self.input_ended_callback) |cb| {
+                    cb(input_object.*);
+                }
+                if (input_object.isTouch()) {
+                    if (self.touch_ended_callback) |cb| {
+                        cb(input_object.*);
+                    }
+                }
+            },
+            .cancel => {},
+        }
     }
 
     fn processInputSlice(self: *Input, events: *BufferedEventsList, input_state: InputState) void {
@@ -217,15 +240,30 @@ pub const Input = struct {
         events.swapBuffers();
 
         for (buffer.items) |*event| {
-            self.processInput(&event.@"0", &event.@"1", input_state);
+            self.processInput(&event.@"0", event.@"1", input_state);
         }
         buffer.shrinkRetainingCapacity(0);
     }
 
-    pub fn processBuffer(self: *Input) void {
+    pub fn process(self: *Input) void {
         self.processInputSlice(&self.begin_events, .begin);
         self.processInputSlice(&self.change_events, .change);
         self.processInputSlice(&self.end_events, .end);
+    }
+
+    pub fn addEvent(self: *Input, input_object: InputObject, native_input_object: ?*void) !void {
+        switch (input_object.input_state) {
+            .begin => {
+                try self.begin_events.append(.{ input_object, native_input_object });
+            },
+            .change => {
+                try self.change_events.append(.{ input_object, native_input_object });
+            },
+            .end => {
+                try self.end_events.append(.{ input_object, native_input_object });
+            },
+            .cancel => {},
+        }
     }
 };
 
@@ -234,17 +272,17 @@ pub const Input = struct {
 pub const InputObject = struct {
     type: InputType,
     source_type: InputType,
-    input_state: InputState,
-    position: math.Vector3f,
-    delta: math.Vector3f,
-    modifiers: Modifiers,
+    input_state: InputState = .begin,
+    position: math.Vector3f = math.Vector3f.init(null, null, null),
+    delta: math.Vector3f = math.Vector3f.init(null, null, null),
+    modifiers: Modifiers = .{},
     specific_data: union(InputType) {
         mousebutton: u8, // mouse button index
         mousewheel: void,
         mousemove: void,
         touch: u8, // touch id
         keyboard: KeyboardData,
-        focus: bool,
+        focus: void,
         accelerometer: void,
         gyro: void,
         gamepad: GamepadButton,

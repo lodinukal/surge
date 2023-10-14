@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const app = @import("../app.zig");
+const app_input = @import("../input.zig");
 const app_window = @import("../window.zig");
 const util = @import("../../util.zig");
 
@@ -9,6 +10,7 @@ const win32 = @import("win32");
 pub const Error = WindowsError;
 pub const Application = WindowsApplication;
 pub const Window = WindowsWindow;
+pub const Input = WindowsInput;
 
 const WindowsError = error{
     Utf16ToUtf8Failed,
@@ -387,6 +389,24 @@ const WindowsWindow = struct {
                     window.setFullscreen(if (window.descriptor.fullscreen_mode == .windowed) .fullscreen else .windowed);
                 }
             },
+            win32.ui.windows_and_messaging.WM_SETFOCUS => {
+                const iobj = app_input.InputObject{
+                    .type = .focus,
+                    .input_state = .begin,
+                    .source_type = .focus,
+                    .specific_data = .focus,
+                };
+                window.getBase().application.input.addEvent(iobj, null) catch {};
+            },
+            win32.ui.windows_and_messaging.WM_KILLFOCUS => {
+                const iobj = app_input.InputObject{
+                    .type = .focus,
+                    .input_state = .end,
+                    .source_type = .focus,
+                    .specific_data = .focus,
+                };
+                window.getBase().application.input.addEvent(iobj, null) catch {};
+            },
             else => {},
         }
 
@@ -398,3 +418,24 @@ fn getHInstance() !win32.foundation.HINSTANCE {
     var module = win32.system.library_loader.GetModuleHandleW(null);
     return module orelse return WindowsError.HInstanceNull;
 }
+
+const WindowsInput = struct {
+    window: ?*WindowsWindow = null,
+    di_keys: [256]std.os.windows.BYTE = .{0} ** 256,
+
+    fn getBase(self: *WindowsInput) *app_input.Input {
+        return @fieldParentPtr(app_input.Input, "platform_input", self);
+    }
+
+    pub inline fn allocator(self: *WindowsInput) std.mem.Allocator {
+        return self.getBase().allocator;
+    }
+
+    pub fn init(self: *WindowsInput, window: *WindowsWindow) !void {
+        self.window = window;
+    }
+
+    pub fn deinit(self: *WindowsInput) void {
+        _ = self;
+    }
+};

@@ -1,9 +1,14 @@
 const std = @import("std");
 
 const app = @import("app/app.zig");
+const input = @import("app/input.zig");
 const math = @import("math.zig");
 
 const interface = @import("core/interface.zig");
+
+pub fn focused_changed_callback(focused: bool) void {
+    std.debug.print("focused: {}\n", .{focused});
+}
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -16,6 +21,8 @@ pub fn main() !void {
 
     var application = try app.Application.create(alloc);
     defer application.destroy();
+
+    application.input.focused_changed_callback = focused_changed_callback;
 
     var window = try application.createWindow(.{
         .title = "!",
