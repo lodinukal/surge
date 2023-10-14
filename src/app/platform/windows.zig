@@ -462,12 +462,11 @@ const WindowsInput = struct {
         wparam: std.os.windows.WPARAM,
         lparam: std.os.windows.LPARAM,
     ) void {
-        _ = window;
         _ = lparam;
         _ = wparam;
         switch (msg) {
             win32.ui.windows_and_messaging.WM_MOUSEMOVE => {
-                self.onMouseInside();
+                self.onMouseInside(window);
             },
             win32.ui.windows_and_messaging.WM_SETFOCUS => {
                 const iobj = app_input.InputObject{
@@ -487,6 +486,7 @@ const WindowsInput = struct {
                 };
                 self.getBase().addEvent(iobj, null) catch {};
             },
+            else => {},
         }
     }
 };

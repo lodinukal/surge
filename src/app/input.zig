@@ -145,7 +145,7 @@ pub const Input = struct {
         self.wrap_mode = .auto;
         self.mouse_mode = .default;
 
-        self.platform_input.init();
+        try self.platform_input.init();
     }
 
     pub fn deinit(self: *Input) void {
