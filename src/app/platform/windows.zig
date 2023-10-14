@@ -1,6 +1,8 @@
 const std = @import("std");
 
-const app = @import("app.zig");
+const app = @import("../app.zig");
+const app_window = @import("../window.zig");
+const util = @import("../../util.zig");
 
 const win32 = @import("win32");
 
@@ -69,19 +71,19 @@ const WindowsWindow = struct {
     hwnd: ?win32.foundation.HWND = null,
 
     should_close: bool = false,
-    descriptor: app.WindowDescriptor,
+    descriptor: app_window.WindowDescriptor,
 
     non_fullscreen_window_placement: win32.ui.windows_and_messaging.WINDOWPLACEMENT = undefined,
 
-    fn getBase(self: *WindowsWindow) *app.Window {
-        return @fieldParentPtr(app.Window, "platform_window", self);
+    fn getBase(self: *WindowsWindow) *app_window.Window {
+        return @fieldParentPtr(app_window.Window, "platform_window", self);
     }
 
     pub inline fn allocator(self: *WindowsWindow) std.mem.Allocator {
         return self.getBase().allocator();
     }
 
-    pub fn init(self: *WindowsWindow, descriptor: app.WindowDescriptor) !void {
+    pub fn init(self: *WindowsWindow, descriptor: app_window.WindowDescriptor) !void {
         try registerClassOnce();
         self.descriptor = descriptor;
         self.hwnd = try self.buildWindow();
@@ -188,7 +190,7 @@ const WindowsWindow = struct {
         );
         var styles = self.getStyles();
         current_style &= ~@intFromEnum(Styles.mask);
-        current_style = @bitCast(@intFromEnum(app.orEnum(
+        current_style = @bitCast(@intFromEnum(util.orEnum(
             Styles.ws,
             .{ current_style, styles.style },
         )));
@@ -202,7 +204,7 @@ const WindowsWindow = struct {
     const HWND_TOP: ?win32.foundation.HWND = null;
     pub fn setFullscreen(
         self: *WindowsWindow,
-        mode: app.FullscreenMode,
+        mode: app_window.FullscreenMode,
     ) void {
         if (mode == self.descriptor.fullscreen_mode) {
             return;
@@ -235,7 +237,7 @@ const WindowsWindow = struct {
                 mi.rcMonitor.top,
                 mi.rcMonitor.right - mi.rcMonitor.left,
                 mi.rcMonitor.bottom - mi.rcMonitor.top,
-                app.orEnum(win32.ui.windows_and_messaging.SET_WINDOW_POS_FLAGS, .{
+                util.orEnum(win32.ui.windows_and_messaging.SET_WINDOW_POS_FLAGS, .{
                     .NOOWNERZORDER,
                     .DRAWFRAME,
                 }),
@@ -254,7 +256,7 @@ const WindowsWindow = struct {
                 0,
                 0,
                 0,
-                app.orEnum(win32.ui.windows_and_messaging.SET_WINDOW_POS_FLAGS, .{
+                util.orEnum(win32.ui.windows_and_messaging.SET_WINDOW_POS_FLAGS, .{
                     .NOMOVE,
                     .NOSIZE,
                     .NOZORDER,
@@ -299,7 +301,7 @@ const WindowsWindow = struct {
             .THICKFRAME = 1,
             .TABSTOP = 1,
         });
-        const mask: ws = app.orEnum(ws, .{
+        const mask: ws = util.orEnum(ws, .{
             fullscreen,
             borderless,
             normal,
@@ -317,29 +319,29 @@ const WindowsWindow = struct {
         const descriptor = self.descriptor;
 
         if (descriptor.is_popup) {
-            styles.style = app.orEnum(ws, .{ styles.style, .POPUP });
+            styles.style = util.orEnum(ws, .{ styles.style, .POPUP });
         } else if (descriptor.fullscreen_mode == .fullscreen) {
-            styles.style = app.orEnum(ws, .{ styles.style, Styles.fullscreen });
+            styles.style = util.orEnum(ws, .{ styles.style, Styles.fullscreen });
         } else {
             if (descriptor.borderless) {
-                styles.style = app.orEnum(ws, .{ styles.style, Styles.borderless_windowed });
+                styles.style = util.orEnum(ws, .{ styles.style, Styles.borderless_windowed });
             } else {
-                styles.style = app.orEnum(ws, .{ styles.style, Styles.normal });
+                styles.style = util.orEnum(ws, .{ styles.style, Styles.normal });
             }
 
             if (descriptor.resizable) {
                 if (!descriptor.borderless) {
-                    styles.style = app.orEnum(ws, .{ styles.style, Styles.resizable });
+                    styles.style = util.orEnum(ws, .{ styles.style, Styles.resizable });
                 }
             }
 
             if (descriptor.open_minimised) {
-                styles.style = app.orEnum(ws, .{ styles.style, .MINIMIZE });
+                styles.style = util.orEnum(ws, .{ styles.style, .MINIMIZE });
             }
         }
 
         if (descriptor.is_popup) {
-            styles.ex = app.orEnum(wexs, .{ styles.ex, .TOOLWINDOW, .NOACTIVATE });
+            styles.ex = util.orEnum(wexs, .{ styles.ex, .TOOLWINDOW, .NOACTIVATE });
         }
 
         return styles;

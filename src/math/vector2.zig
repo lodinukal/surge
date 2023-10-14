@@ -3,10 +3,6 @@ const std = @import("std");
 const int_point = @import("int_point.zig");
 
 pub fn Vector2(comptime T: type) type {
-    if (comptime !std.meta.trait.isFloat(T)) {
-        @compileError("Vector2 only supports floating types");
-    }
-
     return struct {
         const Self = @This();
         x: T = 0,

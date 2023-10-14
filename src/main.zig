@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const app = @import("app/app.zig");
-const math = @import("core/math.zig");
+const math = @import("math.zig");
 
 const interface = @import("core/interface.zig");
 
@@ -25,6 +25,8 @@ pub fn main() !void {
     defer window.destroy();
 
     window.show(true);
+
+    std.debug.print("{}\n", .{application.input.*});
 
     std.debug.print("mem: {}\n", .{arena.queryCapacity()});
 
