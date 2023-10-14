@@ -53,6 +53,7 @@ pub const Input = struct {
         }
     };
     allocator: std.mem.Allocator,
+    platform_input: platform.impl.Input = undefined,
     last_input_type: InputType,
 
     mouse_enabled: bool,
@@ -75,6 +76,9 @@ pub const Input = struct {
     touch_changed_callback: ?TouchChangedCallback = null,
     touch_ended_callback: ?TouchEndedCallback = null,
     input_type_updated_callback: ?InputTypeUpdatedCallback = null,
+
+    mouse_mode: MouseMode,
+    wrap_mode: WrapMode,
 
     const FocusedChangedCallback = *const fn (bool) void;
     const InputBeganCallback = *const fn (InputObject) void;
@@ -127,7 +131,7 @@ pub const Input = struct {
         self.end_events = try BufferedEventsList.init(allocator);
         self.cleanup_events = try BufferedEventsList.init(allocator);
 
-        self.current_mouse_position = math.Vector2i.init(0, 0);
+        self.current_mouse_position = math.Vector2i.zero;
 
         self.focused_changed_callback = null;
         self.input_began_callback = null;
@@ -137,9 +141,16 @@ pub const Input = struct {
         self.touch_changed_callback = null;
         self.touch_ended_callback = null;
         self.input_type_updated_callback = null;
+
+        self.wrap_mode = .auto;
+        self.mouse_mode = .default;
+
+        self.platform_input.init();
     }
 
     pub fn deinit(self: *Input) void {
+        self.platform_input.deinit();
+
         self.begin_events.deinit();
         self.change_events.deinit();
         self.end_events.deinit();
@@ -335,6 +346,20 @@ pub const InputType = enum(u8) {
     gyro = 8,
     gamepad = 9,
     textinput = 10,
+};
+
+pub const WrapMode = enum(u8) {
+    auto,
+    center,
+    hybrid,
+    none_and_center,
+    none,
+};
+
+pub const MouseMode = enum(u8) {
+    default,
+    lock_center,
+    lock_current,
 };
 
 pub const InputState = enum(u8) {

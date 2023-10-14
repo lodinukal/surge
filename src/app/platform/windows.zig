@@ -3,6 +3,7 @@ const std = @import("std");
 const app = @import("../app.zig");
 const app_input = @import("../input.zig");
 const app_window = @import("../window.zig");
+const math = @import("../../math.zig");
 const util = @import("../../util.zig");
 
 const win32 = @import("win32");
@@ -389,26 +390,10 @@ const WindowsWindow = struct {
                     window.setFullscreen(if (window.descriptor.fullscreen_mode == .windowed) .fullscreen else .windowed);
                 }
             },
-            win32.ui.windows_and_messaging.WM_SETFOCUS => {
-                const iobj = app_input.InputObject{
-                    .type = .focus,
-                    .input_state = .begin,
-                    .source_type = .focus,
-                    .specific_data = .focus,
-                };
-                window.getBase().application.input.addEvent(iobj, null) catch {};
-            },
-            win32.ui.windows_and_messaging.WM_KILLFOCUS => {
-                const iobj = app_input.InputObject{
-                    .type = .focus,
-                    .input_state = .end,
-                    .source_type = .focus,
-                    .specific_data = .focus,
-                };
-                window.getBase().application.input.addEvent(iobj, null) catch {};
-            },
             else => {},
         }
+
+        window.getBase().application.input.platform_input.windowProc(window, msg, wparam, lparam);
 
         return win32.ui.windows_and_messaging.DefWindowProcW(wnd, msg, wparam, lparam);
     }
@@ -420,7 +405,9 @@ fn getHInstance() !win32.foundation.HINSTANCE {
 }
 
 const WindowsInput = struct {
-    window: ?*WindowsWindow = null,
+    is_mouse_captured: bool = false,
+    wrap_mouse_position: math.Vector2f = math.Vector2f.zero,
+    is_mouse_inside: bool = false,
     di_keys: [256]std.os.windows.BYTE = .{0} ** 256,
 
     fn getBase(self: *WindowsInput) *app_input.Input {
@@ -431,11 +418,75 @@ const WindowsInput = struct {
         return self.getBase().allocator;
     }
 
-    pub fn init(self: *WindowsInput, window: *WindowsWindow) !void {
-        self.window = window;
+    pub fn init(self: *WindowsInput) !void {
+        _ = self;
     }
 
     pub fn deinit(self: *WindowsInput) void {
         _ = self;
+    }
+
+    fn centerCursor(self: *WindowsInput) void {
+        self.wrap_mouse_position = math.Vector2f.zero;
+    }
+
+    fn onMouseInside(self: *WindowsInput, window: *WindowsWindow) void {
+        if (self.is_mouse_inside) return;
+
+        var tme = win32.ui.input.keyboard_and_mouse.TRACKMOUSEEVENT{
+            .cbSize = @sizeOf(win32.ui.input.keyboard_and_mouse.TRACKMOUSEEVENT),
+            .dwFlags = .LEAVE,
+            .hwndTrack = window.hwnd,
+            .dwHoverTime = 0,
+        };
+
+        if (self.getBase().wrap_mode == .none_and_center) {
+            self.centerCursor();
+        }
+
+        if (win32.ui.input.keyboard_and_mouse.TrackMouseEvent(&tme) == win32.zig.FALSE) return;
+
+        self.is_mouse_inside = true;
+
+        if (!self.is_mouse_captured) {
+            //TODO: self.acquireMouse
+        } else {
+            //TODO: assert
+        }
+    }
+
+    pub fn windowProc(
+        self: *WindowsInput,
+        window: *WindowsWindow,
+        msg: std.os.windows.UINT,
+        wparam: std.os.windows.WPARAM,
+        lparam: std.os.windows.LPARAM,
+    ) void {
+        _ = window;
+        _ = lparam;
+        _ = wparam;
+        switch (msg) {
+            win32.ui.windows_and_messaging.WM_MOUSEMOVE => {
+                self.onMouseInside();
+            },
+            win32.ui.windows_and_messaging.WM_SETFOCUS => {
+                const iobj = app_input.InputObject{
+                    .type = .focus,
+                    .input_state = .begin,
+                    .source_type = .focus,
+                    .specific_data = .focus,
+                };
+                self.getBase().addEvent(iobj, null) catch {};
+            },
+            win32.ui.windows_and_messaging.WM_KILLFOCUS => {
+                const iobj = app_input.InputObject{
+                    .type = .focus,
+                    .input_state = .end,
+                    .source_type = .focus,
+                    .specific_data = .focus,
+                };
+                self.getBase().addEvent(iobj, null) catch {};
+            },
+        }
     }
 };

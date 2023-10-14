@@ -8,12 +8,12 @@ pub fn Vector2(comptime T: type) type {
         x: T = 0,
         y: T = 0,
 
-        const zero = Self{ .x = 0, .y = 0 };
-        const one = Self{ .x = 1, .y = 1 };
-        const degree45 = Self{ .x = 0.70710678118, .y = 0.70710678118 };
+        pub const zero = Self{ .x = 0, .y = 0 };
+        pub const one = Self{ .x = 1, .y = 1 };
+        pub const degree45 = Self{ .x = 0.70710678118, .y = 0.70710678118 };
 
-        const unit_x = Self{ .x = 1, .y = 0 };
-        const unit_y = Self{ .x = 0, .y = 1 };
+        pub const unit_x = Self{ .x = 1, .y = 0 };
+        pub const unit_y = Self{ .x = 0, .y = 1 };
 
         pub inline fn init(x: ?T, y: ?T) Self {
             return Self{ .x = x orelse 0, .y = y orelse 0 };
