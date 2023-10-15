@@ -14,11 +14,17 @@ pub const Window = WindowsWindow;
 pub const Input = WindowsInput;
 
 const WindowsError = error{
-    Utf16ToUtf8Failed,
+    StringConversionFailed,
     HwndCreationFailed,
     HwndDestroyFailed,
     ClassRegistrationFailed,
     HInstanceNull,
+    DirectInput8CreateFailed,
+    AllocationFailed,
+    UnexpectedRegistryValueType,
+    RegistryError,
+
+    MouseCreationFailure,
 };
 
 const WindowsApplication = struct {
@@ -132,7 +138,7 @@ const WindowsWindow = struct {
             temp_allocator,
             descriptor.title,
         ) catch
-            return WindowsError.Utf16ToUtf8Failed;
+            return WindowsError.StringConversionFailed;
         defer temp_allocator.free(converted_title);
         var hwnd = win32.ui.windows_and_messaging.CreateWindowExW(
             win32.ui.windows_and_messaging.WINDOW_EX_STYLE.initFlags(.{}),
@@ -404,11 +410,47 @@ fn getHInstance() !win32.foundation.HINSTANCE {
     return module orelse return WindowsError.HInstanceNull;
 }
 
+fn messageBox(
+    allocator: std.mem.Allocator,
+    title: []const u8,
+    message: []const u8,
+    style: win32.ui.windows_and_messaging.MESSAGEBOX_STYLE,
+) void {
+    var stack_allocator = std.heap.stackFallback(
+        1024,
+        allocator,
+    );
+    var temp_allocator = stack_allocator.get();
+    var converted_title = std.unicode.utf8ToUtf16LeWithNull(
+        temp_allocator,
+        title,
+    ) catch return;
+    defer temp_allocator.free(converted_title);
+    var converted_message = std.unicode.utf8ToUtf16LeWithNull(
+        temp_allocator,
+        message,
+    ) catch return;
+    defer temp_allocator.free(converted_message);
+    _ = win32.ui.windows_and_messaging.MessageBoxW(
+        null,
+        converted_message,
+        converted_title,
+        style,
+    );
+}
+
 const WindowsInput = struct {
     is_mouse_captured: bool = false,
     wrap_mouse_position: math.Vector2f = math.Vector2f.zero,
     is_mouse_inside: bool = false,
+
     di_keys: [256]std.os.windows.BYTE = .{0} ** 256,
+
+    di_ptr: ?*win32.devices.human_interface_device.IDirectInput8W = null,
+    di_mouse: ?*win32.devices.human_interface_device.IDirectInputDevice8W = null,
+    di_keyboard: ?*win32.devices.human_interface_device.IDirectInputDevice8W = null,
+
+    mouse_button_swap: bool = false,
 
     fn getBase(self: *WindowsInput) *app_input.Input {
         return @fieldParentPtr(app_input.Input, "platform_input", self);
@@ -418,11 +460,135 @@ const WindowsInput = struct {
         return self.getBase().allocator;
     }
 
-    pub fn init(self: *WindowsInput) !void {
-        _ = self;
+    pub fn init(self: *WindowsInput) WindowsError!void {
+        var hr: std.os.windows.HRESULT = 0;
+        hr = win32.devices.human_interface_device.DirectInput8Create(
+            try getHInstance(),
+            win32.devices.human_interface_device.DIRECTINPUT_VERSION,
+            win32.devices.human_interface_device.IID_IDirectInput8W,
+            @ptrCast(&self.di_ptr),
+            null,
+        );
+        if (win32.zig.FAILED(hr)) {
+            messageBox(
+                self.allocator(),
+                win32.zig.L("Failed to create DirectInput8 object"),
+                win32.zig.L("Error"),
+                .OK,
+            );
+            return WindowsError.DirectInput8CreateFailed;
+        }
+
+        var stack_allocator = std.heap.stackFallback(
+            1024,
+            self.allocator(),
+        );
+
+        var mouse_key = RegKey.init(stack_allocator.get());
+        if (mouse_key.open(
+            win32.system.registry.HKEY_CURRENT_USER,
+            "Control Panel\\Mouse",
+            .READ,
+        ) == .NO_ERROR) {
+            self.mouse_button_swap = blk: {
+                var sbs = (mouse_key.queryStringValue(
+                    "SwapMouseButtons",
+                    256,
+                ) catch break :blk false);
+                break :blk sbs[0] == '1';
+            };
+        }
+
+        try self.createMouse();
     }
 
     pub fn deinit(self: *WindowsInput) void {
+        if (self.di_mouse) |m| {
+            m.IDirectInputDevice8W_Unacquire();
+            self.di_mouse = null;
+        }
+        if (self.di_keyboard) |k| {
+            k.IDirectInputDevice8W_Unacquire();
+            self.di_keyboard = null;
+        }
+        if (self.di_ptr) |ptr| {
+            ptr.IUnknown_Release();
+            self.di_ptr = null;
+        }
+    }
+
+    extern const c_dfDIMouse2: win32.devices.human_interface_device.DIDATAFORMAT;
+
+    const di_buffer_size = 2048;
+
+    fn getDiProp(dipdw: *win32.devices.human_interface_device.DIPROPDWORD) void {
+        dipdw.diph.dwSize = @sizeOf(win32.devices.human_interface_device.DIPROPDWORD);
+        dipdw.diph.dwHeaderSize = @sizeOf(win32.devices.human_interface_device.DIPROPHEADER);
+        dipdw.diph.dwObj = 0;
+        dipdw.diph.dwHow = win32.devices.human_interface_device.DIPH_DEVICE;
+        dipdw.dwData = di_buffer_size;
+    }
+
+    fn makeDiProp(x: usize) *const win32.zig.Guid {
+        @setRuntimeSafety(false);
+        return @as(*const win32.zig.Guid, @ptrFromInt(x));
+    }
+
+    const DIPROP_BUFFERSIZE = makeDiProp(1);
+    const DIPROP_AXISMODE = makeDiProp(2);
+
+    fn createMouse(self: *WindowsInput) WindowsError!void {
+        var stack_allocator = std.heap.stackFallback(
+            1024,
+            self.allocator(),
+        );
+        var temp_allocator = stack_allocator.get();
+
+        var hr: std.os.windows.HRESULT = 0;
+        hr = self.di_ptr.?.IDirectInput8W_CreateDevice(
+            win32.devices.human_interface_device.GUID_SysMouse,
+            &self.di_ptr,
+            null,
+        );
+        if (win32.zig.FAILED(hr)) {
+            messageBox(
+                temp_allocator,
+                "Could not find suitable mouse.",
+                "Error",
+                .OK,
+            );
+            return WindowsError.MouseCreationFailure;
+        }
+
+        hr = self.di_mouse.?.IDirectInputDevice8W_SetDataFormat(&c_dfDIMouse2);
+        if (win32.zig.FAILED(hr)) {
+            messageBox(
+                temp_allocator,
+                "Could not set mouse data format.",
+                "Error",
+                .OK,
+            );
+            return WindowsError.MouseCreationFailure;
+        }
+
+        var dipdw: win32.devices.human_interface_device.DIPROPDWORD = undefined;
+        self.getDiProp(&dipdw);
+        hr = self.di_mouse.?.IDirectInputDevice8W_SetProperty(
+            DIPROP_BUFFERSIZE,
+            &dipdw.diph,
+        );
+        if (win32.zig.FAILED(hr)) {
+            messageBox(
+                temp_allocator,
+                "Could not set mouse buffer size.",
+                "Error",
+                .OK,
+            );
+            return WindowsError.MouseCreationFailure;
+        }
+    }
+
+    fn acquireMouse(self: *WindowsInput) void {
         _ = self;
     }
 
@@ -489,4 +655,340 @@ const WindowsInput = struct {
             else => {},
         }
     }
+};
+
+// Taken from https://github.com/microsoft/Windows-class-samples
+// Transpiled into zig
+// The MIT License (MIT)
+
+// Copyright (c) Microsoft Corporation
+
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+//  of this software and associated documentation files (the "Software"), to deal
+//  in the Software without restriction, including without limitation the rights
+//  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+//  copies of the Software, and to permit persons to whom the Software is
+//  furnished to do so, subject to the following conditions:
+
+// The above copyright notice and this permission notice shall be included in
+//  all copies or substantial portions of the Software.
+
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+//  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+//  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+//  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+//  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+//  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+//  THE SOFTWARE.
+
+// Portions of this repo are provided under the SIL Open Font License.
+// See the LICENSE file in individual samples for additional details.
+
+const RegKey = struct {
+    const HKEY = win32.system.registry.HKEY;
+    handle: ?HKEY = null,
+    allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator) RegKey {
+        return .{
+            .allocator = allocator,
+        };
+    }
+
+    pub fn deinit(self: *RegKey) void {
+        self.close();
+    }
+
+    pub fn create(
+        self: *RegKey,
+        key_present: ?HKEY,
+        key_name: []const u8,
+        class: []const u8,
+        options: ?win32.system.registry.REG_OPEN_CREATE_OPTIONS,
+        desired: ?win32.system.registry.REG_SAM_FLAGS,
+        security_attributes: ?*win32.security.SECURITY_ATTRIBUTES,
+        out_disposition: ?*win32.system.registry.REG_CREATE_KEY_DISPOSITION,
+    ) WindowsError!win32.foundation.WIN32_ERROR {
+        var use_options = options orelse win32.system.registry.REG_OPEN_CREATE_OPTIONS.initFlags(.{
+            .RESERVED = 1, // NON_VOLATILE
+        });
+        var use_desired = desired orelse win32.system.registry.REG_SAM_FLAGS.initFlags(.{
+            .READ = 1,
+            .WRITE = 1,
+        });
+
+        var disposition: std.os.windows.DWORD = 0;
+        var key_handle: ?HKEY = null;
+
+        var stack_allocator = std.heap.stackFallback(
+            1024,
+            self.allocator,
+        );
+        var temp_allocator = stack_allocator.get();
+
+        var res: win32.foundation.WIN32_ERROR = @enumFromInt(win32.system.registry.RegCreateKeyExW(
+            key_present,
+            std.unicode.utf8ToUtf16LeWithNull(
+                temp_allocator,
+                key_name,
+            ) catch return WindowsError.StringConversionFailed,
+            0,
+            std.unicode.utf8ToUtf16LeWithNull(
+                temp_allocator,
+                class,
+            ) catch return WindowsError.StringConversionFailed,
+            use_options,
+            use_desired,
+            security_attributes,
+            &key_handle,
+            &disposition,
+        ));
+        if (out_disposition) |od| {
+            od.* = @intFromEnum(disposition);
+        }
+
+        if (res == .NO_ERROR) {
+            self.close();
+            self.handle = key_handle;
+        }
+
+        return res;
+    }
+
+    pub fn open(
+        self: *RegKey,
+        key_parent: *HKEY,
+        key_name: []const u8,
+        desired: win32.system.registry.REG_SAM_FLAGS,
+    ) WindowsError!win32.foundation.WIN32_ERROR {
+        var key_handle: ?HKEY = null;
+
+        var stack_allocator = std.heap.stackFallback(
+            1024,
+            self.allocator,
+        );
+        var temp_allocator = stack_allocator.get();
+
+        var res: win32.foundation.WIN32_ERROR = @enumFromInt(win32.system.registry.RegOpenKeyExW(
+            key_parent,
+            std.unicode.utf8ToUtf16LeWithNull(
+                temp_allocator,
+                key_name,
+            ) catch return WindowsError.StringConversionFailed,
+            0,
+            desired,
+            &key_handle,
+        ));
+        if (res == .NO_ERROR) {
+            self.close();
+            self.handle = key_handle;
+        }
+        return res;
+    }
+
+    pub fn close(self: *RegKey) win32.foundation.WIN32_ERROR {
+        var res: win32.foundation.WIN32_ERROR = .NO_ERROR;
+        if (self.handle) |handle| {
+            res = @enumFromInt(@as(u32, @bitCast(win32.system.registry.RegCloseKey(handle))));
+            self.handle = null;
+        }
+        return res;
+    }
+
+    pub fn deleteSubKey(self: *RegKey, sub_key: []const u8) WindowsError!win32.foundation.WIN32_ERROR {
+        var stack_allocator = std.heap.stackFallback(
+            1024,
+            self.allocator,
+        );
+        var temp_allocator = stack_allocator.get();
+
+        return @enumFromInt(win32.system.registry.RegDeleteKeyW(
+            self.handle,
+            std.unicode.utf8ToUtf16LeWithNull(
+                temp_allocator,
+                sub_key,
+            ) catch return WindowsError.StringConversionFailed,
+        ));
+    }
+
+    pub fn recurseDeleteKey(self: *RegKey, sub_key: []const u8) win32.foundation.WIN32_ERROR {
+        var key = RegKey.init(self.allocator);
+        var res = key.open(
+            self.handle,
+            sub_key,
+            win32.system.registry.REG_SAM_FLAGS.initFlags(.{
+                .READ = 1,
+                .WRITE = 1,
+            }),
+        );
+        if (res != .NO_ERROR) {
+            return res;
+        }
+
+        var time: win32.foundation.FILETIME = .{ .dwLowDateTime = 0, .dwHighDateTime = 0 };
+        var sub_key_name: [256]std.os.windows.WCHAR = .{0} ** 256;
+        var sub_key_name_len: std.os.windows.DWORD = 256;
+
+        while (win32.system.registry.RegEnumKeyExW(
+            key.handle,
+            0,
+            &sub_key_name,
+            &sub_key_name_len,
+            null,
+            null,
+            null,
+            &time,
+        ) == .NO_ERROR) {
+            sub_key_name[sub_key_name.len - 1] = 0;
+            res = key.recurseDeleteKey(sub_key_name);
+            if (res != .NO_ERROR) {
+                return res;
+            }
+            sub_key_name_len = 256;
+        }
+
+        key.close();
+        return self.deleteSubKey(sub_key);
+    }
+
+    pub fn deleteValue(self: *RegKey, value: []const u8) WindowsError!win32.foundation.WIN32_ERROR {
+        var stack_allocator = std.heap.stackFallback(
+            1024,
+            self.allocator,
+        );
+        var temp_allocator = stack_allocator.get();
+
+        return @enumFromInt(win32.system.registry.RegDeleteValueW(
+            self.handle,
+            std.unicode.utf8ToUtf16LeWithNull(
+                temp_allocator,
+                value,
+            ) catch return WindowsError.StringConversionFailed,
+        ));
+    }
+
+    // outputs into the allocator provided
+    // MUST BE FREED
+    pub fn queryStringValue(self: *RegKey, value_name: []const u8, max_chars: ?u32) WindowsError![]const u8 {
+        var res: win32.foundation.WIN32_ERROR = .NO_ERROR;
+        var data_type: win32.system.registry.REG_VALUE_TYPE = .NONE;
+        var use_max_chars = max_chars orelse 128;
+
+        var stack_allocator = std.heap.stackFallback(
+            2048,
+            self.allocator,
+        );
+        var temp_allocator = stack_allocator.get();
+
+        var data = temp_allocator.alloc(
+            std.os.windows.WCHAR,
+            use_max_chars,
+        ) catch return WindowsError.AllocationFailed;
+
+        res = win32.system.registry.RegQueryValueExW(
+            self.handle,
+            std.unicode.utf8ToUtf16LeWithNull(
+                temp_allocator,
+                value_name,
+            ) catch return WindowsError.StringConversionFailed,
+            null,
+            &data_type,
+            @ptrCast(data),
+            @ptrCast(&use_max_chars),
+        );
+        if (res != .NO_ERROR) {
+            return WindowsError.RegistryError;
+        }
+        if (data_type != .SZ and data_type != .EXPAND_SZ) {
+            return WindowsError.UnexpectedRegistryValueType;
+        }
+
+        return std.unicode.utf16leToUtf8Alloc(
+            self.allocator,
+            data,
+        ) catch return WindowsError.StringConversionFailed;
+    }
+
+    pub fn setStringValue(
+        self: *RegKey,
+        value_name: []const u8,
+        value: []const u8,
+        reg_type: win32.system.registry.REG_VALUE_TYPE,
+    ) WindowsError!win32.foundation.WIN32_ERROR {
+        var stack_allocator = std.heap.stackFallback(
+            1024,
+            self.allocator,
+        );
+        var temp_allocator = stack_allocator.get();
+
+        var value_converted = std.unicode.utf8ToUtf16LeWithNull(
+            temp_allocator,
+            value,
+        ) catch return WindowsError.StringConversionFailed;
+
+        return @enumFromInt(win32.system.registry.RegSetValueExW(
+            self.handle,
+            std.unicode.utf8ToUtf16LeWithNull(
+                temp_allocator,
+                value_name,
+            ) catch return WindowsError.StringConversionFailed,
+            0,
+            reg_type,
+            @ptrCast(value_converted),
+            (value_converted.len + 1) * @sizeOf(std.os.windows.WCHAR),
+        ));
+    }
+
+    pub fn queryDwordValue(self: *RegKey, value_name: []const u8) WindowsError!u32 {
+        var res: win32.foundation.WIN32_ERROR = .NO_ERROR;
+        var data_type: win32.system.registry.REG_VALUE_TYPE = .NONE;
+        var data: u32 = 0;
+        var data_size: std.os.windows.DWORD = @sizeOf(u32);
+
+        var stack_allocator = std.heap.stackFallback(
+            1024,
+            self.allocator,
+        );
+        var temp_allocator = stack_allocator.get();
+
+        res = win32.system.registry.RegQueryValueExW(
+            self.handle,
+            std.unicode.utf8ToUtf16LeWithNull(
+                temp_allocator,
+                value_name,
+            ) catch return WindowsError.StringConversionFailed,
+            null,
+            &data_type,
+            @ptrCast(&data),
+            @ptrCast(&data_size),
+        );
+        if (res != .NO_ERROR) {
+            return WindowsError.RegistryError;
+        }
+        if (data_type != .DWORD) {
+            return WindowsError.UnexpectedRegistryValueType;
+        }
+
+        return data;
+    }
+
+    pub fn setDwordValue(
+        self: *RegKey,
+        value_name: []const u8,
+        value: u32,
+    ) WindowsError!win32.foundation.WIN32_ERROR {
+        return @enumFromInt(win32.system.registry.RegSetValueExW(
+            self.handle,
+            std.unicode.utf8ToUtf16LeWithNull(
+                self.allocator,
+                value_name,
+            ) catch return WindowsError.StringConversionFailed,
+            0,
+            .DWORD,
+            @ptrCast(&value),
+            @sizeOf(u32),
+        ));
+    }
+
+    // omitted binary registry keys
 };
