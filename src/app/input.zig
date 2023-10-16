@@ -52,21 +52,21 @@ pub const Input = struct {
             return &self.buffers[self.current_buffer.load(.Acquire)];
         }
     };
-    allocator: std.mem.Allocator,
-    platform_input: platform.impl.Input = undefined,
-    last_input_type: InputType,
+    allocator: std.mem.Allocator = undefined,
+    platform_input: platform.impl.Input = .{},
+    last_input_type: InputType = .touch,
 
-    mouse_enabled: bool,
-    touch_enabled: bool,
-    keyboard_enabled: bool,
-    gamepad_enabled: bool,
+    mouse_enabled: bool = false,
+    touch_enabled: bool = false,
+    keyboard_enabled: bool = false,
+    gamepad_enabled: bool = false,
 
-    begin_events: BufferedEventsList,
-    change_events: BufferedEventsList,
-    end_events: BufferedEventsList,
-    cleanup_events: BufferedEventsList,
+    begin_events: BufferedEventsList = undefined,
+    change_events: BufferedEventsList = undefined,
+    end_events: BufferedEventsList = undefined,
+    cleanup_events: BufferedEventsList = undefined,
 
-    current_mouse_position: math.Vector2i,
+    current_mouse_position: math.Vector2i = math.Vector2i.zero,
 
     focused_changed_callback: ?FocusedChangedCallback = null,
     input_began_callback: ?InputBeganCallback = null,
@@ -77,8 +77,9 @@ pub const Input = struct {
     touch_ended_callback: ?TouchEndedCallback = null,
     input_type_updated_callback: ?InputTypeUpdatedCallback = null,
 
-    mouse_mode: MouseMode,
-    wrap_mode: WrapMode,
+    mouse_mode: MouseMode = .default,
+    wrap_mode: WrapMode = .auto,
+    mouse_buttons: [5]bool = .{false} ** 5,
 
     const FocusedChangedCallback = *const fn (bool) void;
     const InputBeganCallback = *const fn (InputObject) void;
@@ -91,6 +92,7 @@ pub const Input = struct {
 
     pub fn create(allocator: std.mem.Allocator) !*Input {
         var self: *Input = try allocator.create(Input);
+        self.* = .{};
         errdefer allocator.destroy(self);
         try self.init(allocator);
         return self;
@@ -130,20 +132,6 @@ pub const Input = struct {
         self.change_events = try BufferedEventsList.init(allocator);
         self.end_events = try BufferedEventsList.init(allocator);
         self.cleanup_events = try BufferedEventsList.init(allocator);
-
-        self.current_mouse_position = math.Vector2i.zero;
-
-        self.focused_changed_callback = null;
-        self.input_began_callback = null;
-        self.input_changed_callback = null;
-        self.input_ended_callback = null;
-        self.touch_began_callback = null;
-        self.touch_changed_callback = null;
-        self.touch_ended_callback = null;
-        self.input_type_updated_callback = null;
-
-        self.wrap_mode = .auto;
-        self.mouse_mode = .default;
 
         try self.platform_input.init();
     }
@@ -275,6 +263,10 @@ pub const Input = struct {
             },
             .cancel => {},
         }
+    }
+
+    pub fn getMousePosition(self: *Input) math.Vector2i {
+        return self.current_mouse_position;
     }
 };
 

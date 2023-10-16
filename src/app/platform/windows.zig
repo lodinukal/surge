@@ -19,7 +19,6 @@ const WindowsError = error{
     HwndDestroyFailed,
     ClassRegistrationFailed,
     HInstanceNull,
-    DirectInput8CreateFailed,
     AllocationFailed,
     UnexpectedRegistryValueType,
     RegistryError,
@@ -440,17 +439,12 @@ fn messageBox(
 }
 
 const WindowsInput = struct {
-    is_mouse_captured: bool = false,
-    wrap_mouse_position: math.Vector2f = math.Vector2f.zero,
-    is_mouse_inside: bool = false,
-
-    di_keys: [256]std.os.windows.BYTE = .{0} ** 256,
-
-    di_ptr: ?*win32.devices.human_interface_device.IDirectInput8W = null,
-    di_mouse: ?*win32.devices.human_interface_device.IDirectInputDevice8W = null,
-    di_keyboard: ?*win32.devices.human_interface_device.IDirectInputDevice8W = null,
-
     mouse_button_swap: bool = false,
+    last_pointer_update: win32.foundation.LPARAM = 0,
+    mouse_tracked: bool = false,
+    relative_mouse_mode: bool = false,
+    relative_mouse_mode_warp: bool = false,
+    mouse_button_flags: win32.foundation.WPARAM = 0,
 
     fn getBase(self: *WindowsInput) *app_input.Input {
         return @fieldParentPtr(app_input.Input, "platform_input", self);
@@ -462,22 +456,7 @@ const WindowsInput = struct {
 
     pub fn init(self: *WindowsInput) WindowsError!void {
         var hr: std.os.windows.HRESULT = 0;
-        hr = win32.devices.human_interface_device.DirectInput8Create(
-            try getHInstance(),
-            win32.devices.human_interface_device.DIRECTINPUT_VERSION,
-            win32.devices.human_interface_device.IID_IDirectInput8W,
-            @ptrCast(&self.di_ptr),
-            null,
-        );
-        if (win32.zig.FAILED(hr)) {
-            messageBox(
-                self.allocator(),
-                "Failed to create DirectInput8 object",
-                "Error",
-                .OK,
-            );
-            return WindowsError.DirectInput8CreateFailed;
-        }
+        _ = hr;
 
         var stack_allocator = std.heap.stackFallback(
             1024,
@@ -498,129 +477,67 @@ const WindowsInput = struct {
                 break :blk sbs[0] == '1';
             };
         }
-
-        try self.createMouse();
     }
 
     pub fn deinit(self: *WindowsInput) void {
-        if (self.di_mouse) |m| {
-            _ = m.IDirectInputDevice8W_Unacquire();
-            self.di_mouse = null;
-        }
-        if (self.di_keyboard) |k| {
-            _ = k.IDirectInputDevice8W_Unacquire();
-            self.di_keyboard = null;
-        }
-        if (self.di_ptr) |ptr| {
-            _ = ptr.IUnknown_Release();
-            self.di_ptr = null;
-        }
-    }
-
-    extern const c_dfDIMouse2: win32.devices.human_interface_device.DIDATAFORMAT;
-
-    const di_buffer_size = 2048;
-
-    fn getDiProp(dipdw: *win32.devices.human_interface_device.DIPROPDWORD) void {
-        dipdw.diph.dwSize = @sizeOf(win32.devices.human_interface_device.DIPROPDWORD);
-        dipdw.diph.dwHeaderSize = @sizeOf(win32.devices.human_interface_device.DIPROPHEADER);
-        dipdw.diph.dwObj = 0;
-        dipdw.diph.dwHow = win32.devices.human_interface_device.DIPH_DEVICE;
-        dipdw.dwData = di_buffer_size;
-    }
-
-    fn makeDiProp(x: usize) *const win32.zig.Guid {
-        @setRuntimeSafety(false);
-        return @alignCast(@as(
-            *align(x) const win32.zig.Guid,
-            @ptrFromInt(4),
-        ));
-    }
-
-    const DIPROP_BUFFERSIZE = makeDiProp(1);
-    const DIPROP_AXISMODE = makeDiProp(2);
-
-    fn createMouse(self: *WindowsInput) WindowsError!void {
-        var stack_allocator = std.heap.stackFallback(
-            1024,
-            self.allocator(),
-        );
-        var temp_allocator = stack_allocator.get();
-
-        var hr: std.os.windows.HRESULT = 0;
-        hr = self.di_ptr.?.IDirectInput8W_CreateDevice(
-            &win32.devices.human_interface_device.GUID_SysMouse,
-            &self.di_mouse,
-            null,
-        );
-        if (win32.zig.FAILED(hr)) {
-            messageBox(
-                temp_allocator,
-                "Could not find suitable mouse.",
-                "Error",
-                .OK,
-            );
-            return WindowsError.MouseCreationFailure;
-        }
-
-        hr = self.di_mouse.?.IDirectInputDevice8W_SetDataFormat(&c_dfDIMouse2);
-        if (win32.zig.FAILED(hr)) {
-            messageBox(
-                temp_allocator,
-                "Could not set mouse data format.",
-                "Error",
-                .OK,
-            );
-            return WindowsError.MouseCreationFailure;
-        }
-
-        var dipdw: win32.devices.human_interface_device.DIPROPDWORD = undefined;
-        getDiProp(&dipdw);
-        hr = self.di_mouse.?.IDirectInputDevice8W_SetProperty(
-            DIPROP_BUFFERSIZE,
-            &dipdw.diph,
-        );
-        if (win32.zig.FAILED(hr)) {
-            messageBox(
-                temp_allocator,
-                "Could not set mouse buffer size.",
-                "Error",
-                .OK,
-            );
-            return WindowsError.MouseCreationFailure;
-        }
-    }
-
-    fn acquireMouse(self: *WindowsInput) void {
         _ = self;
     }
 
-    fn centerCursor(self: *WindowsInput) void {
-        self.wrap_mouse_position = math.Vector2f.zero;
+    const MouseEventSource = enum {
+        unknown,
+        mouse,
+        touch,
+        pen,
+    };
+
+    fn mouseEventSource() MouseEventSource {
+        const MI_WP_SIGNATURE = 0xFF515700;
+        const MI_WP_SIGNATURE_MASK = 0xFFFFFF00;
+
+        var extra_info = win32.ui.windows_and_messaging.GetMessageExtraInfo();
+        if ((extra_info & MI_WP_SIGNATURE_MASK) == MI_WP_SIGNATURE) {
+            if ((extra_info & 0x80) != 0) {
+                return .touch;
+            }
+            return .pen;
+        }
+        return .mouse;
     }
 
-    fn onMouseInside(self: *WindowsInput, window: *WindowsWindow) void {
-        if (self.is_mouse_inside) return;
+    const WM_MOUSELEAVE = @as(u32, 675);
 
-        var tme = win32.ui.input.keyboard_and_mouse.TRACKMOUSEEVENT{
-            .cbSize = @sizeOf(win32.ui.input.keyboard_and_mouse.TRACKMOUSEEVENT),
-            .dwFlags = .LEAVE,
-            .hwndTrack = window.hwnd,
-            .dwHoverTime = 0,
-        };
+    fn trackMouse(self: *WindowsInput) void {
+        if (!self.mouse_tracked) {
+            var track_mouse_event: win32.ui.input.keyboard_and_mouse.TRACKMOUSEEVENT = undefined;
+            track_mouse_event.cbSize = @sizeOf(win32.ui.input.keyboard_and_mouse.TRACKMOUSEEVENT);
+            track_mouse_event.dwFlags = .LEAVE;
 
-        if (self.getBase().wrap_mode == .none_and_center) {
-            self.centerCursor();
+            if (win32.ui.input.keyboard_and_mouse.TrackMouseEvent(
+                &track_mouse_event,
+            ) == win32.zig.TRUE) {
+                self.mouse_tracked = true;
+            } else {
+                //TODO: log error
+            }
         }
+    }
 
-        if (win32.ui.input.keyboard_and_mouse.TrackMouseEvent(&tme) == win32.zig.FALSE) return;
+    fn untrackMouse(self: *WindowsInput) void {
+        if (self.mouse_tracked) {
+            var track_mouse_event: win32.ui.input.keyboard_and_mouse.TRACKMOUSEEVENT = undefined;
+            track_mouse_event.cbSize = @sizeOf(win32.ui.input.keyboard_and_mouse.TRACKMOUSEEVENT);
+            track_mouse_event.dwFlags = win32.ui.input.keyboard_and_mouse.TRACKMOUSEEVENT_FLAGS.initFlags(.{
+                .CANCEL = 1,
+                .LEAVE = 1,
+            });
 
-        self.is_mouse_inside = true;
-
-        if (!self.is_mouse_captured) {
-            //TODO: self.acquireMouse
-        } else {
-            //TODO: assert
+            if (win32.ui.input.keyboard_and_mouse.TrackMouseEvent(
+                &track_mouse_event,
+            ) == win32.zig.TRUE) {
+                self.mouse_tracked = false;
+            } else {
+                //TODO: log error
+            }
         }
     }
 
@@ -631,11 +548,25 @@ const WindowsInput = struct {
         wparam: std.os.windows.WPARAM,
         lparam: std.os.windows.LPARAM,
     ) void {
-        _ = lparam;
-        _ = wparam;
+        _ = window;
         switch (msg) {
-            win32.ui.windows_and_messaging.WM_MOUSEMOVE => {
-                self.onMouseInside(window);
+            win32.ui.windows_and_messaging.WM_NCACTIVATE => {
+                const iobj = app_input.InputObject{
+                    .type = .focus,
+                    .input_state = if (wparam == win32.zig.FALSE) .end else .begin,
+                    .source_type = .focus,
+                    .specific_data = .focus,
+                };
+                self.getBase().addEvent(iobj, null) catch {};
+            },
+            win32.ui.windows_and_messaging.WM_ACTIVATE => {
+                const iobj = app_input.InputObject{
+                    .type = .focus,
+                    .input_state = if (loWord(wparam) != win32.ui.windows_and_messaging.WA_INACTIVE) .end else .begin,
+                    .source_type = .focus,
+                    .specific_data = .focus,
+                };
+                self.getBase().addEvent(iobj, null) catch {};
             },
             win32.ui.windows_and_messaging.WM_SETFOCUS => {
                 const iobj = app_input.InputObject{
@@ -646,7 +577,7 @@ const WindowsInput = struct {
                 };
                 self.getBase().addEvent(iobj, null) catch {};
             },
-            win32.ui.windows_and_messaging.WM_KILLFOCUS => {
+            win32.ui.windows_and_messaging.WM_KILLFOCUS, win32.ui.windows_and_messaging.WM_ENTERIDLE => {
                 const iobj = app_input.InputObject{
                     .type = .focus,
                     .input_state = .end,
@@ -655,10 +586,131 @@ const WindowsInput = struct {
                 };
                 self.getBase().addEvent(iobj, null) catch {};
             },
+            win32.ui.windows_and_messaging.WM_POINTERUPDATE => {
+                self.last_pointer_update = lparam;
+            },
+            win32.ui.windows_and_messaging.WM_MOUSEMOVE => {
+                // self.onMouseInside(window);
+                self.trackMouse();
+
+                if (!self.relative_mouse_mode or self.relative_mouse_mode_warp) {
+                    if (mouseEventSource() != .touch and lparam != self.last_pointer_update) {
+                        //TODO(dpi)
+                        var x: f32 = @floatFromInt(@as(i16, @bitCast(loWord(lparam))));
+                        var y: f32 = @floatFromInt(@as(i16, @bitCast(hiWord(lparam))));
+                        var iobj = app_input.InputObject{
+                            .type = .mousemove,
+                            .input_state = .change,
+                            .source_type = .mousemove,
+                            .specific_data = .mousemove,
+                            .position = math.Vector3f.init(x, y, 0),
+                        };
+                        self.getBase().addEvent(iobj, null) catch {};
+                    }
+                }
+            },
+            win32.ui.windows_and_messaging.WM_LBUTTONUP,
+            win32.ui.windows_and_messaging.WM_RBUTTONUP,
+            win32.ui.windows_and_messaging.WM_MBUTTONUP,
+            win32.ui.windows_and_messaging.WM_XBUTTONUP,
+            win32.ui.windows_and_messaging.WM_LBUTTONDOWN,
+            win32.ui.windows_and_messaging.WM_LBUTTONDBLCLK,
+            win32.ui.windows_and_messaging.WM_RBUTTONDOWN,
+            win32.ui.windows_and_messaging.WM_RBUTTONDBLCLK,
+            win32.ui.windows_and_messaging.WM_MBUTTONDOWN,
+            win32.ui.windows_and_messaging.WM_MBUTTONDBLCLK,
+            win32.ui.windows_and_messaging.WM_XBUTTONDOWN,
+            win32.ui.windows_and_messaging.WM_XBUTTONDBLCLK,
+            => {
+                if (!self.relative_mouse_mode or self.relative_mouse_mode_warp) {
+                    if (mouseEventSource() != .touch and lparam != self.last_pointer_update) {
+                        self.processMouseButtonWparam(wparam);
+                    }
+                }
+            },
+
+            WM_MOUSELEAVE => {
+                self.untrackMouse();
+            },
+
             else => {},
         }
     }
+
+    fn processIndividualMouseButtonWparam(
+        self: *WindowsInput,
+        wparam: win32.foundation.WPARAM,
+        button_index: usize,
+        button_flag: u32,
+    ) void {
+        var use_button_index = if (button_index < 2 and self.mouse_button_swap)
+            @as(usize, if (button_index == 0) 1 else 0)
+        else
+            button_index;
+
+        var old_state = self.getBase().mouse_buttons[use_button_index];
+        var new_state = ((wparam & button_flag) != 0);
+        var should_update = (old_state != new_state);
+
+        if (should_update) {
+            self.getBase().mouse_buttons[use_button_index] = new_state;
+
+            var iobj = app_input.InputObject{
+                .type = .mousebutton,
+                .input_state = if (new_state) .begin else .end,
+                .source_type = .mousebutton,
+                .specific_data = .{ .mousebutton = @truncate(use_button_index) },
+            };
+            self.getBase().addEvent(iobj, null) catch {};
+        }
+    }
+
+    fn processMouseButtonWparam(self: *WindowsInput, wparam: win32.foundation.WPARAM) void {
+        if (self.mouse_button_flags != wparam) {
+            self.processIndividualMouseButtonWparam(
+                wparam,
+                0,
+                win32.ui.windows_and_messaging.MK_LBUTTON,
+            );
+            self.processIndividualMouseButtonWparam(
+                wparam,
+                1,
+                win32.ui.windows_and_messaging.MK_RBUTTON,
+            );
+            self.processIndividualMouseButtonWparam(
+                wparam,
+                2,
+                win32.ui.windows_and_messaging.MK_MBUTTON,
+            );
+            self.processIndividualMouseButtonWparam(
+                wparam,
+                3,
+                win32.ui.windows_and_messaging.MK_XBUTTON1,
+            );
+            self.processIndividualMouseButtonWparam(
+                wparam,
+                4,
+                win32.ui.windows_and_messaging.MK_XBUTTON2,
+            );
+
+            self.mouse_button_flags = wparam;
+        }
+    }
 };
+
+inline fn loWord(l: anytype) std.os.windows.WORD {
+    return @truncate(@as(
+        std.os.windows.DWORD,
+        @truncate(@as(usize, @bitCast(l))),
+    ) & 0xffff);
+}
+
+inline fn hiWord(l: anytype) std.os.windows.WORD {
+    return @truncate((@as(
+        std.os.windows.DWORD,
+        @truncate(@as(usize, @bitCast(l))),
+    ) >> 16) & 0xffff);
+}
 
 // Taken from https://github.com/microsoft/Windows-class-samples
 // Transpiled into zig
