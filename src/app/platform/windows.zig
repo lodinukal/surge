@@ -472,8 +472,8 @@ const WindowsInput = struct {
         if (win32.zig.FAILED(hr)) {
             messageBox(
                 self.allocator(),
-                win32.zig.L("Failed to create DirectInput8 object"),
-                win32.zig.L("Error"),
+                "Failed to create DirectInput8 object",
+                "Error",
                 .OK,
             );
             return WindowsError.DirectInput8CreateFailed;
@@ -485,8 +485,8 @@ const WindowsInput = struct {
         );
 
         var mouse_key = RegKey.init(stack_allocator.get());
-        if (mouse_key.open(
-            win32.system.registry.HKEY_CURRENT_USER,
+        if (try mouse_key.open(
+            &win32.system.registry.HKEY_CURRENT_USER,
             "Control Panel\\Mouse",
             .READ,
         ) == .NO_ERROR) {
@@ -504,15 +504,15 @@ const WindowsInput = struct {
 
     pub fn deinit(self: *WindowsInput) void {
         if (self.di_mouse) |m| {
-            m.IDirectInputDevice8W_Unacquire();
+            _ = m.IDirectInputDevice8W_Unacquire();
             self.di_mouse = null;
         }
         if (self.di_keyboard) |k| {
-            k.IDirectInputDevice8W_Unacquire();
+            _ = k.IDirectInputDevice8W_Unacquire();
             self.di_keyboard = null;
         }
         if (self.di_ptr) |ptr| {
-            ptr.IUnknown_Release();
+            _ = ptr.IUnknown_Release();
             self.di_ptr = null;
         }
     }
@@ -531,7 +531,10 @@ const WindowsInput = struct {
 
     fn makeDiProp(x: usize) *const win32.zig.Guid {
         @setRuntimeSafety(false);
-        return @as(*const win32.zig.Guid, @ptrFromInt(x));
+        return @alignCast(@as(
+            *align(x) const win32.zig.Guid,
+            @ptrFromInt(4),
+        ));
     }
 
     const DIPROP_BUFFERSIZE = makeDiProp(1);
@@ -546,8 +549,8 @@ const WindowsInput = struct {
 
         var hr: std.os.windows.HRESULT = 0;
         hr = self.di_ptr.?.IDirectInput8W_CreateDevice(
-            win32.devices.human_interface_device.GUID_SysMouse,
-            &self.di_ptr,
+            &win32.devices.human_interface_device.GUID_SysMouse,
+            &self.di_mouse,
             null,
         );
         if (win32.zig.FAILED(hr)) {
@@ -572,7 +575,7 @@ const WindowsInput = struct {
         }
 
         var dipdw: win32.devices.human_interface_device.DIPROPDWORD = undefined;
-        self.getDiProp(&dipdw);
+        getDiProp(&dipdw);
         hr = self.di_mouse.?.IDirectInputDevice8W_SetProperty(
             DIPROP_BUFFERSIZE,
             &dipdw.diph,
@@ -757,7 +760,7 @@ const RegKey = struct {
 
     pub fn open(
         self: *RegKey,
-        key_parent: *HKEY,
+        key_parent: *const HKEY,
         key_name: []const u8,
         desired: win32.system.registry.REG_SAM_FLAGS,
     ) WindowsError!win32.foundation.WIN32_ERROR {
@@ -770,7 +773,7 @@ const RegKey = struct {
         var temp_allocator = stack_allocator.get();
 
         var res: win32.foundation.WIN32_ERROR = @enumFromInt(win32.system.registry.RegOpenKeyExW(
-            key_parent,
+            key_parent.*,
             std.unicode.utf8ToUtf16LeWithNull(
                 temp_allocator,
                 key_name,
@@ -780,7 +783,7 @@ const RegKey = struct {
             &key_handle,
         ));
         if (res == .NO_ERROR) {
-            self.close();
+            _ = self.close();
             self.handle = key_handle;
         }
         return res;
@@ -885,7 +888,7 @@ const RegKey = struct {
             use_max_chars,
         ) catch return WindowsError.AllocationFailed;
 
-        res = win32.system.registry.RegQueryValueExW(
+        res = @enumFromInt(win32.system.registry.RegQueryValueExW(
             self.handle,
             std.unicode.utf8ToUtf16LeWithNull(
                 temp_allocator,
@@ -895,7 +898,7 @@ const RegKey = struct {
             &data_type,
             @ptrCast(data),
             @ptrCast(&use_max_chars),
-        );
+        ));
         if (res != .NO_ERROR) {
             return WindowsError.RegistryError;
         }
