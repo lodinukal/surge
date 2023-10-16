@@ -81,7 +81,7 @@ pub const Input = struct {
     wrap_mode: WrapMode = .auto,
     mouse_buttons: [5]bool = .{false} ** 5,
 
-    const FocusedChangedCallback = *const fn (bool) void;
+    const FocusedChangedCallback = *const fn (*app.window.Window, bool) void;
     const InputBeganCallback = *const fn (InputObject) void;
     const InputChangedCallback = *const fn (InputObject) void;
     const InputEndedCallback = *const fn (InputObject) void;
@@ -194,7 +194,7 @@ pub const Input = struct {
 
         if (input_object.type == .focus) {
             if (self.focused_changed_callback) |cb| {
-                cb(input_object.input_state == .begin);
+                cb(input_object.specific_data.focus, input_object.input_state == .begin);
             }
             return;
         }
@@ -285,7 +285,7 @@ pub const InputObject = struct {
         mousemove: void,
         touch: u8, // touch id
         keyboard: KeyboardData,
-        focus: void,
+        focus: *app.window.Window,
         accelerometer: void,
         gyro: void,
         gamepad: GamepadButton,
