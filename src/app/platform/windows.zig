@@ -610,10 +610,15 @@ const WindowsInput = struct {
         button_index: usize,
         button_flag: u32,
     ) void {
-        var use_button_index = if (button_index < 2 and self.mouse_button_swap)
-            @as(usize, if (button_index == 0) 1 else 0)
-        else
-            button_index;
+        var use_button_index = button_index;
+
+        if (self.mouse_button_swap) {
+            if (use_button_index == 0) {
+                use_button_index = 1;
+            } else if (use_button_index == 1) {
+                use_button_index = 0;
+            }
+        }
 
         var old_state = self.getBase().mouse_buttons[use_button_index];
         var new_state = ((wparam & button_flag) != 0);
