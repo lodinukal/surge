@@ -1,28 +1,27 @@
 const std = @import("std");
 
 const app = @import("app/app.zig");
-const input = @import("app/input.zig");
 const math = @import("math.zig");
 
 const interface = @import("core/interface.zig");
 
-pub fn focused_changed_callback(focused: bool) void {
-    std.debug.print("focused: {}\n", .{focused});
+pub fn focused_changed_callback(wnd: *app.window.Window, focused: bool) void {
+    std.debug.print("focused: {*} {}\n", .{ wnd, focused });
 }
 
-pub fn input_began_callback(ipo: input.InputObject) void {
+pub fn input_began_callback(ipo: app.input.InputObject) void {
     // std.debug.print("input began: {}\n", .{ipo});
     if (ipo.type == .mousebutton) {
         std.debug.print("mousebutton {} down\n", .{ipo.specific_data.mousebutton});
     }
 }
 
-pub fn input_changed_callback(ipo: input.InputObject) void {
+pub fn input_changed_callback(ipo: app.input.InputObject) void {
     _ = ipo;
     // std.debug.print("input changed: {}\n", .{ipo});
 }
 
-pub fn input_ended_callback(ipo: input.InputObject) void {
+pub fn input_ended_callback(ipo: app.input.InputObject) void {
     // std.debug.print("input ended: {}\n", .{ipo});
     if (ipo.type == .mousebutton) {
         std.debug.print("mousebutton {} up\n", .{ipo.specific_data.mousebutton});
