@@ -1,8 +1,8 @@
 const std = @import("std");
 
-const input = @import("input.zig");
-const window = @import("window.zig");
-const platform = @import("platform.zig");
+pub const input = @import("input.zig");
+pub const window = @import("window.zig");
+pub const platform = @import("platform.zig");
 
 pub const Application = struct {
     allocator: std.mem.Allocator,
