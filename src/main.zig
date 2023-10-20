@@ -12,19 +12,21 @@ pub fn focused_changed_callback(wnd: *app.window.Window, focused: bool) void {
 pub fn input_began_callback(ipo: app.input.InputObject) void {
     // std.debug.print("input began: {}\n", .{ipo});
     if (ipo.type == .mousebutton) {
-        std.debug.print("mousebutton {} down\n", .{ipo.specific_data.mousebutton});
+        std.debug.print("mousebutton {} down\n", .{ipo.data.mousebutton});
     }
 }
 
 pub fn input_changed_callback(ipo: app.input.InputObject) void {
-    _ = ipo;
     // std.debug.print("input changed: {}\n", .{ipo});
+    if (ipo.type == .mousemove) {
+        std.debug.print("{}\n", .{ipo.position});
+    }
 }
 
 pub fn input_ended_callback(ipo: app.input.InputObject) void {
     // std.debug.print("input ended: {}\n", .{ipo});
     if (ipo.type == .mousebutton) {
-        std.debug.print("mousebutton {} up\n", .{ipo.specific_data.mousebutton});
+        std.debug.print("mousebutton {} up\n", .{ipo.data.mousebutton});
     }
 }
 
