@@ -32,6 +32,10 @@ pub fn build(b: *std.Build) void {
         exe.linkSystemLibraryName("Imm32");
         exe.linkSystemLibraryName("Gdi32");
         exe.linkSystemLibraryName("comctl32");
+
+        // GDK
+        // CUrrently uses 221001
+        // exe.c_std = .C11;
     }
     // exe.addSystemIncludePath("");
     // exe.linkLibC();
@@ -79,4 +83,50 @@ pub fn build(b: *std.Build) void {
     // running the unit tests.
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_unit_tests.step);
+}
+
+fn linkGdk(
+    b: *std.Build,
+    exe: *std.Build.Step.Compile,
+    gdk_host_path: ?[]const u8,
+    comptime version: []const u8,
+    comptime arch: []const u8,
+) !void {
+    const using_gdk_host_path = gdk_host_path orelse try std.process.getEnvVarOwned(
+        b.allocator,
+        "GameDK",
+    );
+
+    const gdk_path = try std.fs.path.join(
+        b.allocator,
+        &[_][]const u8{
+            using_gdk_host_path,
+            version,
+            "GRDK/GameKit",
+        },
+    );
+
+    const include_path = try std.fs.path.join(
+        b.allocator,
+        &[_][]const u8{
+            gdk_path,
+            "Include",
+        },
+    );
+
+    const lib_path = try std.fs.path.join(
+        b.allocator,
+        &[_][]const u8{
+            gdk_path,
+            "Lib",
+            arch,
+        },
+    );
+
+    exe.addIncludePath(std.Build.LazyPath{ .path = include_path });
+    exe.addLibraryPath(std.Build.LazyPath{ .path = lib_path });
+
+    exe.linkSystemLibrary("GameInput");
+    exe.linkSystemLibrary("xgameruntime");
+    exe.linkLibC();
 }
