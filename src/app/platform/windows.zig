@@ -162,12 +162,6 @@ const WindowsWindow = struct {
             @ptrCast(self),
         ) orelse return WindowsError.HwndCreationFailed;
 
-        _ = win32.ui.windows_and_messaging.SetWindowLongPtrW(
-            hwnd,
-            .P_USERDATA,
-            @intCast(@intFromPtr(self)),
-        );
-
         return hwnd;
     }
 
@@ -374,9 +368,30 @@ const WindowsWindow = struct {
             var window_opt: ?*WindowsWindow = @ptrFromInt(
                 @as(usize, @bitCast(win32.ui.windows_and_messaging.GetWindowLongPtrW(
                     wnd,
-                    win32.ui.windows_and_messaging.GWLP_USERDATA,
+                    .P_USERDATA,
                 ))),
             );
+            if (msg == win32.ui.windows_and_messaging.WM_NCCREATE and window_opt == null) {
+                const createstruct: *win32.ui.windows_and_messaging.CREATESTRUCTW = @ptrFromInt(
+                    @as(usize, @bitCast(lparam)),
+                );
+                const initdata: ?*WindowsWindow = @alignCast(@ptrCast(
+                    createstruct.lpCreateParams,
+                ));
+                if (initdata == null) {
+                    return 0;
+                }
+                initdata.?.hwnd = wnd;
+                _ = win32.ui.windows_and_messaging.SetWindowLongPtrW(
+                    wnd,
+                    .P_USERDATA,
+                    @as(
+                        std.os.windows.LONG_PTR,
+                        @intCast(@intFromPtr(initdata)),
+                    ),
+                );
+                window_opt = initdata;
+            }
             break :window (window_opt orelse return win32.ui.windows_and_messaging.DefWindowProcW(
                 wnd,
                 msg,
@@ -397,7 +412,12 @@ const WindowsWindow = struct {
             else => {},
         }
 
-        window.getBase().application.input.platform_input.windowProc(window, msg, wparam, lparam);
+        window.getBase().application.input.platform_input.windowProc(
+            window,
+            msg,
+            wparam,
+            lparam,
+        );
 
         return win32.ui.windows_and_messaging.DefWindowProcW(wnd, msg, wparam, lparam);
     }
@@ -411,14 +431,22 @@ fn getHInstance() !win32.foundation.HINSTANCE {
 fn messageBox(
     allocator: std.mem.Allocator,
     title: []const u8,
-    message: []const u8,
+    comptime fmt: []const u8,
+    args: anytype,
     style: win32.ui.windows_and_messaging.MESSAGEBOX_STYLE,
 ) void {
     var stack_allocator = std.heap.stackFallback(
-        1024,
+        2048,
         allocator,
     );
     var temp_allocator = stack_allocator.get();
+
+    var message = std.fmt.bufPrint(
+        temp_allocator.alloc(u8, 512) catch unreachable,
+        fmt,
+        args,
+    ) catch unreachable;
+
     var converted_title = std.unicode.utf8ToUtf16LeWithNull(
         temp_allocator,
         title,
@@ -437,13 +465,30 @@ fn messageBox(
     );
 }
 
+fn reportError(
+    allocator: std.mem.Allocator,
+) void {
+    var err = win32.foundation.GetLastError();
+    messageBox(
+        allocator,
+        "Fatal error",
+        "Program failed with error code\n{}",
+        .{err},
+        win32.ui.windows_and_messaging.MESSAGEBOX_STYLE.initFlags(.{
+            .OK = 1,
+        }),
+    );
+    std.os.exit(1);
+}
+
 const WindowsInput = struct {
     mouse_button_swap: bool = false,
     last_pointer_update: win32.foundation.LPARAM = 0,
+
+    // mouse
     mouse_capture_count: u32 = 0,
-    relative_mouse_mode: bool = false,
-    relative_mouse_mode_warp: bool = false,
     mouse_button_flags: win32.foundation.WPARAM = 0,
+    last_mouse_pos: math.Vector3i = math.Vector3i.zero,
 
     fn getBase(self: *WindowsInput) *app.input.Input {
         return @fieldParentPtr(app.input.Input, "platform_input", self);
@@ -482,6 +527,182 @@ const WindowsInput = struct {
         _ = self;
     }
 
+    fn pushEvent(self: *WindowsInput, iobj: app.input.InputObject) !void {
+        try self.getBase().addEvent(iobj, null);
+    }
+
+    fn loadRawInput(self: *WindowsInput, wnd: win32.foundation.HWND) void {
+        var mouse_device = win32.ui.input.RAWINPUTDEVICE{
+            .usUsagePage = win32.devices.human_interface_device.HID_USAGE_PAGE_GENERIC,
+            .usUsage = win32.devices.human_interface_device.HID_USAGE_GENERIC_MOUSE,
+            .dwFlags = .INPUTSINK,
+            .hwndTarget = wnd,
+        };
+        var res = win32.ui.input.RegisterRawInputDevices(
+            @ptrCast(&mouse_device),
+            1,
+            @sizeOf(win32.ui.input.RAWINPUTDEVICE),
+        );
+        if (res == win32.zig.FALSE) {
+            reportError(self.allocator());
+        }
+    }
+
+    fn processInput(self: *WindowsInput, window: *WindowsWindow, lparam: win32.foundation.LPARAM) void {
+        var ri: win32.ui.input.RAWINPUT = undefined;
+        var size: u32 = @sizeOf(win32.ui.input.RAWINPUT);
+        _ = win32.ui.input.GetRawInputData(
+            @ptrFromInt(@as(usize, @bitCast(lparam))),
+            .INPUT,
+            @ptrCast(&ri),
+            &size,
+            @sizeOf(win32.ui.input.RAWINPUTHEADER),
+        );
+
+        switch (ri.header.dwType) {
+            @intFromEnum(win32.ui.input.RID_DEVICE_INFO_TYPE.MOUSE) => {
+                self.processMouseRawInput(window, ri);
+            },
+            else => {},
+        }
+    }
+
+    fn processMouseRawInput(self: *WindowsInput, window: *WindowsWindow, ri: win32.ui.input.RAWINPUT) void {
+        var mouse = ri.data.mouse;
+
+        if ((mouse.usFlags & win32.devices.human_interface_device.MOUSE_MOVE_ABSOLUTE) != 0) {
+            var rect: win32.foundation.RECT = undefined;
+            if ((mouse.usFlags & win32.devices.human_interface_device.MOUSE_VIRTUAL_DESKTOP) != 0) {
+                rect.left = win32.ui.windows_and_messaging.GetSystemMetrics(
+                    win32.ui.windows_and_messaging.SM_XVIRTUALSCREEN,
+                );
+                rect.top = win32.ui.windows_and_messaging.GetSystemMetrics(
+                    win32.ui.windows_and_messaging.SM_YVIRTUALSCREEN,
+                );
+                rect.right = win32.ui.windows_and_messaging.GetSystemMetrics(
+                    win32.ui.windows_and_messaging.SM_CXVIRTUALSCREEN,
+                );
+                rect.bottom = win32.ui.windows_and_messaging.GetSystemMetrics(
+                    win32.ui.windows_and_messaging.SM_CYVIRTUALSCREEN,
+                );
+            } else {
+                rect.left = 0;
+                rect.top = 0;
+                rect.right = win32.ui.windows_and_messaging.GetSystemMetrics(
+                    win32.ui.windows_and_messaging.SM_CXSCREEN,
+                );
+                rect.bottom = win32.ui.windows_and_messaging.GetSystemMetrics(
+                    win32.ui.windows_and_messaging.SM_CYSCREEN,
+                );
+            }
+
+            var absolute_x = win32.system.windows_programming.MulDiv(
+                mouse.lLastX,
+                rect.right,
+                65535,
+            ) + rect.left;
+            var absolute_y = win32.system.windows_programming.MulDiv(
+                mouse.lLastY,
+                rect.bottom,
+                65535,
+            ) + rect.top;
+
+            // Screen to Client
+            var p = win32.foundation.POINT{
+                .x = absolute_x,
+                .y = absolute_y,
+            };
+            _ = win32.graphics.gdi.ScreenToClient(
+                window.hwnd,
+                &p,
+            );
+            absolute_x = p.x;
+            absolute_y = p.y;
+
+            const abs_pos = math.Vector3i.init(absolute_x, absolute_y, null);
+            self.pushEvent(.{
+                .type = .mousemove,
+                .input_state = .change,
+                .position = abs_pos.convert(f32),
+                .delta = self.last_mouse_pos.sub(abs_pos).convert(f32),
+                .data = .mousemove,
+            }) catch {};
+            self.last_mouse_pos = abs_pos;
+        } else if (mouse.lLastX != 0 and mouse.lLastY != 0) {
+            var relative_x = mouse.lLastX;
+            var relative_y = mouse.lLastY;
+
+            const mouse_pos = getMousePosition(window.hwnd.?);
+            self.pushEvent(.{
+                .type = .mousemove,
+                .input_state = .change,
+                .position = mouse_pos.convert(f32),
+                .delta = math.Vector3i.init(relative_x, relative_y, null).convert(f32),
+                .data = .mousemove,
+            }) catch {};
+            self.last_mouse_pos = mouse_pos;
+        }
+
+        if ((mouse.Anonymous.Anonymous.usButtonFlags & win32.ui.windows_and_messaging.RI_MOUSE_WHEEL) != 0 or
+            (mouse.Anonymous.Anonymous.usButtonFlags & win32.ui.windows_and_messaging.RI_MOUSE_HWHEEL) != 0)
+        {
+            const default_scroll_lines: u32 = 3;
+            const default_scroll_chars: u32 = 1;
+            const wheel_delta: f32 = @floatFromInt(@as(
+                i16,
+                @bitCast(mouse.Anonymous.Anonymous.usButtonData),
+            ));
+            var delta = wheel_delta / @as(
+                f32,
+                @floatFromInt(win32.ui.windows_and_messaging.WHEEL_DELTA),
+            );
+
+            const is_horizontal = (mouse.Anonymous.Anonymous.usButtonFlags &
+                win32.ui.windows_and_messaging.RI_MOUSE_HWHEEL) != 0;
+            if (is_horizontal) {
+                var scroll_chars = default_scroll_chars;
+                _ = win32.ui.windows_and_messaging.SystemParametersInfoW(
+                    .GETWHEELSCROLLCHARS,
+                    0,
+                    @ptrCast(&scroll_chars),
+                    @enumFromInt(0),
+                );
+                delta *= @floatFromInt(scroll_chars);
+                self.pushEvent(.{
+                    .type = .mousewheel,
+                    .input_state = .change,
+                    .delta = math.Vector3f.init(delta, 0, 0),
+                    .data = .mousewheel,
+                }) catch {};
+            } else {
+                var scroll_lines = default_scroll_lines;
+                _ = win32.ui.windows_and_messaging.SystemParametersInfoW(
+                    .GETWHEELSCROLLLINES,
+                    0,
+                    @ptrCast(&scroll_lines),
+                    @enumFromInt(0),
+                );
+                delta *= @floatFromInt(scroll_lines);
+                self.pushEvent(.{
+                    .type = .mousewheel,
+                    .input_state = .change,
+                    .delta = math.Vector3f.init(0, delta, 0),
+                    .data = .mousewheel,
+                }) catch {};
+            }
+        }
+    }
+
+    fn getMousePosition(wnd: win32.foundation.HWND) math.Vector3i {
+        var p: win32.foundation.POINT = undefined;
+        _ = win32.ui.windows_and_messaging.GetCursorPos(&p);
+        _ = win32.graphics.gdi.ScreenToClient(
+            wnd,
+            &p,
+        );
+        return math.Vector3i.init(p.x, p.y, 0);
+    }
+
     const MouseEventSource = enum {
         unknown,
         mouse,
@@ -489,7 +710,7 @@ const WindowsInput = struct {
         pen,
     };
 
-    fn mouseEventSource() MouseEventSource {
+    fn recentMouseEventSource() MouseEventSource {
         const MI_WP_SIGNATURE = 0xFF515700;
         const MI_WP_SIGNATURE_MASK = 0xFFFFFF00;
 
@@ -505,14 +726,14 @@ const WindowsInput = struct {
 
     const WM_MOUSELEAVE = @as(u32, 675);
 
-    fn captureMouseButton(self: *WindowsInput, wnd: win32.foundation.HWND) void {
+    fn captureInput(self: *WindowsInput, wnd: win32.foundation.HWND) void {
         self.mouse_capture_count += 1;
         if (self.mouse_capture_count == 1) {
             _ = win32.ui.input.keyboard_and_mouse.SetCapture(wnd);
         }
     }
 
-    fn releaseMouseButton(self: *WindowsInput) void {
+    fn releaseInput(self: *WindowsInput) void {
         self.mouse_capture_count -= 1;
         if (self.mouse_capture_count == 0) {
             _ = win32.ui.input.keyboard_and_mouse.ReleaseCapture();
@@ -528,8 +749,7 @@ const WindowsInput = struct {
         var iobj = app.input.InputObject{
             .type = .focus,
             .input_state = if (focused) .begin else .end,
-            .source_type = .focus,
-            .specific_data = .{ .focus = window.getBase() },
+            .data = .{ .focus = window.getBase() },
         };
         self.getBase().addEvent(iobj, null) catch {};
     }
@@ -542,6 +762,9 @@ const WindowsInput = struct {
         lparam: std.os.windows.LPARAM,
     ) void {
         switch (msg) {
+            win32.ui.windows_and_messaging.WM_CREATE => {
+                self.loadRawInput(window.hwnd.?);
+            },
             win32.ui.windows_and_messaging.WM_NCACTIVATE => {
                 self.setWindowFocus(window, wparam == win32.zig.FALSE);
             },
@@ -560,23 +783,7 @@ const WindowsInput = struct {
             win32.ui.windows_and_messaging.WM_POINTERUPDATE => {
                 self.last_pointer_update = lparam;
             },
-            win32.ui.windows_and_messaging.WM_MOUSEMOVE => {
-                if (!self.relative_mouse_mode or self.relative_mouse_mode_warp) {
-                    if (mouseEventSource() != .touch and lparam != self.last_pointer_update) {
-                        //TODO(dpi)
-                        var x: f32 = @floatFromInt(@as(i16, @bitCast(loWord(lparam))));
-                        var y: f32 = @floatFromInt(@as(i16, @bitCast(hiWord(lparam))));
-                        var iobj = app.input.InputObject{
-                            .type = .mousemove,
-                            .input_state = .change,
-                            .source_type = .mousemove,
-                            .specific_data = .mousemove,
-                            .position = math.Vector3f.init(x, y, 0),
-                        };
-                        self.getBase().addEvent(iobj, null) catch {};
-                    }
-                }
-            },
+
             win32.ui.windows_and_messaging.WM_LBUTTONUP,
             win32.ui.windows_and_messaging.WM_RBUTTONUP,
             win32.ui.windows_and_messaging.WM_MBUTTONUP,
@@ -590,11 +797,15 @@ const WindowsInput = struct {
             win32.ui.windows_and_messaging.WM_XBUTTONDOWN,
             win32.ui.windows_and_messaging.WM_XBUTTONDBLCLK,
             => {
-                if (!self.relative_mouse_mode or self.relative_mouse_mode_warp) {
-                    if (mouseEventSource() != .touch and lparam != self.last_pointer_update) {
-                        self.processMouseButtonWparam(window.hwnd.?, wparam);
-                    }
+                // if (!self.relative_mouse_mode or self.relative_mouse_mode_warp) {
+                if (recentMouseEventSource() != .touch and lparam != self.last_pointer_update) {
+                    self.processMouseButtonWparam(window.hwnd.?, wparam);
                 }
+                // }
+            },
+
+            win32.ui.windows_and_messaging.WM_INPUT => {
+                self.processInput(window, lparam);
             },
 
             WM_MOUSELEAVE => {},
@@ -628,16 +839,15 @@ const WindowsInput = struct {
             self.getBase().mouse_buttons[use_button_index] = new_state;
 
             if (new_state) {
-                self.captureMouseButton(wnd);
+                self.captureInput(wnd);
             } else {
-                self.releaseMouseButton();
+                self.releaseInput();
             }
 
             var iobj = app.input.InputObject{
                 .type = .mousebutton,
                 .input_state = if (new_state) .begin else .end,
-                .source_type = .mousebutton,
-                .specific_data = .{ .mousebutton = @truncate(use_button_index) },
+                .data = .{ .mousebutton = @truncate(use_button_index) },
             };
             self.getBase().addEvent(iobj, null) catch {};
         }
