@@ -19,6 +19,33 @@ pub fn Vector2(comptime T: type) type {
             return Self{ .x = x orelse 0, .y = y orelse 0 };
         }
 
+        pub inline fn convert(self: Self, comptime U: type) Vector2(U) {
+            const this_floating_point = comptime Self.is_floating_point;
+            const other_floating_point = comptime std.meta.trait.isFloat(U);
+            if (this_floating_point and other_floating_point) {
+                return Vector2(U){
+                    .x = @as(U, @floatCast(self.x)),
+                    .y = @as(U, @floatCast(self.y)),
+                };
+            } else if (this_floating_point and !other_floating_point) {
+                return Vector2(U){
+                    .x = @as(U, @intFromFloat(self.x)),
+                    .y = @as(U, @intFromFloat(self.y)),
+                };
+            } else if (!this_floating_point and other_floating_point) {
+                return Vector2(U){
+                    .x = @as(U, @floatFromInt(self.x)),
+                    .y = @as(U, @floatFromInt(self.y)),
+                };
+            } else if (!this_floating_point and !other_floating_point) {
+                return Vector2(U){
+                    .x = @as(U, @intCast(self.x)),
+                    .y = @as(U, @intCast(self.y)),
+                };
+            }
+            return undefined;
+        }
+
         pub inline fn fromIntPoint(comptime U: type, p: int_point.IntPoint(U)) Self {
             return Self{ .x = @floatFromInt(p.x), .y = @floatFromInt(p.y) };
         }

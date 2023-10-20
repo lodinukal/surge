@@ -7,6 +7,8 @@ pub fn Vector3(comptime T: type) type {
         y: T = 0,
         z: T = 0,
 
+        pub const is_floating_point = std.meta.trait.isFloat(T);
+
         pub const zero = Self{ .x = 0, .y = 0, .z = 0 };
         pub const one = Self{ .x = 1, .y = 1, .z = 1 };
         pub const degree45 = Self{ .x = 0.70710678118, .y = 0.70710678118, .z = 0 };
@@ -17,6 +19,37 @@ pub fn Vector3(comptime T: type) type {
 
         pub inline fn init(x: ?T, y: ?T, z: ?T) Self {
             return Self{ .x = x orelse 0, .y = y orelse 0, .z = z orelse 0 };
+        }
+
+        pub inline fn convert(self: Self, comptime U: type) Vector3(U) {
+            const this_floating_point = comptime Self.is_floating_point;
+            const other_floating_point = comptime std.meta.trait.isFloat(U);
+            if (this_floating_point and other_floating_point) {
+                return Vector3(U){
+                    .x = @as(U, @floatCast(self.x)),
+                    .y = @as(U, @floatCast(self.y)),
+                    .z = @as(U, @floatCast(self.z)),
+                };
+            } else if (this_floating_point and !other_floating_point) {
+                return Vector3(U){
+                    .x = @as(U, @intFromFloat(self.x)),
+                    .y = @as(U, @intFromFloat(self.y)),
+                    .z = @as(U, @intFromFloat(self.z)),
+                };
+            } else if (!this_floating_point and other_floating_point) {
+                return Vector3(U){
+                    .x = @as(U, @floatFromInt(self.x)),
+                    .y = @as(U, @floatFromInt(self.y)),
+                    .z = @as(U, @floatFromInt(self.z)),
+                };
+            } else if (!this_floating_point and !other_floating_point) {
+                return Vector3(U){
+                    .x = @as(U, @intCast(self.x)),
+                    .y = @as(U, @intCast(self.y)),
+                    .z = @as(U, @intCast(self.z)),
+                };
+            }
+            return undefined;
         }
 
         pub inline fn eql(self: Self, other: Self, tolerance: ?T) bool {
