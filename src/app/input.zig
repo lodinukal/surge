@@ -194,7 +194,7 @@ pub const Input = struct {
 
         if (input_object.type == .focus) {
             if (self.focused_changed_callback) |cb| {
-                cb(input_object.specific_data.focus, input_object.input_state == .begin);
+                cb(input_object.data.focus, input_object.input_state == .begin);
             }
             return;
         }
@@ -274,12 +274,11 @@ pub const Input = struct {
 
 pub const InputObject = struct {
     type: InputType,
-    source_type: InputType,
     input_state: InputState = .begin,
     position: math.Vector3f = math.Vector3f.init(null, null, null),
     delta: math.Vector3f = math.Vector3f.init(null, null, null),
     modifiers: Modifiers = .{},
-    specific_data: union(InputType) {
+    data: union(InputType) {
         mousebutton: u8, // mouse button index
         mousewheel: void,
         mousemove: void,
@@ -296,7 +295,7 @@ pub const InputObject = struct {
     },
 
     pub fn deinit(self: *InputObject) void {
-        switch (self.specific_data) {
+        switch (self.data) {
             .textinput => |ti| {
                 ti.allocator.free(ti.text);
             },
@@ -328,16 +327,16 @@ pub const KeyboardData = struct {
 };
 
 pub const InputType = enum(u8) {
-    mousebutton = 1,
-    mousewheel = 2,
-    mousemove = 3,
-    touch = 4,
-    keyboard = 5,
-    focus = 6,
-    accelerometer = 7,
-    gyro = 8,
-    gamepad = 9,
-    textinput = 10,
+    mousebutton,
+    mousewheel,
+    mousemove,
+    touch,
+    keyboard,
+    focus,
+    accelerometer,
+    gyro,
+    gamepad,
+    textinput,
 };
 
 pub const WrapMode = enum(u8) {
