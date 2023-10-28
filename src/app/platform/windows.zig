@@ -4,7 +4,13 @@ const app = @import("../app.zig");
 const math = @import("../../math.zig");
 const util = @import("../../util.zig");
 
-const win32 = @import("win32");
+const winapi = @import("win32");
+const winapizig = winapi.zig;
+const win32 = winapi.windows.win32;
+const gdk = winapi.microsoft.gdk;
+
+const FALSE = win32.foundation.FALSE;
+const TRUE = win32.foundation.TRUE;
 
 pub const Error = WindowsError;
 pub const Application = WindowsApplication;
@@ -72,7 +78,7 @@ const WindowsApplication = struct {
 
 const WindowsWindow = struct {
     var class_registered: bool = false;
-    const class_name = win32.zig.L("app");
+    const class_name = winapizig.L("app");
 
     hwnd: ?win32.foundation.HWND = null,
 
@@ -359,7 +365,7 @@ const WindowsWindow = struct {
     }
 
     fn windowProc(
-        wnd: win32.foundation.HWND,
+        wnd: ?win32.foundation.HWND,
         msg: std.os.windows.UINT,
         wparam: std.os.windows.WPARAM,
         lparam: std.os.windows.LPARAM,
@@ -405,7 +411,7 @@ const WindowsWindow = struct {
                 window.setShouldClose(true);
             },
             win32.ui.windows_and_messaging.WM_KEYDOWN => {
-                if (wparam == @intFromEnum(win32.ui.input.keyboard_and_mouse.VK_F)) {
+                if (wparam == @intFromEnum(win32.ui.input.keyboard_and_mouse.VIRTUAL_KEY.F)) {
                     window.setFullscreen(if (window.descriptor.fullscreen_mode == .windowed) .fullscreen else .windowed);
                 }
             },
@@ -425,7 +431,7 @@ const WindowsWindow = struct {
 
 fn getHInstance() !win32.foundation.HINSTANCE {
     var module = win32.system.library_loader.GetModuleHandleW(null);
-    return module orelse return WindowsError.HInstanceNull;
+    return module;
 }
 
 fn messageBox(
@@ -490,6 +496,9 @@ const WindowsInput = struct {
     mouse_button_flags: win32.foundation.WPARAM = 0,
     last_mouse_pos: math.Vector3i = math.Vector3i.zero,
 
+    game_input: ?*gdk.IGameInput = null,
+    mouse: ?*gdk.IGameInputDevice = null,
+
     fn getBase(self: *WindowsInput) *app.input.Input {
         return @fieldParentPtr(app.input.Input, "platform_input", self);
     }
@@ -521,10 +530,19 @@ const WindowsInput = struct {
                 break :blk sbs[0] == '1';
             };
         }
+
+        if (winapizig.FAILED(gdk.GameInputCreate(&self.game_input))) {
+            reportError(self.allocator());
+        }
     }
 
     pub fn deinit(self: *WindowsInput) void {
-        _ = self;
+        if (self.mouse) |mouse| {
+            _ = mouse.IUnknown_Release();
+        }
+        if (self.game_input) |game_input| {
+            _ = game_input.IUnknown_Release();
+        }
     }
 
     fn pushEvent(self: *WindowsInput, iobj: app.input.InputObject) !void {
@@ -543,153 +561,67 @@ const WindowsInput = struct {
             1,
             @sizeOf(win32.ui.input.RAWINPUTDEVICE),
         );
-        if (res == win32.zig.FALSE) {
+        if (res == FALSE) {
             reportError(self.allocator());
         }
     }
 
-    fn processInput(self: *WindowsInput, window: *WindowsWindow, lparam: win32.foundation.LPARAM) void {
-        var ri: win32.ui.input.RAWINPUT = undefined;
-        var size: u32 = @sizeOf(win32.ui.input.RAWINPUT);
-        _ = win32.ui.input.GetRawInputData(
-            @ptrFromInt(@as(usize, @bitCast(lparam))),
-            .INPUT,
-            @ptrCast(&ri),
-            &size,
-            @sizeOf(win32.ui.input.RAWINPUTHEADER),
-        );
+    pub fn process(self: *WindowsInput) void {
+        // var ri: win32.ui.input.RAWINPUT = undefined;
+        // var size: u32 = @sizeOf(win32.ui.input.RAWINPUT);
+        // _ = win32.ui.input.GetRawInputData(
+        //     @ptrFromInt(@as(usize, @bitCast(lparam))),
+        //     .INPUT,
+        //     @ptrCast(&ri),
+        //     &size,
+        //     @sizeOf(win32.ui.input.RAWINPUTHEADER),
+        // );
 
-        switch (ri.header.dwType) {
-            @intFromEnum(win32.ui.input.RID_DEVICE_INFO_TYPE.MOUSE) => {
-                self.processMouseRawInput(window, ri);
-            },
-            else => {},
-        }
+        // switch (ri.header.dwType) {
+        //     @intFromEnum(win32.ui.input.RID_DEVICE_INFO_TYPE.MOUSE) => {
+        //         self.processMouseRawInput(window, ri);
+        //     },
+        //     else => {},
+        // }
+
+        self.processMouse();
     }
 
-    fn processMouseRawInput(self: *WindowsInput, window: *WindowsWindow, ri: win32.ui.input.RAWINPUT) void {
-        var mouse = ri.data.mouse;
+    fn processMouse(self: *WindowsInput) void {
+        var reading: ?*gdk.IGameInputReading = null;
+        defer _ = if (reading) |r| r.IUnknown_Release();
 
-        if ((mouse.usFlags & win32.devices.human_interface_device.MOUSE_MOVE_ABSOLUTE) != 0) {
-            var rect: win32.foundation.RECT = undefined;
-            if ((mouse.usFlags & win32.devices.human_interface_device.MOUSE_VIRTUAL_DESKTOP) != 0) {
-                rect.left = win32.ui.windows_and_messaging.GetSystemMetrics(
-                    win32.ui.windows_and_messaging.SM_XVIRTUALSCREEN,
-                );
-                rect.top = win32.ui.windows_and_messaging.GetSystemMetrics(
-                    win32.ui.windows_and_messaging.SM_YVIRTUALSCREEN,
-                );
-                rect.right = win32.ui.windows_and_messaging.GetSystemMetrics(
-                    win32.ui.windows_and_messaging.SM_CXVIRTUALSCREEN,
-                );
-                rect.bottom = win32.ui.windows_and_messaging.GetSystemMetrics(
-                    win32.ui.windows_and_messaging.SM_CYVIRTUALSCREEN,
-                );
-            } else {
-                rect.left = 0;
-                rect.top = 0;
-                rect.right = win32.ui.windows_and_messaging.GetSystemMetrics(
-                    win32.ui.windows_and_messaging.SM_CXSCREEN,
-                );
-                rect.bottom = win32.ui.windows_and_messaging.GetSystemMetrics(
-                    win32.ui.windows_and_messaging.SM_CYSCREEN,
-                );
+        if (winapizig.SUCCEEDED(self.game_input.?.IGameInput_GetCurrentReading(
+            .Mouse,
+            self.mouse,
+            &reading,
+        ))) {
+            if (self.mouse == null) {
+                reading.?.IGameInputReading_GetDevice(&self.mouse);
             }
 
-            var absolute_x = win32.system.windows_programming.MulDiv(
-                mouse.lLastX,
-                rect.right,
-                65535,
-            ) + rect.left;
-            var absolute_y = win32.system.windows_programming.MulDiv(
-                mouse.lLastY,
-                rect.bottom,
-                65535,
-            ) + rect.top;
-
-            // Screen to Client
-            var p = win32.foundation.POINT{
-                .x = absolute_x,
-                .y = absolute_y,
-            };
-            _ = win32.graphics.gdi.ScreenToClient(
-                window.hwnd,
-                &p,
-            );
-            absolute_x = p.x;
-            absolute_y = p.y;
-
-            const abs_pos = math.Vector3i.init(absolute_x, absolute_y, null);
-            self.pushEvent(.{
-                .type = .mousemove,
-                .input_state = .change,
-                .position = abs_pos.convert(f32),
-                .delta = self.last_mouse_pos.sub(abs_pos).convert(f32),
-                .data = .mousemove,
-            }) catch {};
-            self.last_mouse_pos = abs_pos;
-        } else if (mouse.lLastX != 0 and mouse.lLastY != 0) {
-            var relative_x = mouse.lLastX;
-            var relative_y = mouse.lLastY;
-
-            const mouse_pos = getMousePosition(window.hwnd.?);
-            self.pushEvent(.{
-                .type = .mousemove,
-                .input_state = .change,
-                .position = mouse_pos.convert(f32),
-                .delta = math.Vector3i.init(relative_x, relative_y, null).convert(f32),
-                .data = .mousemove,
-            }) catch {};
-            self.last_mouse_pos = mouse_pos;
-        }
-
-        if ((mouse.Anonymous.Anonymous.usButtonFlags & win32.ui.windows_and_messaging.RI_MOUSE_WHEEL) != 0 or
-            (mouse.Anonymous.Anonymous.usButtonFlags & win32.ui.windows_and_messaging.RI_MOUSE_HWHEEL) != 0)
-        {
-            const default_scroll_lines: u32 = 3;
-            const default_scroll_chars: u32 = 1;
-            const wheel_delta: f32 = @floatFromInt(@as(
-                i16,
-                @bitCast(mouse.Anonymous.Anonymous.usButtonData),
-            ));
-            var delta = wheel_delta / @as(
-                f32,
-                @floatFromInt(win32.ui.windows_and_messaging.WHEEL_DELTA),
-            );
-
-            const is_horizontal = (mouse.Anonymous.Anonymous.usButtonFlags &
-                win32.ui.windows_and_messaging.RI_MOUSE_HWHEEL) != 0;
-            if (is_horizontal) {
-                var scroll_chars = default_scroll_chars;
-                _ = win32.ui.windows_and_messaging.SystemParametersInfoW(
-                    .GETWHEELSCROLLCHARS,
-                    0,
-                    @ptrCast(&scroll_chars),
-                    @enumFromInt(0),
-                );
-                delta *= @floatFromInt(scroll_chars);
-                self.pushEvent(.{
-                    .type = .mousewheel,
-                    .input_state = .change,
-                    .delta = math.Vector3f.init(delta, 0, 0),
-                    .data = .mousewheel,
-                }) catch {};
-            } else {
-                var scroll_lines = default_scroll_lines;
-                _ = win32.ui.windows_and_messaging.SystemParametersInfoW(
-                    .GETWHEELSCROLLLINES,
-                    0,
-                    @ptrCast(&scroll_lines),
-                    @enumFromInt(0),
-                );
-                delta *= @floatFromInt(scroll_lines);
-                self.pushEvent(.{
-                    .type = .mousewheel,
-                    .input_state = .change,
-                    .delta = math.Vector3f.init(0, delta, 0),
-                    .data = .mousewheel,
-                }) catch {};
+            var state: gdk.GameInputMouseState = undefined;
+            if (reading.?.IGameInputReading_GetMouseState(&state)) {
+                // var any = false;
+                // inline for (.{
+                //     .LeftButton,
+                //     .RightButton,
+                //     .MiddleButton,
+                //     .Button4,
+                //     .Button5,
+                // }) |x| {
+                //     if ((@intFromEnum(state.buttons) & @intFromEnum(@as(gdk.GameInputMouseButtons, x))) != 0) {
+                //         std.debug.print("{}\n", .{x});
+                //         any = true;
+                //     }
+                // }
+                // if (!any) {
+                //     std.debug.print("----\n", .{});
+                // }
             }
+        } else if (self.mouse) |mouse| {
+            _ = mouse.IUnknown_Release();
+            self.mouse = null;
         }
     }
 
@@ -766,7 +698,7 @@ const WindowsInput = struct {
                 self.loadRawInput(window.hwnd.?);
             },
             win32.ui.windows_and_messaging.WM_NCACTIVATE => {
-                self.setWindowFocus(window, wparam == win32.zig.FALSE);
+                self.setWindowFocus(window, wparam == FALSE);
             },
             win32.ui.windows_and_messaging.WM_ACTIVATE => {
                 self.setWindowFocus(
@@ -804,9 +736,7 @@ const WindowsInput = struct {
                 // }
             },
 
-            win32.ui.windows_and_messaging.WM_INPUT => {
-                self.processInput(window, lparam);
-            },
+            win32.ui.windows_and_messaging.WM_INPUT => {},
 
             WM_MOUSELEAVE => {},
 
@@ -854,37 +784,38 @@ const WindowsInput = struct {
     }
 
     fn processMouseButtonWparam(self: *WindowsInput, wnd: win32.foundation.HWND, wparam: win32.foundation.WPARAM) void {
+        _ = wnd;
         if (self.mouse_button_flags != wparam) {
-            self.processIndividualMouseButtonWparam(
-                wnd,
-                wparam,
-                0,
-                win32.ui.windows_and_messaging.MK_LBUTTON,
-            );
-            self.processIndividualMouseButtonWparam(
-                wnd,
-                wparam,
-                1,
-                win32.ui.windows_and_messaging.MK_RBUTTON,
-            );
-            self.processIndividualMouseButtonWparam(
-                wnd,
-                wparam,
-                2,
-                win32.ui.windows_and_messaging.MK_MBUTTON,
-            );
-            self.processIndividualMouseButtonWparam(
-                wnd,
-                wparam,
-                3,
-                win32.ui.windows_and_messaging.MK_XBUTTON1,
-            );
-            self.processIndividualMouseButtonWparam(
-                wnd,
-                wparam,
-                4,
-                win32.ui.windows_and_messaging.MK_XBUTTON2,
-            );
+            // self.processIndividualMouseButtonWparam(
+            //     wnd,
+            //     wparam,
+            //     0,
+            //     win32.ui.windows_and_messaging.MK_LBUTTON,
+            // );
+            // self.processIndividualMouseButtonWparam(
+            //     wnd,
+            //     wparam,
+            //     1,
+            //     win32.ui.windows_and_messaging.MK_RBUTTON,
+            // );
+            // self.processIndividualMouseButtonWparam(
+            //     wnd,
+            //     wparam,
+            //     2,
+            //     win32.ui.windows_and_messaging.MK_MBUTTON,
+            // );
+            // self.processIndividualMouseButtonWparam(
+            //     wnd,
+            //     wparam,
+            //     3,
+            //     win32.ui.windows_and_messaging.MK_XBUTTON1,
+            // );
+            // self.processIndividualMouseButtonWparam(
+            //     wnd,
+            //     wparam,
+            //     4,
+            //     win32.ui.windows_and_messaging.MK_XBUTTON2,
+            // );
 
             self.mouse_button_flags = wparam;
         }
@@ -1017,7 +948,7 @@ const RegKey = struct {
         );
         var temp_allocator = stack_allocator.get();
 
-        var res: win32.foundation.WIN32_ERROR = @enumFromInt(win32.system.registry.RegOpenKeyExW(
+        var res: win32.foundation.WIN32_ERROR = win32.system.registry.RegOpenKeyExW(
             key_parent.*,
             std.unicode.utf8ToUtf16LeWithNull(
                 temp_allocator,
@@ -1026,7 +957,7 @@ const RegKey = struct {
             0,
             desired,
             &key_handle,
-        ));
+        );
         if (res == .NO_ERROR) {
             _ = self.close();
             self.handle = key_handle;
@@ -1037,7 +968,7 @@ const RegKey = struct {
     pub fn close(self: *RegKey) win32.foundation.WIN32_ERROR {
         var res: win32.foundation.WIN32_ERROR = .NO_ERROR;
         if (self.handle) |handle| {
-            res = @enumFromInt(@as(u32, @bitCast(win32.system.registry.RegCloseKey(handle))));
+            res = win32.system.registry.RegCloseKey(handle);
             self.handle = null;
         }
         return res;
@@ -1133,7 +1064,7 @@ const RegKey = struct {
             use_max_chars,
         ) catch return WindowsError.AllocationFailed;
 
-        res = @enumFromInt(win32.system.registry.RegQueryValueExW(
+        res = win32.system.registry.RegQueryValueExW(
             self.handle,
             std.unicode.utf8ToUtf16LeWithNull(
                 temp_allocator,
@@ -1143,7 +1074,7 @@ const RegKey = struct {
             &data_type,
             @ptrCast(data),
             @ptrCast(&use_max_chars),
-        ));
+        );
         if (res != .NO_ERROR) {
             return WindowsError.RegistryError;
         }

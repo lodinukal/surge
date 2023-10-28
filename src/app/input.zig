@@ -245,6 +245,8 @@ pub const Input = struct {
     }
 
     pub fn process(self: *Input) void {
+        self.platform_input.process();
+
         self.processInputSlice(&self.begin_events, .begin);
         self.processInputSlice(&self.change_events, .change);
         self.processInputSlice(&self.end_events, .end);
