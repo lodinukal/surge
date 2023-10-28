@@ -33,6 +33,9 @@ pub fn build(b: *std.Build) void {
         exe.linkSystemLibraryName("Gdi32");
         exe.linkSystemLibraryName("comctl32");
 
+        // June 2023 Update 3
+        linkGdk(b, exe, null, "230603", "amd64") catch unreachable;
+
         // GDK
         // CUrrently uses 221001
         // exe.c_std = .C11;
@@ -106,14 +109,6 @@ fn linkGdk(
         },
     );
 
-    const include_path = try std.fs.path.join(
-        b.allocator,
-        &[_][]const u8{
-            gdk_path,
-            "Include",
-        },
-    );
-
     const lib_path = try std.fs.path.join(
         b.allocator,
         &[_][]const u8{
@@ -123,7 +118,6 @@ fn linkGdk(
         },
     );
 
-    exe.addIncludePath(std.Build.LazyPath{ .path = include_path });
     exe.addLibraryPath(std.Build.LazyPath{ .path = lib_path });
 
     exe.linkSystemLibrary("GameInput");
