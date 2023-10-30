@@ -26,8 +26,6 @@ const WindowsError = error{
     AllocationFailed,
     UnexpectedRegistryValueType,
     RegistryError,
-
-    MouseCreationFailure,
 };
 
 const WindowsApplication = struct {
@@ -498,6 +496,7 @@ const WindowsInput = struct {
 
     game_input: ?*gdk.IGameInput = null,
     mouse: ?*gdk.IGameInputDevice = null,
+    keyboard: ?*gdk.IGameInputDevice = null,
 
     fn getBase(self: *WindowsInput) *app.input.Input {
         return @fieldParentPtr(app.input.Input, "platform_input", self);
@@ -540,6 +539,9 @@ const WindowsInput = struct {
         if (self.mouse) |mouse| {
             _ = mouse.IUnknown_Release();
         }
+        if (self.keyboard) |keyboard| {
+            _ = keyboard.IUnknown_Release();
+        }
         if (self.game_input) |game_input| {
             _ = game_input.IUnknown_Release();
         }
@@ -567,24 +569,8 @@ const WindowsInput = struct {
     }
 
     pub fn process(self: *WindowsInput) void {
-        // var ri: win32.ui.input.RAWINPUT = undefined;
-        // var size: u32 = @sizeOf(win32.ui.input.RAWINPUT);
-        // _ = win32.ui.input.GetRawInputData(
-        //     @ptrFromInt(@as(usize, @bitCast(lparam))),
-        //     .INPUT,
-        //     @ptrCast(&ri),
-        //     &size,
-        //     @sizeOf(win32.ui.input.RAWINPUTHEADER),
-        // );
-
-        // switch (ri.header.dwType) {
-        //     @intFromEnum(win32.ui.input.RID_DEVICE_INFO_TYPE.MOUSE) => {
-        //         self.processMouseRawInput(window, ri);
-        //     },
-        //     else => {},
-        // }
-
         self.processMouse();
+        self.processKeyboard();
     }
 
     fn processMouse(self: *WindowsInput) void {
@@ -596,36 +582,36 @@ const WindowsInput = struct {
             self.mouse,
             &reading,
         ))) {
-            if (self.mouse == null) {
-                reading.?.IGameInputReading_GetDevice(&self.mouse);
-            }
-
             var state: gdk.GameInputMouseState = undefined;
-            if (reading.?.IGameInputReading_GetMouseState(&state)) {
-                // var any = false;
-                // inline for (.{
-                //     .LeftButton,
-                //     .RightButton,
-                //     .MiddleButton,
-                //     .Button4,
-                //     .Button5,
-                // }) |x| {
-                //     if ((@intFromEnum(state.buttons) & @intFromEnum(@as(gdk.GameInputMouseButtons, x))) != 0) {
-                //         std.debug.print("{}\n", .{x});
-                //         any = true;
-                //     }
-                // }
-                // if (!any) {
-                //     std.debug.print("----\n", .{});
-                // }
-            }
+            if (reading.?.IGameInputReading_GetMouseState(&state)) {}
         } else if (self.mouse) |mouse| {
             _ = mouse.IUnknown_Release();
             self.mouse = null;
         }
     }
 
-    fn getMousePosition(wnd: win32.foundation.HWND) math.Vector3i {
+    fn processKeyboard(self: *WindowsInput) void {
+        var reading: ?*gdk.IGameInputReading = null;
+        defer _ = if (reading) |r| r.IUnknown_Release();
+
+        if (winapizig.SUCCEEDED(self.game_input.?.IGameInput_GetCurrentReading(
+            .Keyboard,
+            self.keyboard,
+            &reading,
+        ))) {
+            var state: [16]gdk.GameInputKeyState = undefined;
+            const key_count = reading.?.IGameInputReading_GetKeyState(16, @ptrCast(&state));
+            for (0..key_count) |index| {
+                var current_state = state[index];
+                std.debug.print("pressed {} at index {}\n", .{ current_state, index });
+            }
+        } else if (self.keyboard) |keyboard| {
+            _ = keyboard.IUnknown_Release();
+            self.keyboard = null;
+        }
+    }
+
+    fn getMouseRelativePosition(wnd: win32.foundation.HWND) math.Vector3i {
         var p: win32.foundation.POINT = undefined;
         _ = win32.ui.windows_and_messaging.GetCursorPos(&p);
         _ = win32.graphics.gdi.ScreenToClient(
