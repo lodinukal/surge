@@ -21,6 +21,8 @@ pub const Platform = enum {
     none,
 
     pub fn fromTag(target: std.Target) Platform {
+        if (std.meta.trait.hasDecls(root, .{"target_override"}))
+            return root.target_override;
         return switch (target.os.tag) {
             .windows => if (std.meta.trait.hasDecls(root, .{"xbox"}))
                 .xboxone
@@ -48,5 +50,6 @@ else
     Platform.fromTag(builtin.target);
 pub const impl = switch (this_platform) {
     .windows => @import("./platform/windows.zig"),
+    .xboxone => @import("./platform/windows.zig"),
     inline else => @compileError("Unsupported OS"),
 };

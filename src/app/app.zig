@@ -6,6 +6,7 @@ pub const platform = @import("platform.zig");
 
 pub const Application = struct {
     allocator: std.mem.Allocator,
+    frame_allocator: ?std.mem.Allocator = null,
 
     platform_application: platform.impl.Application = undefined,
     input: *input.Input = undefined,
@@ -15,6 +16,10 @@ pub const Application = struct {
         app.allocator = allocator;
         try app.init();
         return app;
+    }
+
+    pub fn setFrameAllocator(self: *Application, allocator: ?std.mem.Allocator) void {
+        self.frame_allocator = allocator;
     }
 
     pub fn destroy(self: *Application) void {

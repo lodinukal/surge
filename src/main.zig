@@ -14,13 +14,16 @@ pub fn input_began_callback(ipo: app.input.InputObject) void {
     if (ipo.type == .mousebutton) {
         std.debug.print("mousebutton {} down\n", .{ipo.data.mousebutton});
     }
+    if (ipo.type == .textinput) {
+        if (ipo.data.textinput == .short) {
+            std.debug.print("{}\n", .{ipo.data.textinput.short});
+        }
+    }
 }
 
 pub fn input_changed_callback(ipo: app.input.InputObject) void {
     // std.debug.print("input changed: {}\n", .{ipo});
-    if (ipo.type == .mousemove) {
-        std.debug.print("{}\n", .{ipo.position});
-    }
+    _ = ipo;
 }
 
 pub fn input_ended_callback(ipo: app.input.InputObject) void {

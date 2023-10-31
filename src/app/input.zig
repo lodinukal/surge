@@ -52,6 +52,14 @@ pub const Input = struct {
             return &self.buffers[self.current_buffer.load(.Acquire)];
         }
     };
+
+    const MouseState = struct {
+        buttons: [5]bool = .{false} ** 5,
+        position: math.Vector2i = math.Vector2i.init(0, 0),
+        scroll: i32 = 0,
+        mode: MouseMode = .absolute,
+    };
+
     allocator: std.mem.Allocator = undefined,
     platform_input: platform.impl.Input = .{},
     last_input_type: InputType = .touch,
@@ -66,7 +74,7 @@ pub const Input = struct {
     end_events: BufferedEventsList = undefined,
     cleanup_events: BufferedEventsList = undefined,
 
-    current_mouse_position: math.Vector2i = math.Vector2i.zero,
+    mouse_state: MouseState = .{},
 
     focused_changed_callback: ?FocusedChangedCallback = null,
     input_began_callback: ?InputBeganCallback = null,
@@ -76,10 +84,6 @@ pub const Input = struct {
     touch_changed_callback: ?TouchChangedCallback = null,
     touch_ended_callback: ?TouchEndedCallback = null,
     input_type_updated_callback: ?InputTypeUpdatedCallback = null,
-
-    mouse_mode: MouseMode = .default,
-    wrap_mode: WrapMode = .auto,
-    mouse_buttons: [5]bool = .{false} ** 5,
 
     const FocusedChangedCallback = *const fn (*app.window.Window, bool) void;
     const InputBeganCallback = *const fn (InputObject) void;
@@ -183,7 +187,7 @@ pub const Input = struct {
     fn updateCurrentMousePosition(self: *Input, input_object: *InputObject) void {
         if (input_object.type == .mousemove) {
             var rounded = input_object.position.round();
-            self.current_mouse_position = math.Vector2i.init(@intFromFloat(rounded.x), @intFromFloat(rounded.y));
+            self.mouse_state.position = math.Vector2i.init(@intFromFloat(rounded.x), @intFromFloat(rounded.y));
         }
     }
 
@@ -290,9 +294,12 @@ pub const InputObject = struct {
         accelerometer: void,
         gyro: void,
         gamepad: GamepadButton,
-        textinput: struct {
-            allocator: std.mem.Allocator,
-            text: []const u8,
+        textinput: union(enum) {
+            short: u8,
+            long: struct {
+                allocator: std.mem.Allocator,
+                text: []const u8,
+            },
         },
     },
 
@@ -349,10 +356,9 @@ pub const WrapMode = enum(u8) {
     none,
 };
 
-pub const MouseMode = enum(u8) {
-    default,
-    lock_center,
-    lock_current,
+const MouseMode = enum {
+    absolute,
+    relative,
 };
 
 pub const InputState = enum(u8) {
@@ -382,8 +388,8 @@ pub const InputState = enum(u8) {
 //    misrepresented as being the original software.
 // 3. This notice may not be removed or altered from any source distribution.
 
-const ScanCode = u8;
-const KeyCode = enum(u16) {
+pub const ScanCode = u8;
+pub const KeyCode = enum(u16) {
     unknown = 0,
     backspace = 8,
     tab = 9,

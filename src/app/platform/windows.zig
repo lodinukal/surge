@@ -492,11 +492,6 @@ const WindowsInput = struct {
     // mouse
     mouse_capture_count: u32 = 0,
     mouse_button_flags: win32.foundation.WPARAM = 0,
-    last_mouse_pos: math.Vector3i = math.Vector3i.zero,
-
-    game_input: ?*gdk.IGameInput = null,
-    mouse: ?*gdk.IGameInputDevice = null,
-    keyboard: ?*gdk.IGameInputDevice = null,
 
     fn getBase(self: *WindowsInput) *app.input.Input {
         return @fieldParentPtr(app.input.Input, "platform_input", self);
@@ -514,37 +509,19 @@ const WindowsInput = struct {
             1024,
             self.allocator(),
         );
+        _ = stack_allocator;
 
-        var mouse_key = RegKey.init(stack_allocator.get());
-        if (try mouse_key.open(
-            &win32.system.registry.HKEY_CURRENT_USER,
-            "Control Panel\\Mouse",
-            .READ,
-        ) == .NO_ERROR) {
-            self.mouse_button_swap = blk: {
-                var sbs = (mouse_key.queryStringValue(
-                    "SwapMouseButtons",
-                    256,
-                ) catch break :blk false);
-                break :blk sbs[0] == '1';
-            };
-        }
+        self.mouse_button_swap = win32.ui.windows_and_messaging.GetSystemMetrics(
+            .SWAPBUTTON,
+        ) != 0;
 
-        if (winapizig.FAILED(gdk.GameInputCreate(&self.game_input))) {
-            reportError(self.allocator());
-        }
+        // if (winapizig.FAILED(gdk.GameInputCreate(&self.game_input))) {
+        //     reportError(self.allocator());
+        // }
     }
 
     pub fn deinit(self: *WindowsInput) void {
-        if (self.mouse) |mouse| {
-            _ = mouse.IUnknown_Release();
-        }
-        if (self.keyboard) |keyboard| {
-            _ = keyboard.IUnknown_Release();
-        }
-        if (self.game_input) |game_input| {
-            _ = game_input.IUnknown_Release();
-        }
+        _ = self;
     }
 
     fn pushEvent(self: *WindowsInput, iobj: app.input.InputObject) !void {
@@ -569,46 +546,7 @@ const WindowsInput = struct {
     }
 
     pub fn process(self: *WindowsInput) void {
-        self.processMouse();
-        self.processKeyboard();
-    }
-
-    fn processMouse(self: *WindowsInput) void {
-        var reading: ?*gdk.IGameInputReading = null;
-        defer _ = if (reading) |r| r.IUnknown_Release();
-
-        if (winapizig.SUCCEEDED(self.game_input.?.IGameInput_GetCurrentReading(
-            .Mouse,
-            self.mouse,
-            &reading,
-        ))) {
-            var state: gdk.GameInputMouseState = undefined;
-            if (reading.?.IGameInputReading_GetMouseState(&state)) {}
-        } else if (self.mouse) |mouse| {
-            _ = mouse.IUnknown_Release();
-            self.mouse = null;
-        }
-    }
-
-    fn processKeyboard(self: *WindowsInput) void {
-        var reading: ?*gdk.IGameInputReading = null;
-        defer _ = if (reading) |r| r.IUnknown_Release();
-
-        if (winapizig.SUCCEEDED(self.game_input.?.IGameInput_GetCurrentReading(
-            .Keyboard,
-            self.keyboard,
-            &reading,
-        ))) {
-            var state: [16]gdk.GameInputKeyState = undefined;
-            const key_count = reading.?.IGameInputReading_GetKeyState(16, @ptrCast(&state));
-            for (0..key_count) |index| {
-                var current_state = state[index];
-                std.debug.print("pressed {} at index {}\n", .{ current_state, index });
-            }
-        } else if (self.keyboard) |keyboard| {
-            _ = keyboard.IUnknown_Release();
-            self.keyboard = null;
-        }
+        _ = self;
     }
 
     fn getMouseRelativePosition(wnd: win32.foundation.HWND) math.Vector3i {
@@ -689,7 +627,7 @@ const WindowsInput = struct {
             win32.ui.windows_and_messaging.WM_ACTIVATE => {
                 self.setWindowFocus(
                     window,
-                    loWord(wparam) != win32.ui.windows_and_messaging.WA_INACTIVE,
+                    LOWORD(@intCast(wparam)) != win32.ui.windows_and_messaging.WA_INACTIVE,
                 );
             },
             win32.ui.windows_and_messaging.WM_SETFOCUS => {
@@ -715,14 +653,36 @@ const WindowsInput = struct {
             win32.ui.windows_and_messaging.WM_XBUTTONDOWN,
             win32.ui.windows_and_messaging.WM_XBUTTONDBLCLK,
             => {
-                // if (!self.relative_mouse_mode or self.relative_mouse_mode_warp) {
                 if (recentMouseEventSource() != .touch and lparam != self.last_pointer_update) {
                     self.processMouseButtonWparam(window.hwnd.?, wparam);
                 }
-                // }
             },
 
-            win32.ui.windows_and_messaging.WM_INPUT => {},
+            win32.ui.windows_and_messaging.WM_KEYDOWN => self.postKeyEvent(wparam, lparam, true),
+            win32.ui.windows_and_messaging.WM_KEYUP => self.postKeyEvent(wparam, lparam, false),
+            win32.ui.windows_and_messaging.WM_CHAR => {
+                var iobj = app.input.InputObject{
+                    .type = .textinput,
+                    .input_state = .begin,
+                    .data = .{ .textinput = .{ .short = @truncate(wparam) } },
+                };
+                self.getBase().addEvent(iobj, null) catch {};
+            },
+
+            win32.ui.windows_and_messaging.WM_MOUSEWHEEL => {
+                var iobj = app.input.InputObject{
+                    .type = .mousewheel,
+                    .input_state = .begin,
+                    .data = .mousewheel,
+                    .delta = math.Vector3f.init(
+                        null,
+                        @floatFromInt(HIWORD(@intCast(wparam)) / win32.ui.windows_and_messaging.WHEEL_DELTA),
+                        null,
+                    ),
+                };
+                self.getBase().addEvent(iobj, null) catch {};
+            },
+            win32.ui.windows_and_messaging.WM_MOUSEMOVE => self.postLocalMouseMotion(lparam),
 
             WM_MOUSELEAVE => {},
 
@@ -730,12 +690,27 @@ const WindowsInput = struct {
         }
     }
 
+    fn postKeyEvent(self: *WindowsInput, wparam: std.os.windows.WPARAM, lparam: std.os.windows.LPARAM, down: bool) void {
+        var iobj = app.input.InputObject{
+            .type = .keyboard,
+            .input_state = if (down) .begin else .end,
+            .data = .{
+                .keyboard = .{
+                    .down = down,
+                    .keycode = windowsToKeycode(lparam, wparam),
+                    .scancode = @truncate(@as(usize, @bitCast(lparam >> 16)) & 0xff),
+                },
+            },
+        };
+        self.getBase().addEvent(iobj, null) catch {};
+    }
+
     fn processIndividualMouseButtonWparam(
         self: *WindowsInput,
         wnd: win32.foundation.HWND,
         wparam: win32.foundation.WPARAM,
         button_index: usize,
-        button_flag: u32,
+        button_flag: win32.system.system_services.MODIFIERKEYS_FLAGS,
     ) void {
         var use_button_index = button_index;
 
@@ -747,12 +722,12 @@ const WindowsInput = struct {
             }
         }
 
-        var old_state = self.getBase().mouse_buttons[use_button_index];
-        var new_state = ((wparam & button_flag) != 0);
+        var old_state = self.getBase().mouse_state.buttons[use_button_index];
+        var new_state = ((wparam & @as(usize, @intFromEnum(button_flag))) != 0);
         var should_update = (old_state != new_state);
 
         if (should_update) {
-            self.getBase().mouse_buttons[use_button_index] = new_state;
+            self.getBase().mouse_state.buttons[use_button_index] = new_state;
 
             if (new_state) {
                 self.captureInput(wnd);
@@ -770,56 +745,371 @@ const WindowsInput = struct {
     }
 
     fn processMouseButtonWparam(self: *WindowsInput, wnd: win32.foundation.HWND, wparam: win32.foundation.WPARAM) void {
-        _ = wnd;
         if (self.mouse_button_flags != wparam) {
-            // self.processIndividualMouseButtonWparam(
-            //     wnd,
-            //     wparam,
-            //     0,
-            //     win32.ui.windows_and_messaging.MK_LBUTTON,
-            // );
-            // self.processIndividualMouseButtonWparam(
-            //     wnd,
-            //     wparam,
-            //     1,
-            //     win32.ui.windows_and_messaging.MK_RBUTTON,
-            // );
-            // self.processIndividualMouseButtonWparam(
-            //     wnd,
-            //     wparam,
-            //     2,
-            //     win32.ui.windows_and_messaging.MK_MBUTTON,
-            // );
-            // self.processIndividualMouseButtonWparam(
-            //     wnd,
-            //     wparam,
-            //     3,
-            //     win32.ui.windows_and_messaging.MK_XBUTTON1,
-            // );
-            // self.processIndividualMouseButtonWparam(
-            //     wnd,
-            //     wparam,
-            //     4,
-            //     win32.ui.windows_and_messaging.MK_XBUTTON2,
-            // );
+            self.processIndividualMouseButtonWparam(
+                wnd,
+                wparam,
+                0,
+                .LBUTTON,
+            );
+            self.processIndividualMouseButtonWparam(
+                wnd,
+                wparam,
+                1,
+                .RBUTTON,
+            );
+            self.processIndividualMouseButtonWparam(
+                wnd,
+                wparam,
+                2,
+                .MBUTTON,
+            );
+            self.processIndividualMouseButtonWparam(
+                wnd,
+                wparam,
+                3,
+                .XBUTTON1,
+            );
+            self.processIndividualMouseButtonWparam(
+                wnd,
+                wparam,
+                4,
+                .XBUTTON2,
+            );
 
             self.mouse_button_flags = wparam;
         }
     }
+
+    fn postLocalMouseMotion(self: *WindowsInput, lparam: std.os.windows.LPARAM) void {
+        const x: i32 = GET_X_LPARAM(lparam);
+        const y: i32 = GET_Y_LPARAM(lparam);
+
+        const last_pos = self.getBase().mouse_state.position;
+
+        var iobj = app.input.InputObject{
+            .type = .mousemove,
+            .input_state = .change,
+            .data = .mousemove,
+            .position = math.Vector3f.init(@floatFromInt(x), @floatFromInt(y), null),
+            .delta = math.Vector3f.init(@floatFromInt(x - last_pos.x), @floatFromInt(y - last_pos.y), null),
+        };
+
+        const converted_pos = iobj.position.convert(i32);
+        self.getBase().mouse_state.position = math.Vector2i.init(converted_pos.x, converted_pos.y);
+        self.getBase().addEvent(iobj, null) catch {};
+    }
+
+    fn postGlobalMouseMotion(self: *WindowsInput, wnd: win32.foundation.HWND, lparam: std.os.windows.LPARAM) void {
+        var raw: win32.ui.input.RAWINPUT = undefined;
+        var raw_size: std.os.windows.UINT = @sizeOf(win32.ui.input.RAWINPUT);
+        _ = win32.ui.input.GetRawInputData(
+            @ptrCast(&lparam),
+            .INPUT,
+            &raw,
+            &raw_size,
+            @sizeOf(win32.ui.input.RAWINPUTHEADER),
+        );
+
+        if (raw.header.dwType == win32.ui.input.RIM_TYPEMOUSE) {
+            const mouse = raw.data.mouse;
+            if (mouse.usFlags == win32.devices.human_interface_device.MOUSE_MOVE_RELATIVE) {
+                const dx = mouse.lLastX;
+                const dy = mouse.lLastY;
+
+                const new_pos = blk: {
+                    const new_pos_v3 = self.getMouseRelativePosition(wnd);
+                    break :blk math.Vector2i.init(new_pos_v3.x, new_pos_v3.y);
+                };
+
+                var iobj = app.input.InputObject{
+                    .type = .mousemove,
+                    .input_state = .change,
+                    .data = .mousemove,
+                    .position = new_pos,
+                    .delta = .{
+                        .x = @floatFromInt(dx),
+                        .y = @floatFromInt(dy),
+                    },
+                };
+
+                self.getBase().mouse_state.position = iobj.position;
+                self.getBase().addEvent(iobj, null) catch {};
+            }
+        }
+    }
+
+    fn windowsToKeycode(lparam: std.os.windows.LPARAM, wparam: std.os.windows.WPARAM) app.input.KeyCode {
+        const scancode = (lparam >> 16) & 0xFF;
+        const extended = (lparam & (1 << 24)) != 0;
+
+        var code = vkeyToKeyCode(wparam);
+
+        if (code == .unknown and scancode <= 127) {
+            code = keycode_map_table[@bitCast(scancode)];
+            code = blk: {
+                if (extended) {
+                    switch (code) {
+                        .@"return" => break :blk .kp_enter,
+                        .lalt => break :blk .ralt,
+                        .lctrl => break :blk .rctrl,
+                        .slash => break :blk .kp_divide,
+                        .capslock => break :blk .kp_plus,
+                        else => {},
+                    }
+                } else {
+                    switch (code) {
+                        .home => break :blk .kp7,
+                        .up => break :blk .kp8,
+                        .pageup => break :blk .kp9,
+                        .left => break :blk .kp4,
+                        .right => break :blk .kp6,
+                        .end => break :blk .kp1,
+                        .down => break :blk .kp2,
+                        .pagedown => break :blk .kp3,
+                        .insert => break :blk .kp0,
+                        .delete => break :blk .kp_period,
+                        .print => break :blk .kp_multiply,
+                        else => {},
+                    }
+                }
+
+                break :blk code;
+            };
+        }
+
+        return code;
+    }
+
+    fn vkeyToKeyCode(wparam: std.os.windows.WPARAM) app.input.KeyCode {
+        const VK = win32.ui.input.keyboard_and_mouse.VIRTUAL_KEY;
+        return switch (@as(VK, @enumFromInt(wparam))) {
+            VK.MODECHANGE => .mode,
+            // VK.SELECT => .select,
+            // VK.EXECUTE => .run,
+            VK.HELP => .help,
+            VK.PAUSE => .pause,
+            // VK.NUMLOCK => .numlock,
+
+            VK.F13 => .f13,
+            VK.F14 => .f14,
+            VK.F15 => .f15,
+            // VK.F16 => .f16,
+            // VK.F17 => .f17,
+            // VK.F18 => .f18,
+            // VK.F19 => .f19,
+            // VK.F20 => .f20,
+            // VK.F21 => .f21,
+            // VK.F22 => .f22,
+            // VK.F23 => .f23,
+            // VK.F24 => .f24,
+
+            VK.OEM_NEC_EQUAL => .kp_equals,
+            // VK.BROWSER_BACK => .ac_back,
+            // VK.BROWSER_FORWARD => .ac_forward,
+            // VK.BROWSER_REFRESH => .ac_refresh,
+            // VK.BROWSER_STOP => .ac_stop,
+            // VK.BROWSER_SEARCH => .ac_search,
+            // VK.BROWSER_FAVORITES => .ac_bookmarks,
+            // VK.BROWSER_HOME => .ac_home,
+            // VK.VOLUME_MUTE => .audiomute,
+            // VK.VOLUME_DOWN => .volumedown,
+            // VK.VOLUME_UP => .volumeup,
+
+            // VK.MEDIA_NEXT_TRACK => .audionext,
+            // VK.MEDIA_PREV_TRACK => .audioprev,
+            // VK.MEDIA_STOP => .audiostop,
+            // VK.MEDIA_PLAY_PAUSE => .audioplay,
+            // VK.LAUNCH_MAIL => .mail,
+            // VK.LAUNCH_MEDIA_SELECT => .media,
+
+            // VK.OEM_102 => .nonusbackslash,
+
+            // VK.ATTN => .sysreq,
+            // VK.CRSEL => .crsel,
+            // VK.EXSEL => .exsel,
+            VK.OEM_CLEAR => .clear,
+
+            // VK.LAUNCH_APP1 => .app1,
+            // VK.LAUNCH_APP2 => .app2,
+
+            else => .unknown,
+        };
+    }
+
+    const keycode_map_table = [_]app.input.KeyCode{
+        .unknown,
+        .escape,
+        .@"1",
+        .@"2",
+        .@"3",
+        .@"4",
+        .@"5",
+        .@"6",
+        .@"7",
+        .@"8",
+        .@"9",
+        .@"0",
+        .minus,
+        .equals,
+        .backspace,
+        .tab,
+        .q,
+        .w,
+        .e,
+        .r,
+        .t,
+        .y,
+        .u,
+        .i,
+        .o,
+        .p,
+        .leftbracket,
+        .rightbracket,
+        .@"return",
+        .lctrl,
+        .a,
+        .s,
+        .d,
+        .f,
+        .g,
+        .h,
+        .j,
+        .k,
+        .l,
+        .semicolon,
+        .quote,
+        .backquote,
+        .lshift,
+        .backslash,
+        .z,
+        .x,
+        .c,
+        .v,
+        .b,
+        .n,
+        .m,
+        .comma,
+        .period,
+        .slash,
+        .rshift,
+        .print,
+        .lalt,
+        .space,
+        .capslock,
+        .f1,
+        .f2,
+        .f3,
+        .f4,
+        .f5,
+        .f6,
+        .f7,
+        .f8,
+        .f9,
+        .f10,
+        .unknown, // .numlockclear,
+        .unknown, // .scrolllock,
+        .home,
+        .up,
+        .pageup,
+        .kp_minus,
+        .left,
+        .kp5,
+        .right,
+        .kp_plus,
+        .end,
+        .down,
+        .pagedown,
+        .insert,
+        .delete,
+        .unknown,
+        .unknown,
+        .unknown, // .nonusbackslash,
+        .f11,
+        .f12,
+        .pause,
+        .unknown,
+        .unknown, // .lgui,
+        .unknown, // .rgui,
+        .unknown, // .application,
+        .unknown,
+        .unknown,
+        .unknown,
+        .unknown,
+        .unknown,
+        .unknown,
+        .f13,
+        .f14,
+        .f15,
+        .unknown, // .f16,
+        .unknown, // .f17,
+        .unknown, // .f18,
+        .unknown, // .f19,
+        .unknown,
+        .unknown,
+        .unknown,
+        .unknown,
+        .unknown,
+        .unknown, //.international2,
+        .unknown,
+        .unknown,
+        .unknown, //.international1,
+        .unknown,
+        .unknown,
+        .unknown,
+        .unknown,
+        .unknown,
+        .unknown, //.international4,
+        .unknown,
+        .unknown, //.international5,
+        .unknown,
+        .unknown, //.international3,
+        .unknown,
+        .unknown,
+    };
 };
 
-inline fn loWord(l: anytype) std.os.windows.WORD {
-    return @truncate(@as(
-        std.os.windows.DWORD,
-        @truncate(@as(usize, @bitCast(l))),
-    ) & 0xffff);
+pub inline fn LOWORD(l: usize) std.os.windows.WORD {
+    return std.zig.c_translation.cast(
+        std.os.windows.WORD,
+        std.zig.c_translation.cast(
+            std.os.windows.DWORD_PTR,
+            l,
+        ) & 0xffff,
+    );
 }
-
-inline fn hiWord(l: anytype) std.os.windows.WORD {
-    return @truncate((@as(
-        std.os.windows.DWORD,
-        @truncate(@as(usize, @bitCast(l))),
-    ) >> 16) & 0xffff);
+pub inline fn HIWORD(l: usize) std.os.windows.WORD {
+    return std.zig.c_translation.cast(
+        std.os.windows.WORD,
+        (std.zig.c_translation.cast(
+            std.os.windows.DWORD_PTR,
+            l,
+        ) >> @as(c_int, 16)) & 0xffff,
+    );
+}
+pub inline fn LOBYTE(w: anytype) std.os.windows.BYTE {
+    return std.zig.c_translation.cast(std.os.windows.BYTE, std.zig.c_translation.cast(
+        std.os.windows.DWORD_PTR,
+        w,
+    ) & 0xff);
+}
+pub inline fn HIBYTE(w: anytype) std.os.windows.BYTE {
+    return std.zig.c_translation.cast(std.os.windows.BYTE, (std.zig.c_translation.cast(
+        std.os.windows.DWORD_PTR,
+        w,
+    ) >> @as(c_int, 8)) & 0xff);
+}
+pub inline fn GET_X_LPARAM(lp: isize) c_int {
+    return std.zig.c_translation.cast(c_int, std.zig.c_translation.cast(
+        c_short,
+        LOWORD(@bitCast(lp)),
+    ));
+}
+pub inline fn GET_Y_LPARAM(lp: isize) c_int {
+    return std.zig.c_translation.cast(c_int, std.zig.c_translation.cast(
+        c_short,
+        HIWORD(@bitCast(lp)),
+    ));
 }
 
 // Taken from https://github.com/microsoft/Windows-class-samples
