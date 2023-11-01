@@ -10,6 +10,7 @@ pub const WindowDescriptor = struct {
     x: ?i32 = null,
     y: ?i32 = null,
     is_popup: bool = false,
+    visible: bool = true,
     fullscreen_mode: FullscreenMode = FullscreenMode.windowed,
     borderless: bool = false,
     resizable: bool = true,
@@ -38,8 +39,16 @@ pub const Window = struct {
         self.platform_window.deinit();
     }
 
-    pub fn show(self: *Window, should_show: bool) void {
-        self.platform_window.show(should_show);
+    pub fn build(self: *Window) !void {
+        try self.platform_window.build();
+    }
+
+    pub fn setVisible(self: *Window, should_show: bool) void {
+        self.platform_window.setVisible(should_show);
+    }
+
+    pub fn isVisible(self: *const Window) bool {
+        return self.platform_window.isVisible();
     }
 
     pub fn shouldClose(self: *const Window) bool {

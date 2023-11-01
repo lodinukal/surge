@@ -5,34 +5,96 @@ const math = @import("math.zig");
 
 const interface = @import("core/interface.zig");
 
-pub fn focused_changed_callback(wnd: *app.window.Window, focused: bool) void {
-    std.debug.print("focused: {*} {}\n", .{ wnd, focused });
-}
+const Context = struct {
+    allocator: std.mem.Allocator,
+    application: *app.Application,
+    window: *app.window.Window,
+    // renderer: *app.renderer.Renderer,
 
-pub fn input_began_callback(ipo: app.input.InputObject) void {
-    // std.debug.print("input began: {}\n", .{ipo});
-    if (ipo.type == .mousebutton) {
-        std.debug.print("mousebutton {} down\n", .{ipo.data.mousebutton});
+    ui_thread: ?std.Thread = null,
+    mutex: std.Thread.Mutex = .{},
+    ready: bool = false,
+
+    pub fn init(allocator: std.mem.Allocator) !Context {
+        var application = try app.Application.create(allocator);
+        errdefer application.destroy();
+
+        application.input.focused_changed_callback = focused_changed_callback;
+        application.input.input_began_callback = input_began_callback;
+        application.input.input_changed_callback = input_changed_callback;
+        application.input.input_ended_callback = input_ended_callback;
+
+        return Context{
+            .allocator = allocator,
+            .application = application,
+            .window = try application.createWindow(.{
+                .title = "helloo!",
+                .width = 800,
+                .height = 600,
+                .visible = true,
+            }),
+        };
     }
-    if (ipo.type == .textinput) {
-        if (ipo.data.textinput == .short) {
-            std.debug.print("{}\n", .{ipo.data.textinput.short});
+
+    pub fn deinit(self: *Context) void {
+        if (self.ui_thread) |t| {
+            t.join();
+        }
+        self.application.destroy();
+    }
+
+    pub fn pumpEvents(self: *Context) !void {
+        try self.application.pumpEvents();
+    }
+
+    pub fn running(self: *Context) bool {
+        return !self.window.shouldClose();
+    }
+
+    pub fn spawnWindowThread(self: *Context) !void {
+        self.ui_thread = try std.Thread.spawn(.{
+            .allocator = self.allocator,
+        }, windowLoop, .{self});
+    }
+
+    fn windowLoop(self: *Context) !void {
+        try self.window.build();
+        defer self.window.destroy();
+        while (self.running()) {
+            try self.pumpEvents();
         }
     }
-}
 
-pub fn input_changed_callback(ipo: app.input.InputObject) void {
-    // std.debug.print("input changed: {}\n", .{ipo});
-    _ = ipo;
-}
-
-pub fn input_ended_callback(ipo: app.input.InputObject) void {
-    // std.debug.print("input ended: {}\n", .{ipo});
-    if (ipo.type == .mousebutton) {
-        std.debug.print("mousebutton {} up\n", .{ipo.data.mousebutton});
+    fn focused_changed_callback(wnd: *app.window.Window, focused: bool) void {
+        std.debug.print("focused: {*} {}\n", .{ wnd, focused });
     }
-}
 
+    fn input_began_callback(ipo: app.input.InputObject) void {
+        // std.debug.print("input began: {}\n", .{ipo});
+        if (ipo.type == .mousebutton) {
+            std.debug.print("mousebutton {} down\n", .{ipo.data.mousebutton});
+        }
+        if (ipo.type == .textinput) {
+            if (ipo.data.textinput == .short) {
+                std.debug.print("{}\n", .{ipo.data.textinput.short});
+            }
+        }
+    }
+
+    fn input_changed_callback(ipo: app.input.InputObject) void {
+        // std.debug.print("input changed: {}\n", .{ipo});
+        if (ipo.type == .resize) {
+            std.debug.print("resize: {}x{}\n", .{ ipo.data.resize.x, ipo.data.resize.y });
+        }
+    }
+
+    fn input_ended_callback(ipo: app.input.InputObject) void {
+        // std.debug.print("input ended: {}\n", .{ipo});
+        if (ipo.type == .mousebutton) {
+            std.debug.print("mousebutton {} up\n", .{ipo.data.mousebutton});
+        }
+    }
+};
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -42,29 +104,19 @@ pub fn main() !void {
     defer arena.deinit();
     var alloc = arena.allocator();
 
-    var application = try app.Application.create(alloc);
-    defer application.destroy();
+    var context = try Context.init(alloc);
+    defer context.deinit();
 
-    application.input.focused_changed_callback = focused_changed_callback;
-    application.input.input_began_callback = input_began_callback;
-    application.input.input_changed_callback = input_changed_callback;
-    application.input.input_ended_callback = input_ended_callback;
-
-    var window = try application.createWindow(.{
-        .title = "!",
-        .width = 800,
-        .height = 600,
-    });
-    defer window.destroy();
-
-    window.show(true);
-
-    std.debug.print("{}\n", .{application.input.*});
+    try context.spawnWindowThread();
 
     std.debug.print("mem: {}\n", .{arena.queryCapacity()});
 
-    while (!window.shouldClose()) {
-        try application.pumpEvents();
+    var start = std.time.timestamp();
+    while (context.running()) {
+        if (std.time.timestamp() - start > 1) {
+            start = std.time.timestamp();
+            context.window.setVisible(!context.window.isVisible());
+        }
     }
 
     std.debug.print("mem: {}\n", .{arena.queryCapacity()});

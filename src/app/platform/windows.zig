@@ -3,6 +3,8 @@ const std = @import("std");
 const app = @import("../app.zig");
 const math = @import("../../math.zig");
 const util = @import("../../util.zig");
+const trait = @import("../../core/trait.zig");
+const channel = @import("../../core/channel.zig");
 
 const winapi = @import("win32");
 const winapizig = winapi.zig;
@@ -77,12 +79,16 @@ const WindowsApplication = struct {
 const WindowsWindow = struct {
     var class_registered: bool = false;
     const class_name = winapizig.L("app");
+    const Modified = struct {
+        descriptor: app.window.WindowDescriptor = undefined,
+    };
 
     hwnd: ?win32.foundation.HWND = null,
 
     should_close: bool = false,
     focused: bool = false,
     descriptor: app.window.WindowDescriptor,
+    modified_state: app.window.WindowDescriptor,
 
     non_fullscreen_window_placement: win32.ui.windows_and_messaging.WINDOWPLACEMENT = undefined,
 
@@ -97,6 +103,10 @@ const WindowsWindow = struct {
     pub fn init(self: *WindowsWindow, descriptor: app.window.WindowDescriptor) !void {
         try registerClassOnce();
         self.descriptor = descriptor;
+        self.modified_state = descriptor;
+    }
+
+    pub fn build(self: *WindowsWindow) !void {
         self.hwnd = try self.buildWindow();
     }
 
@@ -176,8 +186,16 @@ const WindowsWindow = struct {
         self.hwnd = null;
     }
 
-    pub fn show(self: *WindowsWindow, should_show: bool) void {
-        _ = win32.ui.windows_and_messaging.ShowWindow(self.hwnd, if (should_show) .SHOW else .HIDE);
+    pub fn setVisible(self: *WindowsWindow, should_show: bool) void {
+        self.modified_state.visible = should_show;
+    }
+
+    pub fn isVisible(self: *const WindowsWindow) bool {
+        return self.descriptor.visible;
+    }
+
+    pub fn setFullscreenMode(self: *WindowsWindow, mode: app.window.FullscreenMode) void {
+        self.modified_state.fullscreen_mode = mode;
     }
 
     pub fn shouldClose(self: *const WindowsWindow) bool {
@@ -204,72 +222,6 @@ const WindowsWindow = struct {
             ._STYLE,
             current_style,
         );
-    }
-
-    const HWND_TOP: ?win32.foundation.HWND = null;
-    pub fn setFullscreen(
-        self: *WindowsWindow,
-        mode: app.window.FullscreenMode,
-    ) void {
-        if (mode == self.descriptor.fullscreen_mode) {
-            return;
-        }
-        const previous_mode = self.descriptor.fullscreen_mode;
-        self.descriptor.fullscreen_mode = mode;
-        self.updateStyle();
-
-        if (previous_mode == .windowed and mode == .fullscreen) {
-            self.non_fullscreen_window_placement.length = @sizeOf(win32.ui.windows_and_messaging.WINDOWPLACEMENT);
-            _ = win32.ui.windows_and_messaging.GetWindowPlacement(
-                self.hwnd,
-                &self.non_fullscreen_window_placement,
-            );
-
-            var mi: win32.graphics.gdi.MONITORINFO = undefined;
-            mi.cbSize = @sizeOf(win32.graphics.gdi.MONITORINFO);
-            _ = win32.graphics.gdi.GetMonitorInfoW(
-                win32.graphics.gdi.MonitorFromWindow(
-                    self.hwnd,
-                    .NEAREST,
-                ),
-                &mi,
-            );
-
-            _ = win32.ui.windows_and_messaging.SetWindowPos(
-                self.hwnd,
-                HWND_TOP,
-                mi.rcMonitor.left,
-                mi.rcMonitor.top,
-                mi.rcMonitor.right - mi.rcMonitor.left,
-                mi.rcMonitor.bottom - mi.rcMonitor.top,
-                util.orEnum(win32.ui.windows_and_messaging.SET_WINDOW_POS_FLAGS, .{
-                    .NOOWNERZORDER,
-                    .DRAWFRAME,
-                }),
-            );
-        }
-
-        if (previous_mode == .fullscreen and mode == .windowed) {
-            _ = win32.ui.windows_and_messaging.SetWindowPlacement(
-                self.hwnd,
-                &self.non_fullscreen_window_placement,
-            );
-            _ = win32.ui.windows_and_messaging.SetWindowPos(
-                self.hwnd,
-                null,
-                0,
-                0,
-                0,
-                0,
-                util.orEnum(win32.ui.windows_and_messaging.SET_WINDOW_POS_FLAGS, .{
-                    .NOMOVE,
-                    .NOSIZE,
-                    .NOZORDER,
-                    .NOOWNERZORDER,
-                    .DRAWFRAME,
-                }),
-            );
-        }
     }
 
     const Styles = struct {
@@ -410,11 +362,16 @@ const WindowsWindow = struct {
             },
             win32.ui.windows_and_messaging.WM_KEYDOWN => {
                 if (wparam == @intFromEnum(win32.ui.input.keyboard_and_mouse.VIRTUAL_KEY.F)) {
-                    window.setFullscreen(if (window.descriptor.fullscreen_mode == .windowed) .fullscreen else .windowed);
+                    window.setFullscreenMode(if (window.descriptor.fullscreen_mode == .windowed) .fullscreen else .windowed);
                 }
             },
             else => {},
         }
+
+        // updaters
+        window.update() catch {
+            std.debug.print("Failed to update window\n");
+        };
 
         window.getBase().application.input.platform_input.windowProc(
             window,
@@ -424,6 +381,87 @@ const WindowsWindow = struct {
         );
 
         return win32.ui.windows_and_messaging.DefWindowProcW(wnd, msg, wparam, lparam);
+    }
+
+    fn update(self: *WindowsWindow) !void {
+        try self.updateFullscreen();
+        try self.updateVisible();
+    }
+
+    const HWND_TOP: ?win32.foundation.HWND = null;
+    fn updateFullscreen(
+        self: *WindowsWindow,
+    ) !void {
+        const mode = self.modified_state.fullscreen_mode;
+        if (mode == self.descriptor.fullscreen_mode) {
+            return;
+        }
+        const previous_mode = self.descriptor.fullscreen_mode;
+        self.descriptor.fullscreen_mode = mode;
+        self.updateStyle();
+
+        if (previous_mode == .windowed and mode == .fullscreen) {
+            self.non_fullscreen_window_placement.length = @sizeOf(win32.ui.windows_and_messaging.WINDOWPLACEMENT);
+            _ = win32.ui.windows_and_messaging.GetWindowPlacement(
+                self.hwnd,
+                &self.non_fullscreen_window_placement,
+            );
+
+            var mi: win32.graphics.gdi.MONITORINFO = undefined;
+            mi.cbSize = @sizeOf(win32.graphics.gdi.MONITORINFO);
+            _ = win32.graphics.gdi.GetMonitorInfoW(
+                win32.graphics.gdi.MonitorFromWindow(
+                    self.hwnd,
+                    .NEAREST,
+                ),
+                &mi,
+            );
+
+            _ = win32.ui.windows_and_messaging.SetWindowPos(
+                self.hwnd,
+                HWND_TOP,
+                mi.rcMonitor.left,
+                mi.rcMonitor.top,
+                mi.rcMonitor.right - mi.rcMonitor.left,
+                mi.rcMonitor.bottom - mi.rcMonitor.top,
+                util.orEnum(win32.ui.windows_and_messaging.SET_WINDOW_POS_FLAGS, .{
+                    .NOOWNERZORDER,
+                    .DRAWFRAME,
+                }),
+            );
+        }
+
+        if (previous_mode == .fullscreen and mode == .windowed) {
+            _ = win32.ui.windows_and_messaging.SetWindowPlacement(
+                self.hwnd,
+                &self.non_fullscreen_window_placement,
+            );
+            _ = win32.ui.windows_and_messaging.SetWindowPos(
+                self.hwnd,
+                null,
+                0,
+                0,
+                0,
+                0,
+                util.orEnum(win32.ui.windows_and_messaging.SET_WINDOW_POS_FLAGS, .{
+                    .NOMOVE,
+                    .NOSIZE,
+                    .NOZORDER,
+                    .NOOWNERZORDER,
+                    .DRAWFRAME,
+                }),
+            );
+        }
+    }
+
+    fn updateVisible(self: *WindowsWindow) !void {
+        if (self.modified_state.visible != self.descriptor.visible) {
+            self.descriptor.visible = self.modified_state.visible;
+            _ = win32.ui.windows_and_messaging.ShowWindow(
+                self.hwnd,
+                if (self.descriptor.visible) .SHOW else .HIDE,
+            );
+        }
     }
 };
 
@@ -610,6 +648,8 @@ const WindowsInput = struct {
         self.getBase().addEvent(iobj, null) catch {};
     }
 
+    const win32_update_timer_id: usize = 1;
+
     pub fn windowProc(
         self: *WindowsInput,
         window: *WindowsWindow,
@@ -629,6 +669,18 @@ const WindowsInput = struct {
                     window,
                     LOWORD(@intCast(wparam)) != win32.ui.windows_and_messaging.WA_INACTIVE,
                 );
+            },
+            win32.ui.windows_and_messaging.WM_SIZE => {
+                const width = LOWORD(@bitCast(lparam));
+                const height = HIWORD(@bitCast(lparam));
+
+                var iobj = app.input.InputObject{
+                    .type = .resize,
+                    .input_state = .change,
+                    .data = .{ .resize = math.Vector2i.init(width, height) },
+                };
+
+                self.getBase().addEvent(iobj, null) catch {};
             },
             win32.ui.windows_and_messaging.WM_SETFOCUS => {
                 self.setWindowFocus(window, true);
@@ -684,7 +736,41 @@ const WindowsInput = struct {
             },
             win32.ui.windows_and_messaging.WM_MOUSEMOVE => self.postLocalMouseMotion(lparam),
 
-            WM_MOUSELEAVE => {},
+            win32.ui.windows_and_messaging.WM_ENTERSIZEMOVE => {
+                _ = win32.ui.windows_and_messaging.SetTimer(
+                    window.hwnd,
+                    win32_update_timer_id,
+                    win32.ui.windows_and_messaging.USER_TIMER_MINIMUM,
+                    null,
+                );
+            },
+
+            win32.ui.windows_and_messaging.WM_EXITSIZEMOVE => {
+                _ = win32.ui.windows_and_messaging.KillTimer(
+                    window.hwnd,
+                    win32_update_timer_id,
+                );
+            },
+
+            win32.ui.windows_and_messaging.WM_SHOWWINDOW => {
+                if (wparam == win32.foundation.TRUE) {
+                    _ = win32.ui.windows_and_messaging.KillTimer(
+                        window.hwnd,
+                        win32_update_timer_id,
+                    );
+                } else {
+                    _ = win32.ui.windows_and_messaging.SetTimer(
+                        window.hwnd,
+                        win32_update_timer_id,
+                        win32.ui.windows_and_messaging.USER_TIMER_MINIMUM,
+                        null,
+                    );
+                }
+            },
+
+            win32.ui.windows_and_messaging.WM_TIMER => {
+                if (wparam == win32_update_timer_id) {}
+            },
 
             else => {},
         }

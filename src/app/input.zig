@@ -64,6 +64,8 @@ pub const Input = struct {
     platform_input: platform.impl.Input = .{},
     last_input_type: InputType = .touch,
 
+    mutex: std.Thread.Mutex = .{},
+
     mouse_enabled: bool = false,
     touch_enabled: bool = false,
     keyboard_enabled: bool = false,
@@ -141,6 +143,9 @@ pub const Input = struct {
     }
 
     pub fn deinit(self: *Input) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
         self.platform_input.deinit();
 
         self.begin_events.deinit();
@@ -249,6 +254,9 @@ pub const Input = struct {
     }
 
     pub fn process(self: *Input) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
         self.platform_input.process();
 
         self.processInputSlice(&self.begin_events, .begin);
@@ -257,6 +265,9 @@ pub const Input = struct {
     }
 
     pub fn addEvent(self: *Input, input_object: InputObject, native_input_object: ?*void) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
         switch (input_object.input_state) {
             .begin => {
                 try self.begin_events.append(.{ input_object, native_input_object });
@@ -301,6 +312,7 @@ pub const InputObject = struct {
                 text: []const u8,
             },
         },
+        resize: math.Vector2i,
     },
 
     pub fn deinit(self: *InputObject) void {
@@ -346,6 +358,7 @@ pub const InputType = enum(u8) {
     gyro,
     gamepad,
     textinput,
+    resize,
 };
 
 pub const WrapMode = enum(u8) {

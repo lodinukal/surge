@@ -3,18 +3,28 @@ const std = @import("std");
 pub fn Channel(comptime T: type) type {
     return struct {
         const Self = @This();
-        const QueueType = std.atomic.Queue(T);
+        pub const QueueType = std.atomic.Queue(T);
+        pub const SenderType = Sender(T);
+        pub const ReceiverType = Receiver(T);
 
+        arena: std.heap.ArenaAllocator,
         allocator: std.mem.Allocator,
         queue: QueueType,
         connected: bool,
 
         pub fn init(allocator: std.mem.Allocator) Self {
+            var arena = std.heap.ArenaAllocator.init(allocator);
             return Self{
-                .allocator = allocator,
+                .arena = arena,
+                .allocator = arena.allocator(),
                 .queue = QueueType.init(),
                 .connected = true,
             };
+        }
+
+        pub fn deinit(self: *Self) void {
+            self.connected = false;
+            _ = self.arena.reset(.retain_capacity);
         }
 
         pub fn getSender(c: *Self) Sender(T) {
@@ -75,6 +85,8 @@ pub fn Receiver(comptime T: type) type {
                         self.channel.allocator.destroy(node);
                     }
                     return node.data;
+                } else {
+                    self.channel.arena.reset(.retain_capacity);
                 }
             } else {
                 return null;
