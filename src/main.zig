@@ -66,11 +66,10 @@ const Context = struct {
     }
 
     fn focused_changed_callback(wnd: *app.window.Window, focused: bool) void {
-        std.debug.print("focused: {*} {}\n", .{ wnd, focused });
+        wnd.setTitle(if (focused) "focused" else "not focused");
     }
 
     fn input_began_callback(ipo: app.input.InputObject) void {
-        // std.debug.print("input began: {}\n", .{ipo});
         if (ipo.type == .mousebutton) {
             std.debug.print("mousebutton {} down\n", .{ipo.data.mousebutton});
         }
@@ -113,7 +112,7 @@ pub fn main() !void {
 
     var start = std.time.timestamp();
     while (context.running()) {
-        if (std.time.timestamp() - start > 1) {
+        if (std.time.timestamp() - start > 100) {
             start = std.time.timestamp();
             context.window.setVisible(!context.window.isVisible());
         }

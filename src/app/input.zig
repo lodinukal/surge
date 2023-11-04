@@ -78,6 +78,8 @@ pub const Input = struct {
 
     mouse_state: MouseState = .{},
 
+    has_focus: bool = false,
+
     focused_changed_callback: ?FocusedChangedCallback = null,
     input_began_callback: ?InputBeganCallback = null,
     input_changed_callback: ?InputChangedCallback = null,
@@ -205,6 +207,7 @@ pub const Input = struct {
             if (self.focused_changed_callback) |cb| {
                 cb(input_object.data.focus, input_object.input_state == .begin);
             }
+            self.has_focus = input_object.input_state == .begin;
             return;
         }
 

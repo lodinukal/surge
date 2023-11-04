@@ -43,6 +43,10 @@ pub const Window = struct {
         try self.platform_window.build();
     }
 
+    pub fn setTitle(self: *Window, title: []const u8) void {
+        self.platform_window.setTitle(title);
+    }
+
     pub fn setVisible(self: *Window, should_show: bool) void {
         self.platform_window.setVisible(should_show);
     }
