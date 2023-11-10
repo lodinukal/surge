@@ -2,6 +2,7 @@ const std = @import("std");
 
 const app = @import("app/app.zig");
 const math = @import("math.zig");
+const gpu = @import("render/gpu/gpu.zig");
 
 const interface = @import("core/interface.zig");
 
@@ -75,7 +76,7 @@ const Context = struct {
         }
         if (ipo.type == .textinput) {
             if (ipo.data.textinput == .short) {
-                std.debug.print("{}\n", .{ipo.data.textinput.short});
+                std.debug.print("{c}\n", .{ipo.data.textinput.short});
             }
         }
     }
@@ -94,6 +95,7 @@ const Context = struct {
         }
     }
 };
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -119,4 +121,8 @@ pub fn main() !void {
     }
 
     std.debug.print("mem: {}\n", .{arena.queryCapacity()});
+}
+
+test {
+    std.testing.refAllDecls(gpu);
 }
