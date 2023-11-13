@@ -58,11 +58,15 @@ const Context = struct {
         }, windowLoop, .{self});
     }
 
+    pub const focused_sleep = std.time.ns_per_us * 100;
+    pub const unfocused_sleep = std.time.ns_per_ms * 10;
+
     fn windowLoop(self: *Context) !void {
         try self.window.build();
         defer self.window.destroy();
         while (self.running()) {
             try self.pumpEvents();
+            std.time.sleep(if (self.window.isFocused()) focused_sleep else unfocused_sleep);
         }
     }
 
@@ -118,6 +122,7 @@ pub fn main() !void {
             start = std.time.timestamp();
             context.window.setVisible(!context.window.isVisible());
         }
+        std.time.sleep(std.time.ns_per_s);
     }
 
     std.debug.print("mem: {}\n", .{arena.queryCapacity()});
