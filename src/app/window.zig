@@ -62,4 +62,8 @@ pub const Window = struct {
     pub fn setShouldClose(self: *Window, should_close: bool) void {
         self.platform_window.setShouldClose(should_close);
     }
+
+    pub fn isFocused(self: *const Window) bool {
+        return self.platform_window.isFocused();
+    }
 };

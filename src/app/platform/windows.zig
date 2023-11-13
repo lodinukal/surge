@@ -229,6 +229,10 @@ const WindowsWindow = struct {
         self.should_close = should_close;
     }
 
+    pub fn isFocused(self: *const WindowsWindow) bool {
+        return self.focused;
+    }
+
     fn updateStyle(self: *WindowsWindow) void {
         var current_style = win32.ui.windows_and_messaging.GetWindowLongW(
             self.hwnd,
