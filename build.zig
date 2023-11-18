@@ -25,21 +25,6 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     exe.addIncludePath(std.Build.LazyPath.relative("./src/c"));
-    if (target.isWindows()) {
-        const win32_dep = b.dependency("win32", .{});
-        const win32_module = win32_dep.module("zigwin32");
-        exe.addModule("win32", win32_module);
-        exe.linkSystemLibraryName("Imm32");
-        exe.linkSystemLibraryName("Gdi32");
-        exe.linkSystemLibraryName("comctl32");
-
-        // June 2023 Update 3
-        linkGdk(b, exe, null, "230603", "amd64") catch unreachable;
-
-        // GDK
-        // CUrrently uses 221001
-        // exe.c_std = .C11;
-    }
     // exe.addSystemIncludePath("");
     // exe.linkLibC();
 
@@ -86,6 +71,27 @@ pub fn build(b: *std.Build) void {
     // running the unit tests.
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_unit_tests.step);
+
+    if (target.isWindows()) {
+        const win32_dep = b.dependency("win32", .{});
+        const win32_module = win32_dep.module("zigwin32");
+
+        inline for (.{ exe, unit_tests }) |t| {
+            t.addModule("win32", win32_module);
+            t.linkSystemLibraryName("Imm32");
+            t.linkSystemLibraryName("Gdi32");
+            t.linkSystemLibraryName("comctl32");
+
+            // June 2023 Update 3
+            linkGdk(b, t, null, "230603", "amd64") catch unreachable;
+
+            // GDK
+            // CUrrently uses 221001
+            // t.c_std = .C11;
+        }
+
+        buildDx11(b, target, optimize);
+    }
 }
 
 fn linkGdk(
@@ -123,4 +129,34 @@ fn linkGdk(
     exe.linkSystemLibrary("GameInput");
     exe.linkSystemLibrary("xgameruntime");
     exe.linkLibC();
+}
+
+fn buildBackend(
+    b: *std.Build,
+    name: []const u8,
+    src: []const u8,
+    target: std.zig.CrossTarget,
+    optimize: std.builtin.OptimizeMode,
+) void {
+    const lib = b.addSharedLibrary(.{
+        .name = name,
+        .link_libc = false,
+        .root_source_file = .{ .path = src },
+        .main_mod_path = .{ .path = "src" },
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const artifact = b.addInstallArtifact(lib, .{ .dest_dir = .{ .override = .bin } });
+    b.getInstallStep().dependOn(&artifact.step);
+}
+
+fn buildDx11(
+    b: *std.Build,
+    target: std.zig.CrossTarget,
+    optimize: std.builtin.OptimizeMode,
+) void {
+    const src = "src/render/gpu/dx11/impl.zig";
+    const name = "render_d3d11";
+    buildBackend(b, name, src, target, optimize);
 }
