@@ -709,6 +709,7 @@ const WindowsInput = struct {
     }
 
     fn releaseInput(self: *WindowsInput) void {
+        if (self.mouse_capture_count == 0) return;
         self.mouse_capture_count -= 1;
         if (self.mouse_capture_count == 0) {
             _ = win32.ui.input.keyboard_and_mouse.ReleaseCapture();
@@ -767,6 +768,8 @@ const WindowsInput = struct {
                 self.setWindowFocus(window, true);
             },
             win32.ui.windows_and_messaging.WM_KILLFOCUS, win32.ui.windows_and_messaging.WM_ENTERIDLE => {
+                // prevents app from thinking buttons are still down when the window loses focus
+                self.processMouseButtonWparam(window.hwnd.?, 0);
                 self.setWindowFocus(window, false);
             },
             win32.ui.windows_and_messaging.WM_POINTERUPDATE => {
@@ -851,7 +854,11 @@ const WindowsInput = struct {
             },
 
             win32.ui.windows_and_messaging.WM_TIMER => {
-                if (wparam == win32_update_timer_id) {}
+                if (wparam == win32_update_timer_id) {
+                    if (self.getBase().frame_update_callback) |cb| {
+                        cb(window.getBase());
+                    }
+                }
             },
 
             win32.ui.windows_and_messaging.WM_INPUT => {
