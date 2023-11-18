@@ -1,7 +1,11 @@
 pub const std = @import("std");
 
-pub const app = @import("app.zig");
+const math = @import("../math.zig");
+
+const app = @import("app.zig");
 pub const platform = @import("./platform.zig");
+
+pub const NativeHandle = struct { wnd: platform.impl.NativeHandle };
 
 pub const WindowDescriptor = struct {
     title: []const u8,
@@ -41,6 +45,18 @@ pub const Window = struct {
 
     pub fn build(self: *Window) !void {
         try self.platform_window.build();
+    }
+
+    pub fn getNativeHandle(self: *Window) NativeHandle {
+        return self.platform_window.getNativeHandle();
+    }
+
+    pub fn getContentSize(self: *const Window) [2]i32 {
+        return self.platform_window.getContentSize();
+    }
+
+    pub fn getSize(self: *const Window, use_client_area: bool) [2]i32 {
+        return self.platform_window.getSize(use_client_area);
     }
 
     pub fn setTitle(self: *Window, title: []const u8) void {
