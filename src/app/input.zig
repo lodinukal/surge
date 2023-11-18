@@ -55,7 +55,7 @@ pub const Input = struct {
 
     const MouseState = struct {
         buttons: [5]bool = .{false} ** 5,
-        position: math.Vector2i = math.Vector2i.init(0, 0),
+        position: [2]i32 = .{ 0, 0 },
         scroll: i32 = 0,
         mode: MouseMode = .absolute,
     };
@@ -183,7 +183,7 @@ pub const Input = struct {
     fn updateLastInputType(self: *Input, input_object: *InputObject) void {
         if (self.last_input_type != input_object.type) {
             // we only update gamepad input type if it is of a minimum magnitude
-            if (input_object.type == .gamepad and input_object.position.length() < 0.2) {
+            if (input_object.type == .gamepad and math.all(math.length3(input_object.position) < math.splat(math.Vec, 0.2), 0)) {
                 return;
             }
             self.last_input_type = input_object.type;
@@ -193,8 +193,9 @@ pub const Input = struct {
 
     fn updateCurrentMousePosition(self: *Input, input_object: *InputObject) void {
         if (input_object.type == .mousemove) {
-            var rounded = input_object.position.round();
-            self.mouse_state.position = math.Vector2i.init(@intFromFloat(rounded.x), @intFromFloat(rounded.y));
+            var rounded = @round(input_object.position);
+            self.mouse_state.position[0] = @intFromFloat(rounded[0]);
+            self.mouse_state.position[1] = @intFromFloat(rounded[1]);
         }
     }
 
@@ -285,7 +286,7 @@ pub const Input = struct {
         }
     }
 
-    pub fn getMousePosition(self: *Input) math.Vector2i {
+    pub fn getMousePosition(self: *Input) [2]i32 {
         return self.current_mouse_position;
     }
 };
@@ -295,8 +296,8 @@ pub const Input = struct {
 pub const InputObject = struct {
     type: InputType,
     input_state: InputState = .begin,
-    position: math.Vector3f = math.Vector3f.init(null, null, null),
-    delta: math.Vector3f = math.Vector3f.init(null, null, null),
+    position: math.Vec = math.f32x4s(0),
+    delta: math.Vec = math.f32x4s(0),
     modifiers: Modifiers = .{},
     data: union(InputType) {
         mousebutton: u8, // mouse button index
@@ -315,7 +316,7 @@ pub const InputObject = struct {
                 text: []const u8,
             },
         },
-        resize: math.Vector2i,
+        resize: [2]i32,
     },
 
     pub fn deinit(self: *InputObject) void {
