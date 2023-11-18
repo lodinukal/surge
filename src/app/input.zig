@@ -88,6 +88,7 @@ pub const Input = struct {
     touch_changed_callback: ?TouchChangedCallback = null,
     touch_ended_callback: ?TouchEndedCallback = null,
     input_type_updated_callback: ?InputTypeUpdatedCallback = null,
+    frame_update_callback: ?FrameUpdateCallback = null,
 
     const FocusedChangedCallback = *const fn (*app.window.Window, bool) void;
     const InputBeganCallback = *const fn (InputObject) void;
@@ -97,6 +98,7 @@ pub const Input = struct {
     const TouchChangedCallback = *const fn (InputObject) void;
     const TouchEndedCallback = *const fn (InputObject) void;
     const InputTypeUpdatedCallback = *const fn (InputType) void;
+    const FrameUpdateCallback = *const fn (*app.window.Window) void;
 
     pub fn create(allocator: std.mem.Allocator) !*Input {
         var self: *Input = try allocator.create(Input);
