@@ -2,7 +2,7 @@ const std = @import("std");
 
 const app = @import("app/app.zig");
 const math = @import("math.zig");
-const gpu = @import("render/gpu/gpu.zig");
+const Renderer = @import("render/gpu/Renderer.zig");
 
 const interface = @import("core/interface.zig");
 
@@ -20,7 +20,7 @@ const Context = struct {
         var application = try app.Application.create(allocator);
         errdefer application.destroy();
 
-        application.input.focused_changed_callback = focused_changed_callback;
+        // application.input.focused_changed_callback = focused_changed_callback;
         application.input.input_began_callback = input_began_callback;
         application.input.input_changed_callback = input_changed_callback;
         application.input.input_ended_callback = input_ended_callback;
@@ -66,12 +66,9 @@ const Context = struct {
         defer self.window.destroy();
         while (self.running()) {
             try self.pumpEvents();
+            self.window.setTitle(if (self.window.isFocused()) "focused" else "not focused");
             std.time.sleep(if (self.window.isFocused()) focused_sleep else unfocused_sleep);
         }
-    }
-
-    fn focused_changed_callback(wnd: *app.window.Window, focused: bool) void {
-        wnd.setTitle(if (focused) "focused" else "not focused");
     }
 
     fn input_began_callback(ipo: app.input.InputObject) void {
@@ -88,7 +85,7 @@ const Context = struct {
     fn input_changed_callback(ipo: app.input.InputObject) void {
         // std.debug.print("input changed: {}\n", .{ipo});
         if (ipo.type == .resize) {
-            std.debug.print("resize: {}x{}\n", .{ ipo.data.resize.x, ipo.data.resize.y });
+            std.debug.print("resize: {}x{}\n", .{ ipo.data.resize[0], ipo.data.resize[1] });
         }
     }
 
@@ -114,6 +111,12 @@ pub fn main() !void {
 
     try context.spawnWindowThread();
 
+    var renderer = try Renderer.create(alloc);
+    defer renderer.destroy();
+
+    try renderer.load(.d3d11);
+    std.debug.print("{}\n", .{try renderer.getRendererInfo()});
+
     std.debug.print("mem: {}\n", .{arena.queryCapacity()});
 
     var start = std.time.timestamp();
@@ -129,5 +132,5 @@ pub fn main() !void {
 }
 
 test {
-    std.testing.refAllDecls(gpu);
+    std.testing.refAllDecls(Renderer);
 }
