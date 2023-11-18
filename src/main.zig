@@ -21,9 +21,10 @@ const Context = struct {
         errdefer application.destroy();
 
         // application.input.focused_changed_callback = focused_changed_callback;
-        application.input.input_began_callback = input_began_callback;
-        application.input.input_changed_callback = input_changed_callback;
-        application.input.input_ended_callback = input_ended_callback;
+        application.input.input_began_callback = inputBeganCallback;
+        application.input.input_changed_callback = inputChangedCallback;
+        application.input.input_ended_callback = inputEndedCallback;
+        application.input.frame_update_callback = frameUpdate;
 
         return Context{
             .allocator = allocator,
@@ -71,7 +72,12 @@ const Context = struct {
         }
     }
 
-    fn input_began_callback(ipo: app.input.InputObject) void {
+    fn frameUpdate(wnd: *app.window.Window) void {
+        _ = wnd;
+        std.debug.print("update: {}\n", .{1});
+    }
+
+    fn inputBeganCallback(ipo: app.input.InputObject) void {
         if (ipo.type == .mousebutton) {
             std.debug.print("mousebutton {} down\n", .{ipo.data.mousebutton});
         }
@@ -82,14 +88,14 @@ const Context = struct {
         }
     }
 
-    fn input_changed_callback(ipo: app.input.InputObject) void {
+    fn inputChangedCallback(ipo: app.input.InputObject) void {
         // std.debug.print("input changed: {}\n", .{ipo});
         if (ipo.type == .resize) {
             std.debug.print("resize: {}x{}\n", .{ ipo.data.resize[0], ipo.data.resize[1] });
         }
     }
 
-    fn input_ended_callback(ipo: app.input.InputObject) void {
+    fn inputEndedCallback(ipo: app.input.InputObject) void {
         // std.debug.print("input ended: {}\n", .{ipo});
         if (ipo.type == .mousebutton) {
             std.debug.print("mousebutton {} up\n", .{ipo.data.mousebutton});
