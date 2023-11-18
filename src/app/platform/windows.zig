@@ -18,6 +18,7 @@ pub const Error = WindowsError;
 pub const Application = WindowsApplication;
 pub const Window = WindowsWindow;
 pub const Input = WindowsInput;
+pub const NativeHandle = win32.foundation.HWND;
 
 const WindowsError = error{
     StringConversionFailed,
@@ -109,6 +110,38 @@ const WindowsWindow = struct {
 
     pub fn build(self: *WindowsWindow) !void {
         self.hwnd = try self.buildWindow();
+    }
+
+    pub fn getNativeHandle(self: *const WindowsWindow) app.window.NativeHandle {
+        return .{ .wnd = self.hwnd.? };
+    }
+
+    pub fn getContentSize(self: *const WindowsWindow) [2]i32 {
+        return self.getSize(true);
+    }
+
+    pub fn getSize(self: *const WindowsWindow, use_client_area: bool) [2]i32 {
+        if (use_client_area) {
+            var rc: win32.foundation.RECT = undefined;
+            _ = win32.ui.windows_and_messaging.GetClientRect(
+                self.hwnd.?,
+                &rc,
+            );
+            return .{
+                rc.right - rc.left,
+                rc.bottom - rc.top,
+            };
+        } else {
+            var rc: win32.foundation.RECT = undefined;
+            _ = win32.ui.windows_and_messaging.GetWindowRect(
+                self.hwnd.?,
+                &rc,
+            );
+            return .{
+                rc.right - rc.left,
+                rc.bottom - rc.top,
+            };
+        }
     }
 
     fn registerClassOnce() !void {
@@ -635,14 +668,14 @@ const WindowsInput = struct {
         _ = self;
     }
 
-    fn getMouseRelativePosition(wnd: win32.foundation.HWND) math.Vector3i {
+    fn getMouseRelativePosition(wnd: win32.foundation.HWND) [2]i32 {
         var p: win32.foundation.POINT = undefined;
         _ = win32.ui.windows_and_messaging.GetCursorPos(&p);
         _ = win32.graphics.gdi.ScreenToClient(
             wnd,
             &p,
         );
-        return math.Vector3i.init(p.x, p.y, 0);
+        return .{ p.x, p.y };
     }
 
     const MouseEventSource = enum {
@@ -725,7 +758,7 @@ const WindowsInput = struct {
                 var iobj = app.input.InputObject{
                     .type = .resize,
                     .input_state = .change,
-                    .data = .{ .resize = math.Vector2i.init(width, height) },
+                    .data = .{ .resize = .{ width, height } },
                 };
 
                 self.getBase().addEvent(iobj, null) catch {};
@@ -774,10 +807,11 @@ const WindowsInput = struct {
                     .type = .mousewheel,
                     .input_state = .begin,
                     .data = .mousewheel,
-                    .delta = math.Vector3f.init(
-                        null,
+                    .delta = math.f32x4(
+                        0,
                         @floatFromInt(HIWORD(@intCast(wparam)) / win32.ui.windows_and_messaging.WHEEL_DELTA),
-                        null,
+                        0,
+                        0,
                     ),
                 };
                 self.getBase().addEvent(iobj, null) catch {};
@@ -929,12 +963,12 @@ const WindowsInput = struct {
             .type = .mousemove,
             .input_state = .change,
             .data = .mousemove,
-            .position = math.Vector3f.init(@floatFromInt(x), @floatFromInt(y), null),
-            .delta = math.Vector3f.init(@floatFromInt(x - last_pos.x), @floatFromInt(y - last_pos.y), null),
+            .position = math.f32x4(@floatFromInt(x), @floatFromInt(y), 0, 0),
+            .delta = math.f32x4(@floatFromInt(x - last_pos[0]), @floatFromInt(y - last_pos[1]), 0, 0),
         };
 
-        const converted_pos = iobj.position.convert(i32);
-        self.getBase().mouse_state.position = math.Vector2i.init(converted_pos.x, converted_pos.y);
+        const converted_pos = math.vecToArr2(iobj.position);
+        self.getBase().mouse_state.position = .{ @intFromFloat(converted_pos[0]), @intFromFloat(converted_pos[1]) };
         self.getBase().addEvent(iobj, null) catch {};
     }
 
@@ -965,14 +999,16 @@ const WindowsInput = struct {
                     .type = .mousemove,
                     .input_state = .change,
                     .data = .mousemove,
-                    .position = new_pos.convert(f32),
-                    .delta = .{
-                        .x = @floatFromInt(dx),
-                        .y = @floatFromInt(dy),
-                    },
+                    .position = math.f32x4(@floatFromInt(new_pos[0]), @floatFromInt(new_pos[1]), 0, 1),
+                    .delta = math.f32x4(
+                        @floatFromInt(dx),
+                        @floatFromInt(dy),
+                        0,
+                        0,
+                    ),
                 };
 
-                self.getBase().mouse_state.position = .{ .x = new_pos.x, .y = new_pos.y };
+                self.getBase().mouse_state.position = new_pos;
                 self.getBase().addEvent(iobj, null) catch {};
             }
         }

@@ -1816,6 +1816,7 @@ pub fn getTexelMemoryFootprint(fmt: Format, texels: usize) usize {
     if (block_size > 0 and texels % block_size != 0) {
         return @divExact(@divExact(texels, block_size) * attribs.bit_size, 8);
     }
+    return 0;
 }
 
 pub inline fn getImageFormatSize(ifmt: ImageFormat) u32 {
@@ -1828,6 +1829,7 @@ pub inline fn getImageFormatSize(ifmt: ImageFormat) u32 {
         .rgba => 4,
         .bgra => 4,
         .argb => 4,
+        .abgr => 4,
         .depth => 1,
         .depth_stencil => 2,
         .stencil => 1,
