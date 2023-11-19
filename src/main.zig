@@ -33,7 +33,6 @@ const Context = struct {
                 .title = "helloo!",
                 .width = 800,
                 .height = 600,
-                .visible = true,
             }),
         };
     }
@@ -115,13 +114,12 @@ pub fn main() !void {
     var context = try Context.init(alloc);
     defer context.deinit();
 
-    try context.spawnWindowThread();
-
     var renderer = try Renderer.create(alloc);
     defer renderer.destroy();
-
     try renderer.load(.d3d11);
     std.debug.print("{}\n", .{try renderer.getRendererInfo()});
+
+    try context.spawnWindowThread();
 
     std.debug.print("mem: {}\n", .{arena.queryCapacity()});
 
