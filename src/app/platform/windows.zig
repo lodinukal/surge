@@ -11,8 +11,8 @@ const winapizig = winapi.zig;
 const win32 = winapi.windows.win32;
 const gdk = winapi.microsoft.gdk;
 
-const FALSE = win32.foundation.FALSE;
-const TRUE = win32.foundation.TRUE;
+pub const FALSE = win32.foundation.FALSE;
+pub const TRUE = win32.foundation.TRUE;
 
 pub const Error = WindowsError;
 pub const Application = WindowsApplication;
@@ -546,12 +546,12 @@ const WindowsWindow = struct {
     }
 };
 
-fn getHInstance() !win32.foundation.HINSTANCE {
+pub fn getHInstance() !win32.foundation.HINSTANCE {
     var module = win32.system.library_loader.GetModuleHandleW(null);
     return module;
 }
 
-fn messageBox(
+pub fn messageBox(
     allocator: std.mem.Allocator,
     title: []const u8,
     comptime fmt: []const u8,
@@ -588,7 +588,7 @@ fn messageBox(
     );
 }
 
-fn reportError(
+pub fn reportError(
     allocator: std.mem.Allocator,
 ) void {
     var err = win32.foundation.GetLastError();
