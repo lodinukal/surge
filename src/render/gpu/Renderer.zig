@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const app = @import("../../app/app.zig");
 
@@ -14,6 +15,7 @@ pub var global_renderer: ?*Self = null;
 
 pub const Error = error{
     RendererNotLoaded,
+    InitialisationFailed,
     InvalidHandle,
     DeviceLost,
 };
@@ -28,6 +30,7 @@ pub const RendererType = enum {
 };
 
 pub const SymbolTable = struct {
+    init: *const fn (self: *Self) Error!void,
     deinit: *const fn (self: *Self) void,
     get_renderer_info: *const fn (self: *Self) Error!*const RendererInfo,
     get_rendering_capabilities: *const fn (self: *Self) Error!*const RenderingCapabilities,
@@ -36,6 +39,7 @@ pub const SymbolTable = struct {
 allocator: std.mem.Allocator,
 symbols: ?*const SymbolTable = null,
 library_loaded: ?std.DynLib = null,
+debug: bool = builtin.mode == .Debug, // TODO: make this a runtime option
 
 pub fn availableRenderers() []const RendererType {
     return &[_]RendererType{
@@ -79,11 +83,18 @@ pub fn load(self: *Self, backend: RendererType) !void {
     switch (backend) {
         .d3d11 => {
             self.library_loaded = try std.DynLib.open("render_d3d11.dll");
+            errdefer {
+                self.library_loaded.?.close();
+                self.library_loaded = null;
+                self.symbols = null;
+            }
             var symbols = self.library_loaded.?.lookup(
                 SymbolLoaderFn,
                 "getSymbols",
             ) orelse return Error.RendererNotLoaded;
             self.symbols = symbols();
+
+            try self.symbols.?.init(self);
         },
         .d3d12 => {},
         .gles => {},
