@@ -90,7 +90,7 @@ pub fn build(b: *std.Build) void {
             // t.c_std = .C11;
         }
 
-        buildDx11(b, target, optimize);
+        buildD3d11(b, target, optimize);
     }
 }
 
@@ -137,7 +137,7 @@ fn buildBackend(
     src: []const u8,
     target: std.zig.CrossTarget,
     optimize: std.builtin.OptimizeMode,
-) void {
+) *std.Build.Step.Compile {
     const lib = b.addSharedLibrary(.{
         .name = name,
         .link_libc = false,
@@ -149,14 +149,20 @@ fn buildBackend(
 
     const artifact = b.addInstallArtifact(lib, .{ .dest_dir = .{ .override = .bin } });
     b.getInstallStep().dependOn(&artifact.step);
+    return lib;
 }
 
-fn buildDx11(
+fn buildD3d11(
     b: *std.Build,
     target: std.zig.CrossTarget,
     optimize: std.builtin.OptimizeMode,
 ) void {
     const src = "src/render/gpu/dx11/impl.zig";
     const name = "render_d3d11";
-    buildBackend(b, name, src, target, optimize);
+    const d3d11 = buildBackend(b, name, src, target, optimize);
+
+    const win32_dep = b.dependency("win32", .{});
+    const win32_module = win32_dep.module("zigwin32");
+    d3d11.addModule("win32", win32_module);
+    // b.linkSystemLibraryName("Imm32");
 }

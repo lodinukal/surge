@@ -3,8 +3,8 @@
     .version = "0.0.1",
     .dependencies = .{
         .win32 = .{
-            .url = "https://github.com/lodinukal/zigwin32/archive/ba23e6c0a0ae1b8fef3950b70acc41c583d41079.tar.gz",
-            .hash = "1220dd55bf70733bc8f315bd3d9e038f9f5df119e0c668ecabaf61bfaba629630582",
+            .url = "https://github.com/lodinukal/zigwin32/archive/aa411449233675b580940e13c9fc7c7d8d752f25.tar.gz",
+            .hash = "122005290b4ddb95539c26c0bf8481390b9026fd64729ad7c822f2d91a58e547184c",
         },
     },
     .paths = .{"src"},
