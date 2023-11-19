@@ -157,7 +157,7 @@ fn buildD3d11(
     target: std.zig.CrossTarget,
     optimize: std.builtin.OptimizeMode,
 ) void {
-    const src = "src/render/gpu/dx11/impl.zig";
+    const src = "src/render/gpu/d3d11/impl.zig";
     const name = "render_d3d11";
     const d3d11 = buildBackend(b, name, src, target, optimize);
 
