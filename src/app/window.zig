@@ -9,10 +9,8 @@ pub const NativeHandle = struct { wnd: platform.impl.NativeHandle };
 
 pub const WindowDescriptor = struct {
     title: []const u8,
-    width: i32 = 800,
-    height: i32 = 600,
-    x: ?i32 = null,
-    y: ?i32 = null,
+    size: [2]i32 = .{ 800, 600 },
+    position: ?[2]i32 = null,
     is_popup: bool = false,
     visible: bool = false,
     fullscreen_mode: FullscreenMode = FullscreenMode.windowed,
@@ -51,6 +49,18 @@ pub const Window = struct {
         return self.platform_window.getNativeHandle();
     }
 
+    pub fn setTitle(self: *Window, title: []const u8) void {
+        self.platform_window.setTitle(title);
+    }
+
+    pub fn getTitle(self: *const Window) []const u8 {
+        return self.platform_window.getTitle();
+    }
+
+    pub fn setSize(self: *Window, size: [2]i32) void {
+        self.platform_window.setSize(size);
+    }
+
     pub fn getContentSize(self: *const Window) [2]i32 {
         return self.platform_window.getContentSize();
     }
@@ -59,8 +69,12 @@ pub const Window = struct {
         return self.platform_window.getSize(use_client_area);
     }
 
-    pub fn setTitle(self: *Window, title: []const u8) void {
-        self.platform_window.setTitle(title);
+    pub fn setPosition(self: *Window, position: [2]i32) void {
+        self.platform_window.setPosition(position);
+    }
+
+    pub fn getPosition(self: *const Window) ?[2]i32 {
+        return self.platform_window.getPosition();
     }
 
     pub fn setVisible(self: *Window, should_show: bool) void {
@@ -69,6 +83,14 @@ pub const Window = struct {
 
     pub fn isVisible(self: *const Window) bool {
         return self.platform_window.isVisible();
+    }
+
+    pub fn setFullscreenMode(self: *Window, fullscreen_mode: FullscreenMode) void {
+        self.platform_window.setFullscreenMode(fullscreen_mode);
+    }
+
+    pub fn getFullscreenMode(self: *const Window) FullscreenMode {
+        return self.platform_window.getFullscreenMode();
     }
 
     pub fn shouldClose(self: *const Window) bool {
@@ -81,5 +103,11 @@ pub const Window = struct {
 
     pub fn isFocused(self: *const Window) bool {
         return self.platform_window.isFocused();
+    }
+
+    /// this immediately updates the window's properties,
+    /// *should* be called from the window thread
+    pub fn update(self: *Window) void {
+        self.platform_window.update();
     }
 };

@@ -116,34 +116,6 @@ const WindowsWindow = struct {
         return .{ .wnd = self.hwnd.? };
     }
 
-    pub fn getContentSize(self: *const WindowsWindow) [2]i32 {
-        return self.getSize(true);
-    }
-
-    pub fn getSize(self: *const WindowsWindow, use_client_area: bool) [2]i32 {
-        if (use_client_area) {
-            var rc: win32.foundation.RECT = undefined;
-            _ = win32.ui.windows_and_messaging.GetClientRect(
-                self.hwnd.?,
-                &rc,
-            );
-            return .{
-                rc.right - rc.left,
-                rc.bottom - rc.top,
-            };
-        } else {
-            var rc: win32.foundation.RECT = undefined;
-            _ = win32.ui.windows_and_messaging.GetWindowRect(
-                self.hwnd.?,
-                &rc,
-            );
-            return .{
-                rc.right - rc.left,
-                rc.bottom - rc.top,
-            };
-        }
-    }
-
     fn registerClassOnce() !void {
         if (class_registered) {
             return;
@@ -188,6 +160,11 @@ const WindowsWindow = struct {
         ) orelse return WindowsError.StringConversionFailed;
         defer temp_allocator.free(converted_title);
 
+        const position = descriptor.position orelse .{
+            win32.ui.windows_and_messaging.CW_USEDEFAULT,
+            win32.ui.windows_and_messaging.CW_USEDEFAULT,
+        };
+
         var hwnd = win32.ui.windows_and_messaging.CreateWindowExW(
             win32.ui.windows_and_messaging.WINDOW_EX_STYLE.initFlags(.{}),
             class_name,
@@ -202,10 +179,10 @@ const WindowsWindow = struct {
                 .TABSTOP = 1,
                 .VISIBLE = 1,
             }),
-            win32.ui.windows_and_messaging.CW_USEDEFAULT,
-            win32.ui.windows_and_messaging.CW_USEDEFAULT,
-            descriptor.width,
-            descriptor.height,
+            position[0],
+            position[1],
+            descriptor.size[0],
+            descriptor.size[1],
             null,
             null,
             try getHInstance(),
@@ -231,6 +208,46 @@ const WindowsWindow = struct {
         return self.descriptor.title;
     }
 
+    pub fn setSize(self: *WindowsWindow, size: [2]i32) void {
+        self.modified_state.descriptor.size = size;
+    }
+
+    pub fn getContentSize(self: *const WindowsWindow) [2]i32 {
+        return self.getSize(true);
+    }
+
+    pub fn getSize(self: *const WindowsWindow, use_client_area: bool) [2]i32 {
+        if (use_client_area) {
+            var rc: win32.foundation.RECT = undefined;
+            _ = win32.ui.windows_and_messaging.GetClientRect(
+                self.hwnd.?,
+                &rc,
+            );
+            return .{
+                rc.right - rc.left,
+                rc.bottom - rc.top,
+            };
+        } else {
+            var rc: win32.foundation.RECT = undefined;
+            _ = win32.ui.windows_and_messaging.GetWindowRect(
+                self.hwnd.?,
+                &rc,
+            );
+            return .{
+                rc.right - rc.left,
+                rc.bottom - rc.top,
+            };
+        }
+    }
+
+    pub fn setPosition(self: *WindowsWindow, position: [2]i32) void {
+        self.modified_state.descriptor.position = position;
+    }
+
+    pub fn getPosition(self: *const WindowsWindow) ?[2]i32 {
+        return self.descriptor.position.?;
+    }
+
     pub fn setVisible(self: *WindowsWindow, should_show: bool) void {
         self.modified_state.descriptor.visible = should_show;
     }
@@ -241,6 +258,10 @@ const WindowsWindow = struct {
 
     pub fn setFullscreenMode(self: *WindowsWindow, mode: app.window.FullscreenMode) void {
         self.modified_state.descriptor.fullscreen_mode = mode;
+    }
+
+    pub fn getFullscreenMode(self: *const WindowsWindow) bool {
+        return self.descriptor.fullscreen_mode == .fullscreen;
     }
 
     pub fn shouldClose(self: *const WindowsWindow) bool {
@@ -260,7 +281,7 @@ const WindowsWindow = struct {
             self.hwnd,
             ._STYLE,
         );
-        var styles = self.getStyles();
+        var styles = getStyles(&self.descriptor);
         current_style &= ~@intFromEnum(Styles.mask);
         current_style = @bitCast(@intFromEnum(util.orEnum(
             Styles.ws,
@@ -315,15 +336,13 @@ const WindowsWindow = struct {
         });
     };
 
-    fn getStyles(self: *const WindowsWindow) Styles {
+    fn getStyles(descriptor: *const app.window.WindowDescriptor) Styles {
         const ws = win32.ui.windows_and_messaging.WINDOW_STYLE;
         const wexs = win32.ui.windows_and_messaging.WINDOW_EX_STYLE;
         var styles: Styles = .{
             .style = ws.initFlags(.{}),
             .ex = wexs.initFlags(.{}),
         };
-        const descriptor = self.descriptor;
-
         if (descriptor.is_popup) {
             styles.style = util.orEnum(ws, .{ styles.style, .POPUP });
         } else if (descriptor.fullscreen_mode == .fullscreen) {
@@ -414,6 +433,18 @@ const WindowsWindow = struct {
                     window.setFullscreenMode(if (window.descriptor.fullscreen_mode == .windowed) .fullscreen else .windowed);
                 }
             },
+            win32.ui.windows_and_messaging.WM_MOVE => {
+                const x: i32 = @intCast(LOWORD(@bitCast(lparam)));
+                const y: i32 = @intCast(HIWORD(@bitCast(lparam)));
+                window.modified_state.descriptor.position = .{ x, y };
+                window.descriptor.position = .{ x, y };
+            },
+            win32.ui.windows_and_messaging.WM_SIZE => {
+                const width = LOWORD(@bitCast(lparam));
+                const height = HIWORD(@bitCast(lparam));
+                window.modified_state.descriptor.size = .{ width, height };
+                window.descriptor.size = .{ width, height };
+            },
             else => {},
         }
 
@@ -432,10 +463,67 @@ const WindowsWindow = struct {
         return win32.ui.windows_and_messaging.DefWindowProcW(wnd, msg, wparam, lparam);
     }
 
-    fn update(self: *WindowsWindow) !void {
+    pub fn update(self: *WindowsWindow) !void {
         try self.updateTitle();
         try self.updateVisible();
+        try self.updateSizeAndPosition();
         try self.updateFullscreen();
+    }
+
+    fn updateSizeAndPosition(self: *WindowsWindow) !void {
+        const descriptor = self.modified_state.descriptor;
+
+        const size_changed = descriptor.size[0] != self.descriptor.size[0] or
+            descriptor.size[1] != self.descriptor.size[1];
+        const position_changed = blk: {
+            const new_position = descriptor.position;
+            const old_position = self.descriptor.position;
+            if (new_position == null) break :blk false;
+            if (old_position == null) break :blk true;
+
+            break :blk new_position.?[0] != old_position.?[0] or
+                new_position.?[1] != old_position.?[1];
+        };
+
+        if (!size_changed and !position_changed) {
+            return;
+        }
+
+        var flags: win32.ui.windows_and_messaging.SET_WINDOW_POS_FLAGS = .NOZORDER;
+
+        if (!size_changed) {
+            flags = util.orEnum(win32.ui.windows_and_messaging.SET_WINDOW_POS_FLAGS, .{
+                flags,
+                .NOSIZE,
+            });
+        } else {
+            self.descriptor.size = descriptor.size;
+        }
+        if (!position_changed) {
+            flags = util.orEnum(win32.ui.windows_and_messaging.SET_WINDOW_POS_FLAGS, .{
+                flags,
+                .NOMOVE,
+            });
+        }
+        {
+            self.descriptor.position = descriptor.position;
+        }
+
+        const size = descriptor.size;
+        const position = descriptor.position orelse .{
+            win32.ui.windows_and_messaging.CW_USEDEFAULT,
+            win32.ui.windows_and_messaging.CW_USEDEFAULT,
+        };
+
+        _ = win32.ui.windows_and_messaging.SetWindowPos(
+            self.hwnd,
+            null,
+            position[0],
+            position[1],
+            size[0],
+            size[1],
+            flags,
+        );
     }
 
     const HWND_TOP: ?win32.foundation.HWND = null;
@@ -467,40 +555,20 @@ const WindowsWindow = struct {
                 &mi,
             );
 
-            _ = win32.ui.windows_and_messaging.SetWindowPos(
-                self.hwnd,
-                HWND_TOP,
-                mi.rcMonitor.left,
-                mi.rcMonitor.top,
+            self.setPosition(.{ mi.rcMonitor.left, mi.rcMonitor.top });
+            self.setSize(.{
                 mi.rcMonitor.right - mi.rcMonitor.left,
                 mi.rcMonitor.bottom - mi.rcMonitor.top,
-                util.orEnum(win32.ui.windows_and_messaging.SET_WINDOW_POS_FLAGS, .{
-                    .NOOWNERZORDER,
-                    .DRAWFRAME,
-                }),
-            );
+            });
         }
 
         if (previous_mode == .fullscreen and mode == .windowed) {
-            _ = win32.ui.windows_and_messaging.SetWindowPlacement(
-                self.hwnd,
-                &self.non_fullscreen_window_placement,
-            );
-            _ = win32.ui.windows_and_messaging.SetWindowPos(
-                self.hwnd,
-                null,
-                0,
-                0,
-                0,
-                0,
-                util.orEnum(win32.ui.windows_and_messaging.SET_WINDOW_POS_FLAGS, .{
-                    .NOMOVE,
-                    .NOSIZE,
-                    .NOZORDER,
-                    .NOOWNERZORDER,
-                    .DRAWFRAME,
-                }),
-            );
+            var normal_rect = self.non_fullscreen_window_placement.rcNormalPosition;
+            self.setPosition(.{ normal_rect.left, normal_rect.top });
+            self.setSize(.{
+                normal_rect.right - normal_rect.left,
+                normal_rect.bottom - normal_rect.top,
+            });
         }
     }
 

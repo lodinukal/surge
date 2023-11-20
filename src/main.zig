@@ -31,8 +31,7 @@ const Context = struct {
             .application = application,
             .window = try application.createWindow(.{
                 .title = "helloo!",
-                .width = 800,
-                .height = 600,
+                .size = .{ 800, 600 },
             }),
         };
     }
@@ -66,7 +65,10 @@ const Context = struct {
         defer self.window.destroy();
         while (self.running()) {
             try self.pumpEvents();
-            self.window.setTitle(if (self.window.isFocused()) "focused" else "not focused");
+            var char_buffer: [256]u8 = undefined;
+            const pos = self.window.getPosition();
+            const res = try std.fmt.bufPrint(&char_buffer, "{}x{}", .{ pos.?[0], pos.?[1] });
+            self.window.setTitle(res);
             std.time.sleep(if (self.window.isFocused()) focused_sleep else unfocused_sleep);
         }
     }
