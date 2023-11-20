@@ -54,14 +54,14 @@ pub fn Pool(comptime T: type, comptime size: u16) type {
             if (!self.handleValid(handle)) {
                 return null;
             }
-            return &self.hot_list.get(handle.index);
+            return &self.hot_list.buffer[handle.index];
         }
 
         pub fn getCold(self: *const Self, handle: Handle(T)) ?*const Cold {
             if (!self.handleValid(handle)) {
                 return null;
             }
-            return &self.cold_list.get(handle.index);
+            return &self.cold_list.buffer[handle.index];
         }
 
         pub fn getHotMutable(self: *Self, handle: Handle(T)) ?*Hot {
@@ -111,26 +111,28 @@ test "Pool" {
     }, 4).init();
 
     var handle1 = try pool.put(1, 2);
-    var handle2 = try pool.put(3, 4);
-
     var hot = pool.getHot(handle1);
     var cold = pool.getCold(handle1);
+    var handle2 = try pool.put(3, 4);
 
-    try std.testing.expectEqual(@as(?u8, 1), hot);
-    try std.testing.expectEqual(@as(?u16, 2), cold);
+    // var hot = pool.getHot(handle1);
+    // var cold = pool.getCold(handle1);
 
-    try std.testing.expectEqual(@as(?u8, 3), pool.getHot(handle2));
-    try std.testing.expectEqual(@as(?u16, 4), pool.getCold(handle2));
+    try std.testing.expectEqual(@as(u8, 1), hot.?.*);
+    try std.testing.expectEqual(@as(u16, 2), cold.?.*);
+
+    try std.testing.expectEqual(@as(u8, 3), pool.getHot(handle2).?.*);
+    try std.testing.expectEqual(@as(u16, 4), pool.getCold(handle2).?.*);
 
     try pool.remove(handle1);
 
     try std.testing.expectEqual(@as(u3, 1), pool.free_list.len);
 
-    try std.testing.expectEqual(@as(?u8, null), pool.getHot(handle1));
-    try std.testing.expectEqual(@as(?u16, null), pool.getCold(handle1));
+    try std.testing.expectEqual(@as(?*const u8, null), pool.getHot(handle1));
+    try std.testing.expectEqual(@as(?*const u16, null), pool.getCold(handle1));
 
-    try std.testing.expectEqual(@as(?u8, 3), pool.getHot(handle2));
-    try std.testing.expectEqual(@as(?u16, 4), pool.getCold(handle2));
+    try std.testing.expectEqual(@as(u8, 3), pool.getHot(handle2).?.*);
+    try std.testing.expectEqual(@as(u16, 4), pool.getCold(handle2).?.*);
 
     var handle3 = try pool.put(5, 6);
 
