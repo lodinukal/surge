@@ -7,14 +7,19 @@ const d3d = win32.graphics.direct3d;
 const d3d11 = win32.graphics.direct3d11;
 const dxgi = win32.graphics.dxgi;
 
+const app = @import("../../../app/app.zig");
 const winappimpl = @import("../../../app/platform/windows.zig");
 
 const d3dcommon = @import("../d3d/common.zig");
 const Renderer = @import("../Renderer.zig");
+const Handle = @import("../pool.zig").Handle;
+const Pool = @import("../pool.zig").Pool;
 
 const symbols = Renderer.SymbolTable{
     .init = &init,
     .deinit = &deinit,
+    .createSwapChain = &createSwapChain,
+    .destroySwapChain = &destroySwapChain,
 };
 
 pub export fn getSymbols() *const Renderer.SymbolTable {
@@ -28,11 +33,16 @@ pub const RendererState = struct {
     device_context: ?*d3d11.ID3D11DeviceContext1 = null,
     feature_level: d3d.D3D_FEATURE_LEVEL = .@"9_1",
     debug_layer: ?*d3d11.ID3D11Debug = null,
+
+    // objects
+    swapchains: Pool(D3D11SwapChain, 2), // i think 2 is more than enough for now (2 game views)
 };
 pub var state: RendererState = undefined;
 
 fn init(r: *Renderer, create_info: Renderer.RendererCreateInfo) Renderer.Error!void {
-    state = .{};
+    state = .{
+        .swapchains = Pool(D3D11SwapChain, 2).init(),
+    };
     errdefer deinit(r);
 
     try createFactory(r);
@@ -258,4 +268,134 @@ fn findSuitableSampleDescFromMany(
 fn cleanupRenderingCapabilities(r: *Renderer) void {
     r.rendering_capabilities.formats.deinit();
     r.rendering_capabilities.shading_languages.deinit();
+}
+
+pub const D3D11SwapChain = struct {
+    pub const Hot = ?*dxgi.IDXGISwapChain;
+    pub const Cold = D3D11SwapChain;
+
+    internal: Renderer.SwapChain = undefined,
+
+    swapchain: ?*dxgi.IDXGISwapChain = null,
+    sample_desc: dxgi.common.DXGI_SAMPLE_DESC = .{
+        .Count = 1,
+        .Quality = 0,
+    },
+
+    colour_format: dxgi.common.DXGI_FORMAT = .UNKNOWN,
+    depth_stencil_format: dxgi.common.DXGI_FORMAT = .UNKNOWN,
+
+    pub fn init(
+        self: *D3D11SwapChain,
+        factory: *dxgi.IDXGIFactory,
+        create_info: *const Renderer.SwapChain.SwapChainCreateInfo,
+        window: *app.window.Window,
+    ) Renderer.Error!void {
+        self.* = .{};
+        try self.internal.init(create_info);
+        self.depth_stencil_format = d3dcommon.pickDepthStencilFormat(
+            create_info.depth_bits,
+            create_info.stencil_bits,
+        );
+
+        self.internal.setSurface(window);
+        try self.createSwapChain(
+            factory,
+            create_info.resolution,
+            create_info.samples,
+            create_info.buffers,
+        );
+    }
+
+    pub fn deinit(
+        self: *D3D11SwapChain,
+    ) Renderer.Error!void {
+        // try self.internal.deinit();
+        if (self.swapchain) |sc| _ = sc.IUnknown_Release();
+    }
+
+    fn createSwapChain(
+        self: *D3D11SwapChain,
+        factory: *dxgi.IDXGIFactory,
+        resolution: [2]u32,
+        samples: u32,
+        buffers: u32,
+    ) Renderer.Error!void {
+        const refresh_rate: dxgi.common.DXGI_RATIONAL = .{
+            .Numerator = 75,
+            .Denominator = 1,
+        }; // TODO: change this later based on surface
+        self.colour_format = .R8G8B8A8_UNORM;
+        self.sample_desc = findSuitableSampleDesc(
+            state.device.?,
+            self.colour_format,
+            samples,
+        );
+
+        var native_handle = self.internal.surface.?.getNativeHandle();
+        var desc: dxgi.DXGI_SWAP_CHAIN_DESC = .{
+            .BufferDesc = .{
+                .Width = resolution[0],
+                .Height = resolution[1],
+                .Format = self.colour_format,
+                .RefreshRate = refresh_rate,
+                .Scaling = .UNSPECIFIED,
+                .ScanlineOrdering = .UNSPECIFIED,
+            },
+            .SampleDesc = self.sample_desc,
+            .BufferUsage = .RENDER_TARGET_OUTPUT,
+            .BufferCount = if (buffers >= 3) 2 else 1,
+            .OutputWindow = native_handle.wnd,
+            .Windowed = winappimpl.TRUE,
+            .SwapEffect = .DISCARD,
+            .Flags = 0,
+        };
+        if (self.swapchain) |sc| _ = sc.IUnknown_Release();
+        const hr = factory.IDXGIFactory_CreateSwapChain(
+            @ptrCast(state.device.?),
+            &desc,
+            &self.swapchain,
+        );
+
+        std.debug.print("swapchain made sucessfully!!\n", .{});
+
+        if (winapi.zig.FAILED(hr)) {
+            winappimpl.messageBox(
+                state.adapter_info.?.allocator,
+                "Failed to create swapchain",
+                "Error: {}",
+                .{hr},
+                .OK,
+            );
+            return Renderer.Error.SwapChainCreationFailed;
+        }
+    }
+};
+
+pub fn createSwapChain(
+    r: *Renderer,
+    create_info: *const Renderer.SwapChain.SwapChainCreateInfo,
+    window: *app.window.Window,
+) Renderer.Error!Handle(Renderer.SwapChain) {
+    _ = r;
+
+    const handle = state.swapchains.put(
+        null,
+        undefined,
+    ) catch return Renderer.Error.SwapChainCreationFailed;
+    const sc = state.swapchains.getColdMutable(handle).?;
+    try sc.init(state.factory.?, create_info, window);
+    return handle.as(Renderer.SwapChain);
+}
+
+pub fn destroySwapChain(r: *Renderer, handle: Handle(Renderer.SwapChain)) void {
+    _ = r;
+    const as_handle = handle.as(D3D11SwapChain);
+    const sc = state.swapchains.getColdMutable(as_handle) orelse return;
+    sc.deinit() catch {};
+    state.swapchains.remove(as_handle) catch {};
+}
+
+test {
+    std.testing.refAllDecls(@This());
 }

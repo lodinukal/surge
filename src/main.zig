@@ -119,8 +119,11 @@ pub fn main() !void {
     var renderer = try Renderer.create(alloc, .{});
     defer renderer.destroy();
     try renderer.load(.d3d11);
-    const rendering_caps = try renderer.getRenderingCapabilities();
-    std.debug.print("{any}\n", .{rendering_caps.shading_languages.items});
+
+    const sw = try renderer.createSwapchain(&.{
+        .resolution = .{ 800, 600 },
+    }, context.window);
+    defer renderer.destroySwapchain(sw) catch {};
 
     try context.spawnWindowThread();
 
