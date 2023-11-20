@@ -5,6 +5,13 @@ pub fn Handle(comptime T: type) type {
     return packed struct(u48) {
         index: u32,
         generation: u16,
+
+        pub fn as(self: @This(), comptime U: type) Handle(U) {
+            return .{
+                .index = self.index,
+                .generation = self.generation,
+            };
+        }
     };
 }
 
@@ -43,18 +50,32 @@ pub fn Pool(comptime T: type, comptime size: u16) type {
             return true;
         }
 
-        pub fn getHot(self: *const Self, handle: Handle(T)) ?Hot {
+        pub fn getHot(self: *const Self, handle: Handle(T)) ?*const Hot {
             if (!self.handleValid(handle)) {
                 return null;
             }
-            return self.hot_list.get(handle.index);
+            return &self.hot_list.get(handle.index);
         }
 
-        pub fn getCold(self: *const Self, handle: Handle(T)) ?Cold {
+        pub fn getCold(self: *const Self, handle: Handle(T)) ?*const Cold {
             if (!self.handleValid(handle)) {
                 return null;
             }
-            return self.cold_list.get(handle.index);
+            return &self.cold_list.get(handle.index);
+        }
+
+        pub fn getHotMutable(self: *Self, handle: Handle(T)) ?*Hot {
+            if (!self.handleValid(handle)) {
+                return null;
+            }
+            return &self.hot_list.buffer[handle.index];
+        }
+
+        pub fn getColdMutable(self: *Self, handle: Handle(T)) ?*Cold {
+            if (!self.handleValid(handle)) {
+                return null;
+            }
+            return &self.cold_list.buffer[handle.index];
         }
 
         pub fn put(self: *Self, hot: Hot, cold: Cold) !Handle(T) {
