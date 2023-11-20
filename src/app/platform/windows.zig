@@ -181,8 +181,8 @@ const WindowsWindow = struct {
             }),
             position[0],
             position[1],
-            descriptor.size[0],
-            descriptor.size[1],
+            @intCast(descriptor.size[0]),
+            @intCast(descriptor.size[1]),
             null,
             null,
             try getHInstance(),
@@ -208,15 +208,15 @@ const WindowsWindow = struct {
         return self.descriptor.title;
     }
 
-    pub fn setSize(self: *WindowsWindow, size: [2]i32) void {
+    pub fn setSize(self: *WindowsWindow, size: [2]u32) void {
         self.modified_state.descriptor.size = size;
     }
 
-    pub fn getContentSize(self: *const WindowsWindow) [2]i32 {
+    pub fn getContentSize(self: *const WindowsWindow) [2]u32 {
         return self.getSize(true);
     }
 
-    pub fn getSize(self: *const WindowsWindow, use_client_area: bool) [2]i32 {
+    pub fn getSize(self: *const WindowsWindow, use_client_area: bool) [2]u32 {
         if (use_client_area) {
             var rc: win32.foundation.RECT = undefined;
             _ = win32.ui.windows_and_messaging.GetClientRect(
@@ -224,8 +224,8 @@ const WindowsWindow = struct {
                 &rc,
             );
             return .{
-                rc.right - rc.left,
-                rc.bottom - rc.top,
+                @intCast(rc.right - rc.left),
+                @intCast(rc.bottom - rc.top),
             };
         } else {
             var rc: win32.foundation.RECT = undefined;
@@ -234,8 +234,8 @@ const WindowsWindow = struct {
                 &rc,
             );
             return .{
-                rc.right - rc.left,
-                rc.bottom - rc.top,
+                @intCast(rc.right - rc.left),
+                @intCast(rc.bottom - rc.top),
             };
         }
     }
@@ -520,8 +520,8 @@ const WindowsWindow = struct {
             null,
             position[0],
             position[1],
-            size[0],
-            size[1],
+            @intCast(size[0]),
+            @intCast(size[1]),
             flags,
         );
     }
@@ -557,8 +557,8 @@ const WindowsWindow = struct {
 
             self.setPosition(.{ mi.rcMonitor.left, mi.rcMonitor.top });
             self.setSize(.{
-                mi.rcMonitor.right - mi.rcMonitor.left,
-                mi.rcMonitor.bottom - mi.rcMonitor.top,
+                @intCast(mi.rcMonitor.right - mi.rcMonitor.left),
+                @intCast(mi.rcMonitor.bottom - mi.rcMonitor.top),
             });
         }
 
@@ -566,8 +566,8 @@ const WindowsWindow = struct {
             var normal_rect = self.non_fullscreen_window_placement.rcNormalPosition;
             self.setPosition(.{ normal_rect.left, normal_rect.top });
             self.setSize(.{
-                normal_rect.right - normal_rect.left,
-                normal_rect.bottom - normal_rect.top,
+                @intCast(normal_rect.right - normal_rect.left),
+                @intCast(normal_rect.bottom - normal_rect.top),
             });
         }
     }

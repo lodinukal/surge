@@ -9,7 +9,7 @@ pub const NativeHandle = struct { wnd: platform.impl.NativeHandle };
 
 pub const WindowDescriptor = struct {
     title: []const u8,
-    size: [2]i32 = .{ 800, 600 },
+    size: [2]u32 = .{ 800, 600 },
     position: ?[2]i32 = null,
     is_popup: bool = false,
     visible: bool = false,
@@ -57,15 +57,15 @@ pub const Window = struct {
         return self.platform_window.getTitle();
     }
 
-    pub fn setSize(self: *Window, size: [2]i32) void {
+    pub fn setSize(self: *Window, size: [2]u32) void {
         self.platform_window.setSize(size);
     }
 
-    pub fn getContentSize(self: *const Window) [2]i32 {
+    pub fn getContentSize(self: *const Window) [2]u32 {
         return self.platform_window.getContentSize();
     }
 
-    pub fn getSize(self: *const Window, use_client_area: bool) [2]i32 {
+    pub fn getSize(self: *const Window, use_client_area: bool) [2]u32 {
         return self.platform_window.getSize(use_client_area);
     }
 
@@ -108,6 +108,6 @@ pub const Window = struct {
     /// this immediately updates the window's properties,
     /// *should* be called from the window thread
     pub fn update(self: *Window) void {
-        self.platform_window.update();
+        self.platform_window.update() catch {};
     }
 };
