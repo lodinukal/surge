@@ -176,17 +176,6 @@ const WindowsWindow = struct {
         if (win32.ui.windows_and_messaging.RegisterClassW(&wc) == 0) return WindowsError.ClassRegistrationFailed;
     }
 
-    fn convertToUtf16WithAllocator(
-        al: std.mem.Allocator,
-        str: []const u8,
-    ) ?[:0]const u16 {
-        var converted = std.unicode.utf8ToUtf16LeWithNull(
-            al,
-            str,
-        ) catch return null;
-        return converted;
-    }
-
     fn buildWindow(self: *WindowsWindow) !win32.foundation.HWND {
         const descriptor = self.descriptor;
 
@@ -549,6 +538,28 @@ const WindowsWindow = struct {
 pub fn getHInstance() !win32.foundation.HINSTANCE {
     var module = win32.system.library_loader.GetModuleHandleW(null);
     return module;
+}
+
+pub fn convertToUtf16WithAllocator(
+    al: std.mem.Allocator,
+    str: []const u8,
+) ?[:0]const u16 {
+    var converted = std.unicode.utf8ToUtf16LeWithNull(
+        al,
+        str,
+    ) catch return null;
+    return converted;
+}
+
+pub fn convertToUtf8WithAllocator(
+    al: std.mem.Allocator,
+    str: []const u16,
+) ?[]const u8 {
+    var converted = std.unicode.utf16leToUtf8Alloc(
+        al,
+        str,
+    ) catch return null;
+    return converted;
 }
 
 pub fn messageBox(

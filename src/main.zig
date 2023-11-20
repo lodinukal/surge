@@ -114,10 +114,11 @@ pub fn main() !void {
     var context = try Context.init(alloc);
     defer context.deinit();
 
-    var renderer = try Renderer.create(alloc);
+    var renderer = try Renderer.create(alloc, .{});
     defer renderer.destroy();
     try renderer.load(.d3d11);
-    std.debug.print("{}\n", .{try renderer.getRendererInfo()});
+    const rendering_caps = try renderer.getRenderingCapabilities();
+    std.debug.print("{any}\n", .{rendering_caps.shading_languages.items});
 
     try context.spawnWindowThread();
 

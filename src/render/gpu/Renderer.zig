@@ -14,10 +14,14 @@ const Self = @This();
 pub var global_renderer: ?*Self = null;
 
 pub const Error = error{
+    Unknown,
     RendererNotLoaded,
     InitialisationFailed,
     InvalidHandle,
     DeviceLost,
+
+    // RenderTarget
+    InvalidResolution,
 };
 
 pub const RendererType = enum {
@@ -30,16 +34,20 @@ pub const RendererType = enum {
 };
 
 pub const SymbolTable = struct {
-    init: *const fn (self: *Self) Error!void,
+    init: *const fn (self: *Self, create_info: RendererCreateInfo) Error!void,
     deinit: *const fn (self: *Self) void,
-    get_renderer_info: *const fn (self: *Self) Error!*const RendererInfo,
-    get_rendering_capabilities: *const fn (self: *Self) Error!*const RenderingCapabilities,
 };
 
+backing_allocator: std.mem.Allocator,
+arena: std.heap.ArenaAllocator,
 allocator: std.mem.Allocator,
+create_info: RendererCreateInfo = .{},
 symbols: ?*const SymbolTable = null,
 library_loaded: ?std.DynLib = null,
 debug: bool = builtin.mode == .Debug, // TODO: make this a runtime option
+
+renderer_info: RendererInfo = undefined,
+rendering_capabilities: RenderingCapabilities = undefined,
 
 pub fn availableRenderers() []const RendererType {
     return &[_]RendererType{
@@ -52,11 +60,11 @@ pub fn availableRenderers() []const RendererType {
     };
 }
 
-pub fn create(allocator: std.mem.Allocator) !*Self {
+pub fn create(allocator: std.mem.Allocator, create_info: RendererCreateInfo) !*Self {
     if (global_renderer) |gr| return gr;
     var ptr = try allocator.create(Self);
     errdefer allocator.destroy(ptr);
-    try ptr.init(allocator);
+    try ptr.init(allocator, create_info);
     global_renderer = ptr;
     return ptr;
 }
@@ -67,10 +75,15 @@ pub fn destroy(self: *Self) void {
     self.allocator.destroy(self);
 }
 
-pub fn init(self: *Self, allocator: std.mem.Allocator) Error!void {
+pub fn init(self: *Self, allocator: std.mem.Allocator, create_info: RendererCreateInfo) Error!void {
     self.* = .{
-        .allocator = allocator,
+        .backing_allocator = allocator,
+        .arena = std.heap.ArenaAllocator.init(allocator),
+        .allocator = undefined,
+        .create_info = create_info,
     };
+
+    self.allocator = self.arena.allocator();
 }
 
 pub fn deinit(self: *Self) void {
@@ -94,7 +107,7 @@ pub fn load(self: *Self, backend: RendererType) !void {
             ) orelse return Error.RendererNotLoaded;
             self.symbols = symbols();
 
-            try self.symbols.?.init(self);
+            try self.symbols.?.init(self, self.create_info);
         },
         .d3d12 => {},
         .gles => {},
@@ -108,6 +121,7 @@ pub fn unload(self: *Self) void {
     if (self.symbols) |s| {
         s.deinit(self);
         self.symbols = null;
+        _ = self.arena.reset(.free_all);
     }
     if (self.library_loaded) |*lib| {
         lib.close();
@@ -145,12 +159,12 @@ fn ensureLoaded(self: *Self) Error!void {
 
 pub fn getRendererInfo(self: *Self) Error!*const RendererInfo {
     try self.ensureLoaded();
-    return self.symbols.?.get_renderer_info(self);
+    return &self.renderer_info;
 }
 
 pub fn getRenderingCapabilities(self: *Self) Error!*const RenderingCapabilities {
     try self.ensureLoaded();
-    return self.symbols.?.get_rendering_capabilities(self);
+    return &self.rendering_capabilities;
 }
 
 test {
@@ -259,17 +273,10 @@ pub const DepthRange = enum { minus_one_to_one, zero_to_one };
 
 pub const CPUAccess = enum { read, write, write_discard, read_write };
 
-pub const RenderSystemInfo = packed struct(u4) {
-    debug: bool = false,
-    nvidia: bool = false,
-    amd: bool = false,
-    intel: bool = false,
-};
-
 pub const RendererInfo = struct {
-    name: []const u8,
+    name: ?[]const u8,
     vendor: []const u8,
-    device: []const u8,
+    device: ?[]const u8,
     shading_language: ShadingLanguage,
     extensions: std.ArrayList([]const u8),
     pipeline_cache_id: std.ArrayList(u8),
@@ -278,12 +285,114 @@ pub const RendererInfo = struct {
         self.extensions.deinit();
         self.pipeline_cache_id.deinit();
     }
+
+    pub fn format(
+        self: RendererInfo,
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = fmt;
+        _ = options;
+        try writer.print(
+            \\RendererInfo:
+            \\  name: {?s}
+            \\  vendor: {s}
+            \\  device: {?s}
+            \\  shading_language: {s}
+            // \\  extensions: {s}
+            // \\  pipeline_cache_id: {s}
+        , .{
+            self.name,
+            self.vendor,
+            self.device,
+            @tagName(self.shading_language),
+            // self.extensions,
+            // self.pipeline_cache_id,
+        });
+    }
 };
 
-pub const RenderSystemCreateInfo = struct {
-    info: RenderSystemInfo,
+pub const RendererDevicePreference = packed struct(u4) {
+    debug: bool = false,
+    nvidia: bool = false,
+    amd: bool = false,
+    intel: bool = false,
+
+    pub fn isNoPreference(self: RendererDevicePreference) bool {
+        return !self.nvidia and !self.amd and !self.intel;
+    }
+};
+
+pub const RendererCreateInfo = struct {
+    preference: RendererDevicePreference = .{},
     debugger: ?*const u8 = null,
     specific_config: ?[]const u8 = null,
+};
+
+pub const DeviceVendor = enum {
+    unknown,
+    apple,
+    amd,
+    intel,
+    matrox,
+    microsoft,
+    nvidia,
+    oracle,
+    vmware,
+
+    pub fn fromId(id: u16) DeviceVendor {
+        return switch (id) {
+            0x106B => .apple,
+            0x1002 => .amd,
+            0x8086 => .intel,
+            0x102B => .matrox,
+            0x1414 => .microsoft,
+            0x10DE => .nvidia,
+            0x108E => .oracle,
+            0x15AD => .vmware,
+            else => .unknown,
+        };
+    }
+
+    pub fn getName(self: DeviceVendor) []const u8 {
+        return switch (self) {
+            .unknown => "unknown vendor",
+            .apple => "Apple Inc.",
+            .amd => "Advanced Micro Devices, Inc.",
+            .intel => "Intel Corporation",
+            .matrox => "Matrox Electronic Systems Ltd.",
+            .microsoft => "Microsoft Corporation",
+            .nvidia => "NVIDIA Corporation",
+            .oracle => "Oracle Corporation",
+            .vmware => "VMware Inc.",
+        };
+    }
+
+    pub fn matchDevicePreference(self: DeviceVendor, pref: RendererDevicePreference) bool {
+        return switch (self) {
+            .nvidia => pref.nvidia,
+            .amd => pref.amd,
+            .intel => pref.intel,
+            else => false,
+        };
+    }
+};
+
+pub const AdapterInfo = struct {
+    allocator: std.mem.Allocator,
+    name: ?[]const u8,
+    vendor: DeviceVendor,
+    memory: u64 = 0,
+    outputs: std.ArrayList(std.ArrayList(app.display.DisplayMode)),
+
+    pub fn deinit(self: *AdapterInfo) void {
+        if (self.name) |n| self.allocator.free(n);
+        for (self.outputs.items) |output| {
+            output.deinit();
+        }
+        self.outputs.deinit();
+    }
 };
 
 pub const RenderingFeatures = struct {
@@ -311,7 +420,7 @@ pub const RenderingFeatures = struct {
     logic_ops: bool = false,
     pipeline_caching: bool = false,
     pipeline_statistics: bool = false,
-    render_confitions: bool = false,
+    render_conditions: bool = false,
 };
 
 pub const RenderingLimits = struct {
@@ -342,12 +451,12 @@ pub const RenderingLimits = struct {
 };
 
 pub const RenderingCapabilities = struct {
-    origin: ScreenOrigin,
-    depth_range: DepthRange,
+    origin: ScreenOrigin = .lower_left,
+    depth_range: DepthRange = .minus_one_to_one,
     shading_languages: std.ArrayList(ShadingLanguage),
     formats: std.ArrayList(format.Format),
-    features: RenderingFeatures,
-    limits: RenderingLimits,
+    features: RenderingFeatures = .{},
+    limits: RenderingLimits = .{},
 
     pub fn deinit(self: *RenderingCapabilities) void {
         self.shading_languages.deinit();
