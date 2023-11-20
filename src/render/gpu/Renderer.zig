@@ -9,6 +9,9 @@ const Pool = @import("pool.zig").Pool;
 const DynamicPool = @import("pool.zig").DynamicPool;
 const Handle = @import("pool.zig").Handle;
 
+pub const RenderTarget = @import("RenderTarget.zig");
+pub const SwapChain = @import("SwapChain.zig");
+
 const Self = @This();
 
 pub var global_renderer: ?*Self = null;
@@ -22,6 +25,9 @@ pub const Error = error{
 
     // RenderTarget
     InvalidResolution,
+
+    // SwapChain
+    SwapChainCreationFailed,
 };
 
 pub const RendererType = enum {
@@ -36,6 +42,13 @@ pub const RendererType = enum {
 pub const SymbolTable = struct {
     init: *const fn (self: *Self, create_info: RendererCreateInfo) Error!void,
     deinit: *const fn (self: *Self) void,
+
+    createSwapChain: *const fn (
+        self: *Self,
+        create_info: *const SwapChain.SwapChainCreateInfo,
+        window: *app.window.Window,
+    ) Error!Handle(SwapChain),
+    destroySwapChain: *const fn (self: *Self, swapchain: Handle(SwapChain)) void,
 };
 
 backing_allocator: std.mem.Allocator,
@@ -139,21 +152,19 @@ fn ensureLoaded(self: *Self) Error!void {
 }
 
 // Swapchain
-// pub fn createSwapchain(
-//     self: *Self,
-//     swapchain_descriptor: *const Swapchain.SwapchainDescriptor,
-//     window: *app.window.Window,
-// ) !Handle(Swapchain) {
-//     try self.ensureLoaded();
-//     _ = swapchain_descriptor;
-//     _ = window;
-//     return Error.RendererNotLoaded;
-// }
+pub fn createSwapchain(
+    self: *Self,
+    create_info: *const SwapChain.SwapChainCreateInfo,
+    window: *app.window.Window,
+) Error!Handle(SwapChain) {
+    try self.ensureLoaded();
+    return self.symbols.?.createSwapChain(self, create_info, window);
+}
 
-// pub fn destroySwapchain(self: *Self, swapchain: Handle(Swapchain)) !void {
-//     try self.ensureLoaded();
-//     _ = swapchain;
-// }
+pub fn destroySwapchain(self: *Self, swapchain: Handle(SwapChain)) Error!void {
+    try self.ensureLoaded();
+    self.symbols.?.destroySwapChain(self, swapchain);
+}
 
 // info
 
