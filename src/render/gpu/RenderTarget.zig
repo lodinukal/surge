@@ -24,34 +24,31 @@ pub const RenderTargetCreateInfo = struct {
     depth_stencil_attachment: AttachmentCreateInfo = .{ .format = .undefined },
 };
 
-impl: struct {
-    parent: *anyopaque,
-    getResolution: fn (*const anyopaque) [2]u32,
-    getSamples: fn (*const anyopaque) u32,
-    getNumColourAttachments: fn (*const anyopaque) u32,
-    hasDepthAttachment: fn (*const anyopaque) bool,
-    hasStencilAttachment: fn (*const anyopaque) bool,
-    // getRenderPass: fn(*const anyopaque) ?Handle(Renderer.RenderPass),
-},
+fn_getResolution: ?*const fn (*const Self) [2]u32 = null,
+fn_getSamples: ?*const fn (*const Self) u32 = null,
+fn_getNumColourAttachments: ?*const fn (*const Self) u32 = null,
+fn_hasDepthAttachment: ?*const fn (*const Self) bool = null,
+fn_hasStencilAttachment: ?*const fn (*const Self) bool = null,
+// getRenderPass: fn(*const Self) ?Handle(Renderer.RenderPass),
 
 pub fn getResolution(self: *const Self) [2]u32 {
-    return self.getResolution(self.parent);
+    return self.fn_getResolution.?(self);
 }
 
 pub fn getSamples(self: *const Self) u32 {
-    return self.getSamples(self.parent);
+    return self.fn_getSamples.?(self);
 }
 
 pub fn getNumColourAttachments(self: *const Self) u32 {
-    return self.getNumColourAttachments(self.parent);
+    return self.fn_getNumColourAttachments.?(self);
 }
 
 pub fn hasDepthAttachment(self: *const Self) bool {
-    return self.hasDepthAttachment(self.parent);
+    return self.fn_hasDepthAttachment.?(self);
 }
 
 pub fn hasStencilAttachment(self: *const Self) bool {
-    return self.hasStencilAttachment(self.parent);
+    return self.fn_hasStencilAttachment.?(self);
 }
 
 // TODO: pub fn getRenderPass(self: *const Self) ?Handle(Renderer.RenderPass)
@@ -71,3 +68,7 @@ pub fn validateResolution(self: *Self, resolution: [2]u32) !void {
 //     const size = renderer.textureGetMipExtent(texture, mip_level);
 //     try self.validateResolution(size);
 // }
+
+test {
+    std.testing.refAllDecls(Self);
+}
