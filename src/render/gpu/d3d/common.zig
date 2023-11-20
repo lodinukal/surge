@@ -362,3 +362,13 @@ pub fn getMaxCubeTextureDimensionFromFeatureLevel(level: d3d.D3D_FEATURE_LEVEL) 
     if (isGreaterOrEqualFeatureLevel(level, .@"9_3")) return 4096;
     return 512;
 }
+
+pub fn pickDepthStencilFormat(depth: u32, stencil: u32) dxgi.common.DXGI_FORMAT {
+    if (depth == 0 and stencil == 0) return .UNKNOWN;
+
+    if (depth == 32) {
+        if (stencil == 8) return .D32_FLOAT_S8X24_UINT;
+        return .D32_FLOAT;
+    } else if (depth == 16) return .D16_UNORM;
+    return .D24_UNORM_S8_UINT;
+}
