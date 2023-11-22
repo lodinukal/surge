@@ -278,8 +278,9 @@ pub const D3D11SwapChain = struct {
     depth_stencil_format: dxgi.common.DXGI_FORMAT = .UNKNOWN,
 
     // buffers
+    // should probably allow for more than one buffer
     colour_buffer: ?*d3d11.ID3D11Texture2D = null,
-    renter_target_view: ?*d3d11.ID3D11RenderTargetView = null,
+    render_target_view: ?*d3d11.ID3D11RenderTargetView = null,
     depth_buffer: ?*d3d11.ID3D11Texture2D = null,
     depth_stencil_view: ?*d3d11.ID3D11DepthStencilView = null,
 
@@ -464,7 +465,7 @@ pub const D3D11SwapChain = struct {
         //  }
 
         d3dcommon.releaseIUnknown(d3d11.ID3D11Texture2D, &self.colour_buffer);
-        d3dcommon.releaseIUnknown(d3d11.ID3D11RenderTargetView, &self.renter_target_view);
+        d3dcommon.releaseIUnknown(d3d11.ID3D11RenderTargetView, &self.render_target_view);
         d3dcommon.releaseIUnknown(d3d11.ID3D11Texture2D, &self.depth_buffer);
         d3dcommon.releaseIUnknown(d3d11.ID3D11DepthStencilView, &self.depth_stencil_view);
 
@@ -504,11 +505,11 @@ pub const D3D11SwapChain = struct {
             "Failed to get swapchain buffer",
         )) return Renderer.Error.SwapChainBufferCreationFailed;
 
-        d3dcommon.releaseIUnknown(d3d11.ID3D11RenderTargetView, &self.renter_target_view);
+        d3dcommon.releaseIUnknown(d3d11.ID3D11RenderTargetView, &self.render_target_view);
         hr = state.device.?.ID3D11Device_CreateRenderTargetView(
             @ptrCast(self.colour_buffer.?),
             null,
-            &self.renter_target_view,
+            &self.render_target_view,
         );
         if (winappimpl.reportHResultError(
             state.adapter_info.?.allocator,
