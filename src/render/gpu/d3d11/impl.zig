@@ -6,6 +6,7 @@ const win32 = winapi.windows.win32;
 const d3d = win32.graphics.direct3d;
 const d3d11 = win32.graphics.direct3d11;
 const dxgi = win32.graphics.dxgi;
+const hlsl = win32.graphics.hlsl;
 
 const app = @import("../../../app/app.zig");
 const winappimpl = @import("../../../app/platform/windows.zig");
@@ -13,12 +14,15 @@ const winappimpl = @import("../../../app/platform/windows.zig");
 const d3dcommon = @import("../d3d/common.zig");
 const Renderer = @import("../Renderer.zig");
 const Handle = @import("../pool.zig").Handle;
+const DynamicPool = @import("../pool.zig").DynamicPool;
 const Pool = @import("../pool.zig").Pool;
 
 const symbols = Renderer.SymbolTable{
     .init = &init,
     .deinit = &deinit,
     .createSwapChain = &createSwapChain,
+    .useSwapChain = &useSwapChain,
+    .useSwapChainMutable = &useSwapChainMutable,
     .destroySwapChain = &destroySwapChain,
 };
 
@@ -69,16 +73,11 @@ fn deinit(r: *Renderer) void {
 fn createFactory(r: *Renderer) !void {
     var hr: win32.foundation.HRESULT = 0;
     hr = dxgi.CreateDXGIFactory(dxgi.IID_IDXGIFactory, @ptrCast(&state.factory));
-    if (winapi.zig.FAILED(hr)) {
-        winappimpl.messageBox(
-            r.allocator,
-            "Failed to create IDXGIFactory",
-            "Error: {}",
-            .{hr},
-            .OK,
-        );
-        return Renderer.Error.InitialisationFailed;
-    }
+    if (winappimpl.reportHResultError(
+        r.allocator,
+        hr,
+        "Failed to create DXGIFactory",
+    )) return Renderer.Error.InitialisationFailed;
 }
 
 fn cleanupFactory() void {
@@ -128,16 +127,11 @@ fn createDeviceAndContext(r: *Renderer, adapter: ?*dxgi.IDXGIAdapter) !void {
         &base_device_context,
     );
 
-    if (winapi.zig.FAILED(hr)) {
-        winappimpl.messageBox(
-            r.allocator,
-            "Failed to initialise D3D11",
-            "Error: {}",
-            .{hr},
-            .OK,
-        );
-        return Renderer.Error.InitialisationFailed;
-    }
+    if (winappimpl.reportHResultError(
+        r.allocator,
+        hr,
+        "Failed to initialise D3D11",
+    )) return Renderer.Error.InitialisationFailed;
 
     _ = base_device.?.IUnknown_QueryInterface(
         d3d11.IID_ID3D11Device1,
@@ -150,16 +144,13 @@ fn createDeviceAndContext(r: *Renderer, adapter: ?*dxgi.IDXGIAdapter) !void {
     );
 
     if (r.debug) {
-        var debug: ?*d3d11.ID3D11Debug = null;
-        defer _ = if (debug) |d| d.IUnknown_Release();
-
-        _ = state.device.?.IUnknown_QueryInterface(d3d11.IID_ID3D11Debug, @ptrCast(&debug));
-        if (debug != null) {
+        _ = state.device.?.IUnknown_QueryInterface(d3d11.IID_ID3D11Debug, @ptrCast(&state.debug_layer));
+        if (state.debug_layer != null) {
             var info_queue: ?*d3d11.ID3D11InfoQueue = null;
-            if (winapi.zig.SUCCEEDED(debug.?.IUnknown_QueryInterface(d3d11.IID_ID3D11InfoQueue, @ptrCast(&info_queue)))) {
-                _ = info_queue.?.ID3D11InfoQueue_SetBreakOnSeverity(.CORRUPTION, winappimpl.TRUE);
-                _ = info_queue.?.ID3D11InfoQueue_SetBreakOnSeverity(.ERROR, winappimpl.TRUE);
-                _ = info_queue.?.ID3D11InfoQueue_SetBreakOnSeverity(.WARNING, winappimpl.TRUE);
+            if (winapi.zig.SUCCEEDED(state.debug_layer.?.IUnknown_QueryInterface(d3d11.IID_ID3D11InfoQueue, @ptrCast(&info_queue)))) {
+                // _ = info_queue.?.ID3D11InfoQueue_SetBreakOnSeverity(.CORRUPTION, winappimpl.TRUE);
+                // _ = info_queue.?.ID3D11InfoQueue_SetBreakOnSeverity(.ERROR, winappimpl.TRUE);
+                // _ = info_queue.?.ID3D11InfoQueue_SetBreakOnSeverity(.WARNING, winappimpl.TRUE);
                 _ = info_queue.?.IUnknown_Release();
             }
         }
@@ -167,6 +158,7 @@ fn createDeviceAndContext(r: *Renderer, adapter: ?*dxgi.IDXGIAdapter) !void {
 }
 
 fn cleanupDeviceAndContext() void {
+    if (state.debug_layer) |d| _ = d.IUnknown_Release();
     if (state.device_context) |dc| _ = dc.IUnknown_Release();
     if (state.device) |d| _ = d.IUnknown_Release();
 }
@@ -274,7 +266,7 @@ pub const D3D11SwapChain = struct {
     pub const Hot = ?*dxgi.IDXGISwapChain;
     pub const Cold = D3D11SwapChain;
 
-    internal: Renderer.SwapChain = undefined,
+    base: Renderer.SwapChain = undefined,
 
     swapchain: ?*dxgi.IDXGISwapChain = null,
     sample_desc: dxgi.common.DXGI_SAMPLE_DESC = .{
@@ -285,6 +277,23 @@ pub const D3D11SwapChain = struct {
     colour_format: dxgi.common.DXGI_FORMAT = .UNKNOWN,
     depth_stencil_format: dxgi.common.DXGI_FORMAT = .UNKNOWN,
 
+    // buffers
+    colour_buffer: ?*d3d11.ID3D11Texture2D = null,
+    renter_target_view: ?*d3d11.ID3D11RenderTargetView = null,
+    depth_buffer: ?*d3d11.ID3D11Texture2D = null,
+    depth_stencil_view: ?*d3d11.ID3D11DepthStencilView = null,
+
+    // current command buffer
+    // binding_command_buffer: ?Handle(CommandBuffer) = null,
+
+    pub inline fn fromBaseMut(rt: *Renderer.SwapChain) *D3D11SwapChain {
+        return @fieldParentPtr(D3D11SwapChain, "base", rt);
+    }
+
+    pub inline fn fromBase(rt: *const Renderer.SwapChain) *const D3D11SwapChain {
+        return @fieldParentPtr(D3D11SwapChain, "base", @constCast(rt));
+    }
+
     pub fn init(
         self: *D3D11SwapChain,
         factory: *dxgi.IDXGIFactory,
@@ -292,29 +301,98 @@ pub const D3D11SwapChain = struct {
         window: *app.window.Window,
     ) Renderer.Error!void {
         self.* = .{};
-        try self.internal.init(create_info);
+        try self.base.init(create_info);
+
+        self.base.fn_present = &_present;
+        self.base.fn_getCurrentSwapIndex = &_getCurrentSwapIndex;
+        self.base.fn_getNumSwapBuffers = &_getNumSwapBuffers;
+        self.base.fn_getColourFormat = &_getColourFormat;
+        self.base.fn_getDepthStencilFormat = &_getDepthStencilFormat;
+        self.base.fn_resizeBuffers = &_resizeBuffers;
+
+        self.base.render_target.fn_getSamples = &_getSamples;
+
         self.depth_stencil_format = d3dcommon.pickDepthStencilFormat(
             create_info.depth_bits,
             create_info.stencil_bits,
         );
 
-        self.internal.setSurface(window);
+        self.base.setSurface(window);
         try self.createSwapChain(
             factory,
             create_info.resolution,
             create_info.samples,
             create_info.buffers,
         );
+        try self.recreateBuffers();
     }
 
     pub fn deinit(
         self: *D3D11SwapChain,
     ) Renderer.Error!void {
-        // try self.internal.deinit();
+        // try self.base.deinit();
         if (self.swapchain) |sc| _ = sc.IUnknown_Release();
     }
 
-    fn createSwapChain(
+    // SwapChain implementations
+    fn _present(self: *Renderer.SwapChain) Renderer.Error!void {
+        return fromBaseMut(self).present();
+    }
+
+    pub fn present(self: *D3D11SwapChain) Renderer.Error!void {
+        const hr = self.swapchain.?.IDXGISwapChain_Present(1, 0);
+        if (winappimpl.reportHResultError(
+            state.adapter_info.?.allocator,
+            hr,
+            "Failed to present swapchain",
+        )) return Renderer.Error.SwapChainPresentFailed;
+    }
+
+    fn _getCurrentSwapIndex(self: *const Renderer.SwapChain) u32 {
+        return fromBase(self).getCurrentSwapIndex();
+    }
+
+    pub fn getCurrentSwapIndex(self: *const D3D11SwapChain) u32 {
+        _ = self;
+        return 0;
+    }
+
+    fn _getNumSwapBuffers(self: *const Renderer.SwapChain) u32 {
+        return fromBase(self).getNumSwapBuffers();
+    }
+
+    pub fn getNumSwapBuffers(self: *const D3D11SwapChain) u32 {
+        _ = self;
+        return 1;
+    }
+
+    fn _getColourFormat(self: *const Renderer.SwapChain) Renderer.format.Format {
+        return fromBase(self).getColourFormat();
+    }
+
+    pub fn getColourFormat(self: *const D3D11SwapChain) Renderer.format.Format {
+        return d3dcommon.unmapFormat(self.colour_format);
+    }
+
+    fn _getDepthStencilFormat(self: *const Renderer.SwapChain) Renderer.format.Format {
+        return fromBase(self).getDepthStencilFormat();
+    }
+
+    pub fn getDepthStencilFormat(self: *const D3D11SwapChain) Renderer.format.Format {
+        return d3dcommon.unmapFormat(self.depth_stencil_format);
+    }
+
+    // RenderTarget implementations
+    fn _getSamples(self: *const Renderer.RenderTarget) u32 {
+        return fromBase(Renderer.SwapChain.fromBase(self)).getSamples();
+    }
+
+    pub fn getSamples(self: *const D3D11SwapChain) u32 {
+        return self.sample_desc.Count;
+    }
+
+    // D3D11SwapChain methods
+    pub fn createSwapChain(
         self: *D3D11SwapChain,
         factory: *dxgi.IDXGIFactory,
         resolution: [2]u32,
@@ -332,7 +410,7 @@ pub const D3D11SwapChain = struct {
             samples,
         );
 
-        var native_handle = self.internal.surface.?.getNativeHandle();
+        var native_handle = self.base.surface.?.getNativeHandle();
         var desc: dxgi.DXGI_SWAP_CHAIN_DESC = .{
             .BufferDesc = .{
                 .Width = resolution[0],
@@ -344,10 +422,10 @@ pub const D3D11SwapChain = struct {
             },
             .SampleDesc = self.sample_desc,
             .BufferUsage = .RENDER_TARGET_OUTPUT,
-            .BufferCount = if (buffers >= 3) 2 else 1,
+            .BufferCount = buffers - 1,
             .OutputWindow = native_handle.wnd,
             .Windowed = winappimpl.TRUE,
-            .SwapEffect = .DISCARD,
+            .SwapEffect = if ((buffers - 1) > 2) .FLIP_DISCARD else .DISCARD,
             .Flags = 0,
         };
         if (self.swapchain) |sc| _ = sc.IUnknown_Release();
@@ -356,8 +434,6 @@ pub const D3D11SwapChain = struct {
             &desc,
             &self.swapchain,
         );
-
-        std.debug.print("swapchain made sucessfully!!\n", .{});
 
         if (winapi.zig.FAILED(hr)) {
             winappimpl.messageBox(
@@ -368,6 +444,117 @@ pub const D3D11SwapChain = struct {
                 .OK,
             );
             return Renderer.Error.SwapChainCreationFailed;
+        }
+
+        if (winappimpl.reportHResultError(
+            state.adapter_info.?.allocator,
+            hr,
+            "Failed to create SwapChain",
+        )) return Renderer.Error.SwapChainCreationFailed;
+    }
+
+    fn _resizeBuffers(self: *Renderer.SwapChain, resolution: [2]u32) Renderer.Error!void {
+        try fromBaseMut(self).resizeBuffers(resolution);
+    }
+
+    pub fn resizeBuffers(self: *D3D11SwapChain, resolution: [2]u32) Renderer.Error!void {
+        // TODO: implement this
+        // if (state.command_buffers.getColdMutable(self.binding_command_buffer)) |cb| {
+        //    cb.bindFrameBufferView(0, null, null);
+        //  }
+
+        d3dcommon.releaseIUnknown(d3d11.ID3D11Texture2D, &self.colour_buffer);
+        d3dcommon.releaseIUnknown(d3d11.ID3D11RenderTargetView, &self.renter_target_view);
+        d3dcommon.releaseIUnknown(d3d11.ID3D11Texture2D, &self.depth_buffer);
+        d3dcommon.releaseIUnknown(d3d11.ID3D11DepthStencilView, &self.depth_stencil_view);
+
+        // TODO: implement this
+        // if (state.command_buffers.getColdMutable(self.binding_command_buffer)) |cb| {
+        //    cb.resetDeferredCommandList();
+        //  }
+
+        const hr: win32.foundation.HRESULT = self.swapchain.?.IDXGISwapChain_ResizeBuffers(
+            0,
+            resolution[0],
+            resolution[1],
+            .UNKNOWN,
+            0,
+        );
+        if (winappimpl.reportHResultError(
+            state.adapter_info.?.allocator,
+            hr,
+            "Failed to resize swapchain buffers",
+        )) return Renderer.Error.SwapChainBufferCreationFailed;
+
+        try self.recreateBuffers();
+    }
+
+    pub fn recreateBuffers(self: *D3D11SwapChain) Renderer.Error!void {
+        var hr: win32.foundation.HRESULT = 0;
+
+        d3dcommon.releaseIUnknown(d3d11.ID3D11Texture2D, &self.colour_buffer);
+        hr = self.swapchain.?.IDXGISwapChain_GetBuffer(
+            0,
+            d3d11.IID_ID3D11Texture2D,
+            @ptrCast(&self.colour_buffer),
+        );
+        if (winappimpl.reportHResultError(
+            state.adapter_info.?.allocator,
+            hr,
+            "Failed to get swapchain buffer",
+        )) return Renderer.Error.SwapChainBufferCreationFailed;
+
+        d3dcommon.releaseIUnknown(d3d11.ID3D11RenderTargetView, &self.renter_target_view);
+        hr = state.device.?.ID3D11Device_CreateRenderTargetView(
+            @ptrCast(self.colour_buffer.?),
+            null,
+            &self.renter_target_view,
+        );
+        if (winappimpl.reportHResultError(
+            state.adapter_info.?.allocator,
+            hr,
+            "Failed to create render target view",
+        )) return Renderer.Error.SwapChainBufferCreationFailed;
+
+        var colour_buffer_desc: d3d11.D3D11_TEXTURE2D_DESC = undefined;
+        self.colour_buffer.?.ID3D11Texture2D_GetDesc(&colour_buffer_desc);
+
+        if (self.depth_stencil_format != .UNKNOWN) {
+            const texture_desc: d3d11.D3D11_TEXTURE2D_DESC = .{
+                .Width = colour_buffer_desc.Width,
+                .Height = colour_buffer_desc.Height,
+                .MipLevels = 1,
+                .ArraySize = 1,
+                .Format = self.depth_stencil_format,
+                .SampleDesc = self.sample_desc,
+                .Usage = .DEFAULT,
+                .BindFlags = @intFromEnum(d3d11.D3D11_BIND_FLAG.DEPTH_STENCIL),
+                .CPUAccessFlags = 0,
+                .MiscFlags = 0,
+            };
+            d3dcommon.releaseIUnknown(d3d11.ID3D11Texture2D, &self.depth_buffer);
+            hr = state.device.?.ID3D11Device_CreateTexture2D(
+                &texture_desc,
+                null,
+                &self.depth_buffer,
+            );
+            if (winappimpl.reportHResultError(
+                state.adapter_info.?.allocator,
+                hr,
+                "Failed to create depth buffer",
+            )) return Renderer.Error.SwapChainBufferCreationFailed;
+
+            d3dcommon.releaseIUnknown(d3d11.ID3D11DepthStencilView, &self.depth_stencil_view);
+            hr = state.device.?.ID3D11Device_CreateDepthStencilView(
+                @ptrCast(self.depth_buffer.?),
+                null,
+                &self.depth_stencil_view,
+            );
+            if (winappimpl.reportHResultError(
+                state.adapter_info.?.allocator,
+                hr,
+                "Failed to create depth stencil view",
+            )) return Renderer.Error.SwapChainBufferCreationFailed;
         }
     }
 };
@@ -386,6 +573,26 @@ pub fn createSwapChain(
     const sc = state.swapchains.getColdMutable(handle).?;
     try sc.init(state.factory.?, create_info, window);
     return handle.as(Renderer.SwapChain);
+}
+
+pub fn useSwapChain(
+    r: *const Renderer,
+    handle: Handle(Renderer.SwapChain),
+) Renderer.Error!*const Renderer.SwapChain {
+    _ = r;
+    const as_handle = handle.as(D3D11SwapChain);
+    const sc = state.swapchains.getCold(as_handle) orelse return Renderer.Error.InvalidHandle;
+    return &sc.base;
+}
+
+pub fn useSwapChainMutable(
+    r: *Renderer,
+    handle: Handle(Renderer.SwapChain),
+) Renderer.Error!*Renderer.SwapChain {
+    _ = r;
+    const as_handle = handle.as(D3D11SwapChain);
+    const sc = state.swapchains.getColdMutable(as_handle) orelse return Renderer.Error.InvalidHandle;
+    return &sc.base;
 }
 
 pub fn destroySwapChain(r: *Renderer, handle: Handle(Renderer.SwapChain)) void {
