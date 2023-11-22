@@ -27,6 +27,7 @@ pub const FullscreenMode = enum {
 pub const Window = struct {
     platform_window: platform.impl.Window = undefined,
     application: *app.Application = undefined,
+    context: ?*anyopaque = null,
 
     pub inline fn allocator(self: *const Window) std.mem.Allocator {
         return self.application.allocator;
@@ -57,8 +58,8 @@ pub const Window = struct {
         return self.platform_window.getTitle();
     }
 
-    pub fn setSize(self: *Window, size: [2]u32) void {
-        self.platform_window.setSize(size);
+    pub fn setSize(self: *Window, size: [2]u32, use_client_area: bool) void {
+        self.platform_window.setSize(size, use_client_area);
     }
 
     pub fn getContentSize(self: *const Window) [2]u32 {
@@ -109,5 +110,13 @@ pub const Window = struct {
     /// *should* be called from the window thread
     pub fn update(self: *Window) void {
         self.platform_window.update() catch {};
+    }
+
+    pub fn storeContext(self: *Window, comptime T: type, context: ?*T) void {
+        self.context = @ptrCast(context);
+    }
+
+    pub fn getContext(self: *const Window, comptime T: type) ?*align(1) T {
+        return @ptrCast(self.context);
     }
 };

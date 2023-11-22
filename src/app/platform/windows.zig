@@ -83,6 +83,8 @@ const WindowsWindow = struct {
     const Modified = struct {
         descriptor: app.window.WindowDescriptor = undefined,
         title_changed: bool = false,
+        use_client_area: bool = false,
+        size_changed: bool = false,
     };
 
     hwnd: ?win32.foundation.HWND = null,
@@ -148,6 +150,22 @@ const WindowsWindow = struct {
         if (win32.ui.windows_and_messaging.RegisterClassW(&wc) == 0) return WindowsError.ClassRegistrationFailed;
     }
 
+    fn getClientArea(size: [2]u32, styles: Styles) win32.foundation.RECT {
+        var rc: win32.foundation.RECT = .{
+            .left = 0,
+            .top = 0,
+            .right = @intCast(size[0]),
+            .bottom = @intCast(size[1]),
+        };
+        _ = win32.ui.windows_and_messaging.AdjustWindowRectEx(
+            &rc,
+            styles.style,
+            FALSE,
+            styles.ex,
+        );
+        return rc;
+    }
+
     fn buildWindow(self: *WindowsWindow) !win32.foundation.HWND {
         const descriptor = self.descriptor;
 
@@ -165,29 +183,33 @@ const WindowsWindow = struct {
             win32.ui.windows_and_messaging.CW_USEDEFAULT,
         };
 
+        const styles = getStyles(&descriptor);
+        const rect = getClientArea(descriptor.size, styles);
+
+        const width: i32 = @intCast(rect.right - rect.left);
+        const height: i32 = @intCast(rect.bottom - rect.top);
+
         var hwnd = win32.ui.windows_and_messaging.CreateWindowExW(
-            win32.ui.windows_and_messaging.WINDOW_EX_STYLE.initFlags(.{}),
+            styles.ex,
             class_name,
             converted_title,
-            win32.ui.windows_and_messaging.WINDOW_STYLE.initFlags(.{
-                .CLIPCHILDREN = 1,
-                .CLIPSIBLINGS = 1,
-                .SYSMENU = 1,
-                .GROUP = 1,
-                .CAPTION = 1,
-                .THICKFRAME = 1,
-                .TABSTOP = 1,
-                .VISIBLE = 1,
-            }),
+            styles.style,
             position[0],
             position[1],
-            @intCast(descriptor.size[0]),
-            @intCast(descriptor.size[1]),
+            width,
+            height,
             null,
             null,
             try getHInstance(),
             @ptrCast(self),
         ) orelse return WindowsError.HwndCreationFailed;
+
+        if (descriptor.visible) {
+            _ = win32.ui.windows_and_messaging.ShowWindow(
+                hwnd,
+                .SHOW,
+            );
+        }
 
         return hwnd;
     }
@@ -208,8 +230,10 @@ const WindowsWindow = struct {
         return self.descriptor.title;
     }
 
-    pub fn setSize(self: *WindowsWindow, size: [2]u32) void {
+    pub fn setSize(self: *WindowsWindow, size: [2]u32, use_client_area: bool) void {
         self.modified_state.descriptor.size = size;
+        self.modified_state.size_changed = true;
+        self.modified_state.use_client_area = use_client_area;
     }
 
     pub fn getContentSize(self: *const WindowsWindow) [2]u32 {
@@ -245,7 +269,7 @@ const WindowsWindow = struct {
     }
 
     pub fn getPosition(self: *const WindowsWindow) ?[2]i32 {
-        return self.descriptor.position.?;
+        return self.descriptor.position;
     }
 
     pub fn setVisible(self: *WindowsWindow, should_show: bool) void {
@@ -260,8 +284,8 @@ const WindowsWindow = struct {
         self.modified_state.descriptor.fullscreen_mode = mode;
     }
 
-    pub fn getFullscreenMode(self: *const WindowsWindow) bool {
-        return self.descriptor.fullscreen_mode == .fullscreen;
+    pub fn getFullscreenMode(self: *const WindowsWindow) app.window.FullscreenMode {
+        return self.descriptor.fullscreen_mode;
     }
 
     pub fn shouldClose(self: *const WindowsWindow) bool {
@@ -473,8 +497,7 @@ const WindowsWindow = struct {
     fn updateSizeAndPosition(self: *WindowsWindow) !void {
         const descriptor = self.modified_state.descriptor;
 
-        const size_changed = descriptor.size[0] != self.descriptor.size[0] or
-            descriptor.size[1] != self.descriptor.size[1];
+        const size_changed = self.modified_state.size_changed;
         const position_changed = blk: {
             const new_position = descriptor.position;
             const old_position = self.descriptor.position;
@@ -489,15 +512,29 @@ const WindowsWindow = struct {
             return;
         }
 
-        var flags: win32.ui.windows_and_messaging.SET_WINDOW_POS_FLAGS = .NOZORDER;
+        var size = descriptor.size;
+        if (self.modified_state.use_client_area) {
+            var rc = getClientArea(size, getStyles(&descriptor));
+            size = .{
+                @intCast(rc.right - rc.left),
+                @intCast(rc.bottom - rc.top),
+            };
+        }
+        const position = descriptor.position orelse .{
+            win32.ui.windows_and_messaging.CW_USEDEFAULT,
+            win32.ui.windows_and_messaging.CW_USEDEFAULT,
+        };
 
+        var flags: win32.ui.windows_and_messaging.SET_WINDOW_POS_FLAGS = .NOZORDER;
         if (!size_changed) {
             flags = util.orEnum(win32.ui.windows_and_messaging.SET_WINDOW_POS_FLAGS, .{
                 flags,
                 .NOSIZE,
             });
         } else {
-            self.descriptor.size = descriptor.size;
+            self.modified_state.descriptor.size = size;
+            self.descriptor.size = size;
+            self.modified_state.size_changed = false;
         }
         if (!position_changed) {
             flags = util.orEnum(win32.ui.windows_and_messaging.SET_WINDOW_POS_FLAGS, .{
@@ -508,12 +545,6 @@ const WindowsWindow = struct {
         {
             self.descriptor.position = descriptor.position;
         }
-
-        const size = descriptor.size;
-        const position = descriptor.position orelse .{
-            win32.ui.windows_and_messaging.CW_USEDEFAULT,
-            win32.ui.windows_and_messaging.CW_USEDEFAULT,
-        };
 
         _ = win32.ui.windows_and_messaging.SetWindowPos(
             self.hwnd,
@@ -559,7 +590,7 @@ const WindowsWindow = struct {
             self.setSize(.{
                 @intCast(mi.rcMonitor.right - mi.rcMonitor.left),
                 @intCast(mi.rcMonitor.bottom - mi.rcMonitor.top),
-            });
+            }, false);
         }
 
         if (previous_mode == .fullscreen and mode == .windowed) {
@@ -568,7 +599,7 @@ const WindowsWindow = struct {
             self.setSize(.{
                 @intCast(normal_rect.right - normal_rect.left),
                 @intCast(normal_rect.bottom - normal_rect.top),
-            });
+            }, false);
         }
     }
 
@@ -681,6 +712,28 @@ pub fn reportError(
         }),
     );
     std.os.exit(1);
+}
+
+/// returns true if the error was reported
+pub fn reportHResultError(
+    allocator: std.mem.Allocator,
+    hr: std.os.windows.HRESULT,
+    comptime title: []const u8,
+) bool {
+    if (winapizig.FAILED(hr)) {
+        std.log.err("Failed with: {}", .{hr});
+        messageBox(
+            allocator,
+            title,
+            "Error: {}",
+            .{hr},
+            win32.ui.windows_and_messaging.MESSAGEBOX_STYLE.initFlags(.{
+                .OK = 1,
+            }),
+        );
+        return true;
+    }
+    return false;
 }
 
 const WindowsInput = struct {
@@ -803,10 +856,11 @@ const WindowsInput = struct {
 
         var iobj = app.input.InputObject{
             .type = .focus,
+            .window = window.getBase(),
             .input_state = if (focused) .begin else .end,
-            .data = .{ .focus = window.getBase() },
+            .data = .focus,
         };
-        self.getBase().addEvent(iobj, null) catch {};
+        self.pushEvent(iobj) catch {};
     }
 
     const win32_update_timer_id: usize = 1;
@@ -837,18 +891,19 @@ const WindowsInput = struct {
 
                 var iobj = app.input.InputObject{
                     .type = .resize,
+                    .window = window.getBase(),
                     .input_state = .change,
                     .data = .{ .resize = .{ width, height } },
                 };
 
-                self.getBase().addEvent(iobj, null) catch {};
+                self.pushEvent(iobj) catch {};
             },
             win32.ui.windows_and_messaging.WM_SETFOCUS => {
                 self.setWindowFocus(window, true);
             },
             win32.ui.windows_and_messaging.WM_KILLFOCUS, win32.ui.windows_and_messaging.WM_ENTERIDLE => {
                 // prevents app from thinking buttons are still down when the window loses focus
-                self.processMouseButtonWparam(window.hwnd.?, 0);
+                self.processMouseButtonWparam(window, 0);
                 self.setWindowFocus(window, false);
             },
             win32.ui.windows_and_messaging.WM_POINTERUPDATE => {
@@ -869,24 +924,26 @@ const WindowsInput = struct {
             win32.ui.windows_and_messaging.WM_XBUTTONDBLCLK,
             => {
                 if (recentMouseEventSource() != .touch and lparam != self.last_pointer_update) {
-                    self.processMouseButtonWparam(window.hwnd.?, wparam);
+                    self.processMouseButtonWparam(window, wparam);
                 }
             },
 
-            win32.ui.windows_and_messaging.WM_KEYDOWN => self.postKeyEvent(wparam, lparam, true),
-            win32.ui.windows_and_messaging.WM_KEYUP => self.postKeyEvent(wparam, lparam, false),
+            win32.ui.windows_and_messaging.WM_KEYDOWN => self.postKeyEvent(window, wparam, lparam, true),
+            win32.ui.windows_and_messaging.WM_KEYUP => self.postKeyEvent(window, wparam, lparam, false),
             win32.ui.windows_and_messaging.WM_CHAR => {
                 var iobj = app.input.InputObject{
                     .type = .textinput,
+                    .window = window.getBase(),
                     .input_state = .begin,
                     .data = .{ .textinput = .{ .short = @truncate(wparam) } },
                 };
-                self.getBase().addEvent(iobj, null) catch {};
+                self.pushEvent(iobj) catch {};
             },
 
             win32.ui.windows_and_messaging.WM_MOUSEWHEEL => {
                 var iobj = app.input.InputObject{
                     .type = .mousewheel,
+                    .window = window.getBase(),
                     .input_state = .begin,
                     .data = .mousewheel,
                     .delta = math.f32x4(
@@ -896,9 +953,9 @@ const WindowsInput = struct {
                         0,
                     ),
                 };
-                self.getBase().addEvent(iobj, null) catch {};
+                self.pushEvent(iobj) catch {};
             },
-            win32.ui.windows_and_messaging.WM_MOUSEMOVE => self.postLocalMouseMotion(lparam),
+            win32.ui.windows_and_messaging.WM_MOUSEMOVE => self.postLocalMouseMotion(window, lparam),
 
             win32.ui.windows_and_messaging.WM_ENTERSIZEMOVE => {
                 _ = win32.ui.windows_and_messaging.SetTimer(
@@ -941,16 +998,17 @@ const WindowsInput = struct {
             },
 
             win32.ui.windows_and_messaging.WM_INPUT => {
-                self.postGlobalMouseMotion(window.hwnd.?, lparam);
+                self.postGlobalMouseMotion(window, lparam);
             },
 
             else => {},
         }
     }
 
-    fn postKeyEvent(self: *WindowsInput, wparam: std.os.windows.WPARAM, lparam: std.os.windows.LPARAM, down: bool) void {
+    fn postKeyEvent(self: *WindowsInput, wnd: *WindowsWindow, wparam: std.os.windows.WPARAM, lparam: std.os.windows.LPARAM, down: bool) void {
         var iobj = app.input.InputObject{
             .type = .keyboard,
+            .window = wnd.getBase(),
             .input_state = if (down) .begin else .end,
             .data = .{
                 .keyboard = .{
@@ -960,12 +1018,12 @@ const WindowsInput = struct {
                 },
             },
         };
-        self.getBase().addEvent(iobj, null) catch {};
+        self.pushEvent(iobj) catch {};
     }
 
     fn processIndividualMouseButtonWparam(
         self: *WindowsInput,
-        wnd: win32.foundation.HWND,
+        wnd: *WindowsWindow,
         wparam: win32.foundation.WPARAM,
         button_index: usize,
         button_flag: win32.system.system_services.MODIFIERKEYS_FLAGS,
@@ -988,21 +1046,22 @@ const WindowsInput = struct {
             self.getBase().mouse_state.buttons[use_button_index] = new_state;
 
             if (new_state) {
-                self.captureInput(wnd);
+                self.captureInput(wnd.hwnd.?);
             } else {
                 self.releaseInput();
             }
 
             var iobj = app.input.InputObject{
                 .type = .mousebutton,
+                .window = wnd.getBase(),
                 .input_state = if (new_state) .begin else .end,
                 .data = .{ .mousebutton = @truncate(use_button_index) },
             };
-            self.getBase().addEvent(iobj, null) catch {};
+            self.pushEvent(iobj) catch {};
         }
     }
 
-    fn processMouseButtonWparam(self: *WindowsInput, wnd: win32.foundation.HWND, wparam: win32.foundation.WPARAM) void {
+    fn processMouseButtonWparam(self: *WindowsInput, wnd: *WindowsWindow, wparam: win32.foundation.WPARAM) void {
         if (self.mouse_button_flags != wparam) {
             self.processIndividualMouseButtonWparam(
                 wnd,
@@ -1039,7 +1098,7 @@ const WindowsInput = struct {
         }
     }
 
-    fn postLocalMouseMotion(self: *WindowsInput, lparam: std.os.windows.LPARAM) void {
+    fn postLocalMouseMotion(self: *WindowsInput, wnd: *WindowsWindow, lparam: std.os.windows.LPARAM) void {
         const x: i32 = GET_X_LPARAM(lparam);
         const y: i32 = GET_Y_LPARAM(lparam);
 
@@ -1047,6 +1106,7 @@ const WindowsInput = struct {
 
         var iobj = app.input.InputObject{
             .type = .mousemove,
+            .window = wnd.getBase(),
             .input_state = .change,
             .data = .mousemove,
             .position = math.f32x4(@floatFromInt(x), @floatFromInt(y), 0, 0),
@@ -1055,10 +1115,10 @@ const WindowsInput = struct {
 
         const converted_pos = math.vecToArr2(iobj.position);
         self.getBase().mouse_state.position = .{ @intFromFloat(converted_pos[0]), @intFromFloat(converted_pos[1]) };
-        self.getBase().addEvent(iobj, null) catch {};
+        self.pushEvent(iobj) catch {};
     }
 
-    fn postGlobalMouseMotion(self: *WindowsInput, wnd: win32.foundation.HWND, lparam: std.os.windows.LPARAM) void {
+    fn postGlobalMouseMotion(self: *WindowsInput, wnd: *WindowsWindow, lparam: std.os.windows.LPARAM) void {
         if (!self.getBase().has_focus) {
             return;
         }
@@ -1083,6 +1143,7 @@ const WindowsInput = struct {
 
                 var iobj = app.input.InputObject{
                     .type = .mousemove,
+                    .window = wnd.getBase(),
                     .input_state = .change,
                     .data = .mousemove,
                     .position = math.f32x4(@floatFromInt(new_pos[0]), @floatFromInt(new_pos[1]), 0, 1),
@@ -1095,7 +1156,7 @@ const WindowsInput = struct {
                 };
 
                 self.getBase().mouse_state.position = new_pos;
-                self.getBase().addEvent(iobj, null) catch {};
+                self.pushEvent(iobj) catch {};
             }
         }
     }
