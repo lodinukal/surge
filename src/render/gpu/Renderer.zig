@@ -7,7 +7,7 @@ pub const format = @import("format.zig");
 
 const Pool = @import("pool.zig").Pool;
 const DynamicPool = @import("pool.zig").DynamicPool;
-const Handle = @import("pool.zig").Handle;
+pub const Handle = @import("pool.zig").Handle;
 
 pub const RenderTarget = @import("RenderTarget.zig");
 pub const SwapChain = @import("SwapChain.zig");
@@ -28,6 +28,8 @@ pub const Error = error{
 
     // SwapChain
     SwapChainCreationFailed,
+    SwapChainBufferCreationFailed,
+    SwapChainPresentFailed,
 };
 
 pub const RendererType = enum {
@@ -48,6 +50,10 @@ pub const SymbolTable = struct {
         create_info: *const SwapChain.SwapChainCreateInfo,
         window: *app.window.Window,
     ) Error!Handle(SwapChain),
+    /// Do not store this pointer returned, use the handle
+    useSwapChain: *const fn (self: *const Self, swapchain: Handle(SwapChain)) Error!*const SwapChain,
+    /// Do not store this pointer returned, use the handle
+    useSwapChainMutable: *const fn (self: *Self, swapchain: Handle(SwapChain)) Error!*SwapChain,
     destroySwapChain: *const fn (self: *Self, swapchain: Handle(SwapChain)) void,
 };
 
@@ -159,6 +165,18 @@ pub fn createSwapchain(
 ) Error!Handle(SwapChain) {
     try self.ensureLoaded();
     return self.symbols.?.createSwapChain(self, create_info, window);
+}
+
+/// Do not store this pointer returned, use the handle
+pub fn useSwapchain(self: *const Self, swapchain: Handle(SwapChain)) Error!*const SwapChain {
+    try self.ensureLoaded();
+    return self.symbols.?.useSwapChain(self, swapchain);
+}
+
+/// Do not store this pointer returned, use the handle
+pub fn useSwapchainMutable(self: *Self, swapchain: Handle(SwapChain)) Error!*SwapChain {
+    try self.ensureLoaded();
+    return self.symbols.?.useSwapChainMutable(self, swapchain);
 }
 
 pub fn destroySwapchain(self: *Self, swapchain: Handle(SwapChain)) Error!void {
