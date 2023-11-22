@@ -372,3 +372,225 @@ pub fn pickDepthStencilFormat(depth: u32, stencil: u32) dxgi.common.DXGI_FORMAT 
     } else if (depth == 16) return .D16_UNORM;
     return .D24_UNORM_S8_UINT;
 }
+
+fn mapFormat(fmt: Renderer.format.Format) dxgi.common.DXGI_FORMAT {
+    return switch (fmt) {
+        .undefined => .UNKNOWN,
+
+        .a8unorm => .A8_UNORM,
+
+        .r8unorm => .R8_UNORM,
+        .r8snorm => .R8_SNORM,
+        .r8uint => .R8_UINT,
+        .r8sint => .R8_SINT,
+
+        .r16unorm => .R16_UNORM,
+        .r16snorm => .R16_SNORM,
+        .r16uint => .R16_UINT,
+        .r16sint => .R16_SINT,
+        .r16float => .R16_FLOAT,
+
+        .r32uint => .R32_UINT,
+        .r32sint => .R32_SINT,
+        .r32float => .R32_FLOAT,
+
+        .r64float => unreachable,
+
+        .rg8unorm => .R8G8_UNORM,
+        .rg8snorm => .R8G8_SNORM,
+        .rg8uint => .R8G8_UINT,
+        .rg8sint => .R8G8_SINT,
+
+        .rg16unorm => .R16G16_UNORM,
+        .rg16snorm => .R16G16_SNORM,
+        .rg16uint => .R16G16_UINT,
+        .rg16sint => .R16G16_SINT,
+        .rg16float => .R16G16_FLOAT,
+
+        .rg32uint => .R32G32_UINT,
+        .rg32sint => .R32G32_SINT,
+        .rg32float => .R32G32_FLOAT,
+
+        // .rg64float => .R64G64_FLOAT,
+
+        .rgb8unorm => unreachable,
+        .rgb8unorm_srgb => unreachable,
+        .rgb8snorm => unreachable,
+        .rgb8uint => unreachable,
+        .rgb8sint => unreachable,
+
+        .rgb16unorm => unreachable,
+        .rgb16snorm => unreachable,
+        .rgb16uint => unreachable,
+        .rgb16sint => unreachable,
+        .rgb16float => unreachable,
+
+        .rgb32uint => .R32G32B32_UINT,
+        .rgb32sint => .R32G32B32_SINT,
+        .rgb32float => .R32G32B32_FLOAT,
+
+        .rgb64float => unreachable,
+
+        .rgba8unorm => .R8G8B8A8_UNORM,
+        .rgba8unorm_srgb => .R8G8B8A8_UNORM_SRGB,
+        .rgba8snorm => .R8G8B8A8_SNORM,
+        .rgba8uint => .R8G8B8A8_UINT,
+        .rgba8sint => .R8G8B8A8_SINT,
+
+        .rgba16unorm => .R16G16B16A16_UNORM,
+        .rgba16snorm => .R16G16B16A16_SNORM,
+        .rgba16uint => .R16G16B16A16_UINT,
+        .rgba16sint => .R16G16B16A16_SINT,
+        .rgba16float => .R16G16B16A16_FLOAT,
+
+        .rgba32uint => .R32G32B32A32_UINT,
+        .rgba32sint => .R32G32B32A32_SINT,
+        .rgba32float => .R32G32B32A32_FLOAT,
+
+        .rgba64float => unreachable,
+
+        .bgra8unorm => .B8G8R8A8_UNORM,
+        .bgra8unorm_srgb => .B8G8R8A8_UNORM_SRGB,
+        .bgra8snorm => unreachable,
+        .bgra8uint => unreachable,
+        .bgra8sint => unreachable,
+
+        .rgb10a2unorm => .R10G10B10A2_UNORM,
+        .rgb10a2uint => .R10G10B10A2_UINT,
+        .rg11b10float => .R11G11B10_FLOAT,
+        .rgb9e5float => .R9G9B9E5_SHAREDEXP,
+
+        .d16unorm => .R16_TYPELESS,
+        .d32float => .R32_TYPELESS,
+        .d24unorms8uint => .R24G8_TYPELESS,
+        .d32floats8x24uint => .R32G8X24_TYPELESS,
+
+        .bc1unorm => .BC1_UNORM,
+        .bc1unorm_srgb => .BC1_UNORM_SRGB,
+        .bc2unorm => .BC2_UNORM,
+        .bc2unorm_srgb => .BC2_UNORM_SRGB,
+        .bc3unorm => .BC3_UNORM,
+        .bc3unorm_srgb => .BC3_UNORM_SRGB,
+        .bc4unorm => .BC4_UNORM,
+        .bc4snorm => .BC4_SNORM,
+        .bc5unorm => .BC5_UNORM,
+        .bc5snorm => .BC5_SNORM,
+    };
+}
+
+pub fn unmapFormat(fmt: dxgi.common.DXGI_FORMAT) Renderer.format.Format {
+    return switch (fmt) {
+        .UNKNOWN => .undefined,
+
+        .A8_UNORM => .a8unorm,
+
+        .R8_UNORM => .r8unorm,
+        .R8_SNORM => .r8snorm,
+        .R8_UINT => .r8uint,
+        .R8_SINT => .r8sint,
+
+        .R16_UNORM => .r16unorm,
+        .R16_SNORM => .r16snorm,
+        .R16_UINT => .r16uint,
+        .R16_SINT => .r16sint,
+        .R16_FLOAT => .r16float,
+
+        .R32_UINT => .r32uint,
+        .R32_SINT => .r32sint,
+        .R32_FLOAT => .r32float,
+
+        // .R64_FLOAT => .r64float,
+
+        .R8G8_UNORM => .rg8unorm,
+        .R8G8_SNORM => .rg8snorm,
+        .R8G8_UINT => .rg8uint,
+        .R8G8_SINT => .rg8sint,
+
+        .R16G16_UNORM => .rg16unorm,
+        .R16G16_SNORM => .rg16snorm,
+        .R16G16_UINT => .rg16uint,
+        .R16G16_SINT => .rg16sint,
+        .R16G16_FLOAT => .rg16float,
+
+        .R32G32_UINT => .rg32uint,
+        .R32G32_SINT => .rg32sint,
+        .R32G32_FLOAT => .rg32float,
+
+        // .R64G64_FLOAT => .rg64float,
+
+        //nreachable . => urgb8unorm,
+        //nreachable . => urgb8unorm_srgb,
+        //nreachable . => urgb8snorm,
+        //nreachable . => urgb8uint,
+        //nreachable . => urgb8sint,
+
+        //nreachable . => urgb16unorm,
+        //nreachable . => urgb16snorm,
+        //nreachable . => urgb16uint,
+        //nreachable . => urgb16sint,
+        //nreachable . => urgb16float,
+
+        .R32G32B32_UINT => .rgb32uint,
+        .R32G32B32_SINT => .rgb32sint,
+        .R32G32B32_FLOAT => .rgb32float,
+
+        //nreachable . => urgb64float,
+
+        .R8G8B8A8_UNORM => .rgba8unorm,
+        .R8G8B8A8_UNORM_SRGB => .rgba8unorm_srgb,
+        .R8G8B8A8_SNORM => .rgba8snorm,
+        .R8G8B8A8_UINT => .rgba8uint,
+        .R8G8B8A8_SINT => .rgba8sint,
+
+        .R16G16B16A16_UNORM => .rgba16unorm,
+        .R16G16B16A16_SNORM => .rgba16snorm,
+        .R16G16B16A16_UINT => .rgba16uint,
+        .R16G16B16A16_SINT => .rgba16sint,
+        .R16G16B16A16_FLOAT => .rgba16float,
+
+        .R32G32B32A32_UINT => .rgba32uint,
+        .R32G32B32A32_SINT => .rgba32sint,
+        .R32G32B32A32_FLOAT => .rgba32float,
+
+        //nreachable . => urgba64float,
+
+        .B8G8R8A8_UNORM => .bgra8unorm,
+        .B8G8R8A8_UNORM_SRGB => .bgra8unorm_srgb,
+        //nreachable . => ubgra8snorm,
+        //nreachable . => ubgra8uint,
+        //nreachable . => ubgra8sint,
+
+        .R10G10B10A2_UNORM => .rgb10a2unorm,
+        .R10G10B10A2_UINT => .rgb10a2uint,
+        .R11G11B10_FLOAT => .rg11b10float,
+        .R9G9B9E5_SHAREDEXP => .rgb9e5float,
+
+        .R16_TYPELESS => .d16unorm,
+        .R32_TYPELESS => .d32float,
+        .R24G8_TYPELESS => .d24unorms8uint,
+        .R32G8X24_TYPELESS => .d32floats8x24uint,
+
+        .BC1_UNORM => .bc1unorm,
+        .BC1_UNORM_SRGB => .bc1unorm_srgb,
+        .BC2_UNORM => .bc2unorm,
+        .BC2_UNORM_SRGB => .bc2unorm_srgb,
+        .BC3_UNORM => .bc3unorm,
+        .BC3_UNORM_SRGB => .bc3unorm_srgb,
+        .BC4_UNORM => .bc4unorm,
+        .BC4_SNORM => .bc4snorm,
+        .BC5_UNORM => .bc5unorm,
+        .BC5_SNORM => .bc5snorm,
+
+        else => .undefined,
+    };
+}
+
+pub fn releaseIUnknown(comptime T: type, obj: ?*?*T) void {
+    if (obj) |o| {
+        if (o.*) |unwrapped| {
+            if (unwrapped.IUnknown_Release() == 0) {
+                o.* = null;
+            }
+        }
+    }
+}
