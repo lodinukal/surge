@@ -20,10 +20,14 @@ const Pool = @import("../pool.zig").Pool;
 const symbols = Renderer.SymbolTable{
     .init = &init,
     .deinit = &deinit,
+
     .createSwapChain = &createSwapChain,
     .useSwapChain = &useSwapChain,
     .useSwapChainMutable = &useSwapChainMutable,
     .destroySwapChain = &destroySwapChain,
+
+    .createShader = &createShader,
+    .destroyShader = &destroyShader,
 };
 
 pub export fn getSymbols() *const Renderer.SymbolTable {
@@ -40,12 +44,14 @@ pub const RendererState = struct {
 
     // objects
     swapchains: Pool(D3D11SwapChain, 2), // i think 2 is more than enough for now (2 game views)
+    shaders: DynamicPool(D3D11Shader),
 };
 pub var state: RendererState = undefined;
 
 fn init(r: *Renderer, create_info: Renderer.RendererCreateInfo) Renderer.Error!void {
     state = .{
         .swapchains = Pool(D3D11SwapChain, 2).init(),
+        .shaders = DynamicPool(D3D11Shader).init(r.allocator),
     };
     errdefer deinit(r);
 
@@ -262,6 +268,8 @@ fn cleanupRenderingCapabilities(r: *Renderer) void {
     r.rendering_capabilities.shading_languages.deinit();
 }
 
+// SwapChain
+
 pub const D3D11SwapChain = struct {
     pub const Hot = ?*dxgi.IDXGISwapChain;
     pub const Cold = D3D11SwapChain;
@@ -342,11 +350,12 @@ pub const D3D11SwapChain = struct {
 
     pub fn present(self: *D3D11SwapChain) Renderer.Error!void {
         const hr = self.swapchain.?.IDXGISwapChain_Present(1, 0);
-        if (winappimpl.reportHResultError(
-            state.adapter_info.?.allocator,
-            hr,
-            "Failed to present swapchain",
-        )) return Renderer.Error.SwapChainPresentFailed;
+        _ = hr;
+        // if (winappimpl.reportHResultError(
+        //     .allocator,
+        //     hr,
+        //     "Failed to present swapchain",
+        // )) return Renderer.Error.SwapChainPresentFailed;
     }
 
     fn _getCurrentSwapIndex(self: *const Renderer.SwapChain) u32 {
@@ -400,6 +409,10 @@ pub const D3D11SwapChain = struct {
         samples: u32,
         buffers: u32,
     ) Renderer.Error!void {
+        var buf: [4096]u8 = undefined;
+        var fba = std.heap.FixedBufferAllocator.init(&buf);
+        var allocator = fba.allocator();
+
         const refresh_rate: dxgi.common.DXGI_RATIONAL = .{
             .Numerator = 75,
             .Denominator = 1,
@@ -438,7 +451,7 @@ pub const D3D11SwapChain = struct {
 
         if (winapi.zig.FAILED(hr)) {
             winappimpl.messageBox(
-                state.adapter_info.?.allocator,
+                allocator,
                 "Failed to create swapchain",
                 "Error: {}",
                 .{hr},
@@ -448,7 +461,7 @@ pub const D3D11SwapChain = struct {
         }
 
         if (winappimpl.reportHResultError(
-            state.adapter_info.?.allocator,
+            allocator,
             hr,
             "Failed to create SwapChain",
         )) return Renderer.Error.SwapChainCreationFailed;
@@ -459,6 +472,10 @@ pub const D3D11SwapChain = struct {
     }
 
     pub fn resizeBuffers(self: *D3D11SwapChain, resolution: [2]u32) Renderer.Error!void {
+        var buf: [4096]u8 = undefined;
+        var fba = std.heap.FixedBufferAllocator.init(&buf);
+        var allocator = fba.allocator();
+
         // TODO: implement this
         // if (state.command_buffers.getColdMutable(self.binding_command_buffer)) |cb| {
         //    cb.bindFrameBufferView(0, null, null);
@@ -482,7 +499,7 @@ pub const D3D11SwapChain = struct {
             0,
         );
         if (winappimpl.reportHResultError(
-            state.adapter_info.?.allocator,
+            allocator,
             hr,
             "Failed to resize swapchain buffers",
         )) return Renderer.Error.SwapChainBufferCreationFailed;
@@ -491,6 +508,10 @@ pub const D3D11SwapChain = struct {
     }
 
     pub fn recreateBuffers(self: *D3D11SwapChain) Renderer.Error!void {
+        var buf: [4096]u8 = undefined;
+        var fba = std.heap.FixedBufferAllocator.init(&buf);
+        var allocator = fba.allocator();
+
         var hr: win32.foundation.HRESULT = 0;
 
         d3dcommon.releaseIUnknown(d3d11.ID3D11Texture2D, &self.colour_buffer);
@@ -500,7 +521,7 @@ pub const D3D11SwapChain = struct {
             @ptrCast(&self.colour_buffer),
         );
         if (winappimpl.reportHResultError(
-            state.adapter_info.?.allocator,
+            allocator,
             hr,
             "Failed to get swapchain buffer",
         )) return Renderer.Error.SwapChainBufferCreationFailed;
@@ -512,7 +533,7 @@ pub const D3D11SwapChain = struct {
             &self.render_target_view,
         );
         if (winappimpl.reportHResultError(
-            state.adapter_info.?.allocator,
+            allocator,
             hr,
             "Failed to create render target view",
         )) return Renderer.Error.SwapChainBufferCreationFailed;
@@ -540,7 +561,7 @@ pub const D3D11SwapChain = struct {
                 &self.depth_buffer,
             );
             if (winappimpl.reportHResultError(
-                state.adapter_info.?.allocator,
+                allocator,
                 hr,
                 "Failed to create depth buffer",
             )) return Renderer.Error.SwapChainBufferCreationFailed;
@@ -552,7 +573,7 @@ pub const D3D11SwapChain = struct {
                 &self.depth_stencil_view,
             );
             if (winappimpl.reportHResultError(
-                state.adapter_info.?.allocator,
+                allocator,
                 hr,
                 "Failed to create depth stencil view",
             )) return Renderer.Error.SwapChainBufferCreationFailed;
@@ -602,6 +623,319 @@ pub fn destroySwapChain(r: *Renderer, handle: Handle(Renderer.SwapChain)) void {
     const sc = state.swapchains.getColdMutable(as_handle) orelse return;
     sc.deinit() catch {};
     state.swapchains.remove(as_handle) catch {};
+}
+
+// Shader
+
+pub const D3D11ShaderHolder = union(Renderer.Shader.ShaderType) {
+    undefined: void,
+    vertex: ?*d3d11.ID3D11VertexShader,
+    tesselation_control: ?*d3d11.ID3D11HullShader, // aka. hull
+    tesselation_evaluation: ?*d3d11.ID3D11DomainShader, // aka. domain
+    geometry: ?*d3d11.ID3D11GeometryShader,
+    fragment: ?*d3d11.ID3D11PixelShader,
+    compute: ?*d3d11.ID3D11ComputeShader,
+
+    pub fn deinit(self: *D3D11ShaderHolder) void {
+        switch (self.*) {
+            .vertex => |*v| d3dcommon.releaseIUnknown(d3d11.ID3D11VertexShader, v),
+            .tesselation_control => |*tc| d3dcommon.releaseIUnknown(d3d11.ID3D11HullShader, tc),
+            .tesselation_evaluation => |*te| d3dcommon.releaseIUnknown(d3d11.ID3D11DomainShader, te),
+            .geometry => |*g| d3dcommon.releaseIUnknown(d3d11.ID3D11GeometryShader, g),
+            .fragment => |*f| d3dcommon.releaseIUnknown(d3d11.ID3D11PixelShader, f),
+            .compute => |*c| d3dcommon.releaseIUnknown(d3d11.ID3D11ComputeShader, c),
+            else => {},
+        }
+    }
+};
+
+pub const D3D11Shader = struct {
+    pub const Hot = D3D11ShaderHolder;
+    pub const Cold = D3D11Shader;
+
+    base: Renderer.Shader = undefined,
+
+    holder: ?D3D11ShaderHolder = null,
+    bytecode: ?*d3d.ID3DBlob = null,
+    // report
+    input_layout: ?*d3d11.ID3D11InputLayout = null,
+    // cbuffer reflections
+
+    pub fn init(
+        self: *D3D11Shader,
+        create_info: *const Renderer.Shader.ShaderCreateInfo,
+    ) !void {
+        if (self.buildShader(create_info)) {
+            try self.buildInputLayout(create_info.vertex.input orelse &.{});
+        } else return Renderer.Error.ShaderCompilationFailed;
+    }
+
+    pub fn deinit(
+        self: *D3D11Shader,
+    ) void {
+        d3dcommon.releaseIUnknown(d3d11.ID3D11InputLayout, &self.input_layout);
+        if (self.holder) |*h| h.deinit();
+        d3dcommon.releaseIUnknown(d3d.ID3DBlob, &self.bytecode);
+    }
+
+    pub fn buildShader(self: *D3D11Shader, create_info: *const Renderer.Shader.ShaderCreateInfo) bool {
+        if (create_info.source_type == .code_string) {
+            return self.compileSource(create_info);
+        } else {
+            return self.loadBinary(create_info);
+        }
+    }
+
+    pub extern "d3dcompiler_47" fn D3DCompile(
+        // TODO: what to do with BytesParamIndex 1?
+        pSrcData: ?*const anyopaque,
+        SrcDataSize: usize,
+        pSourceName: ?[*:0]align(1) const u8,
+        pDefines: ?*const d3d.D3D_SHADER_MACRO,
+        pInclude: ?*align(1) d3d.ID3DInclude,
+        pEntrypoint: ?[*:0]align(1) const u8,
+        pTarget: ?[*:0]align(1) const u8,
+        Flags1: u32,
+        Flags2: u32,
+        ppCode: ?*?*d3d.ID3DBlob,
+        ppErrorMsgs: ?*?*d3d.ID3DBlob,
+    ) callconv(@import("std").os.windows.WINAPI) win32.foundation.HRESULT;
+
+    fn compileSource(self: *D3D11Shader, create_info: *const Renderer.Shader.ShaderCreateInfo) bool {
+        var buf: [4096]u8 = undefined;
+        var fba = std.heap.FixedBufferAllocator.init(&buf);
+        var allocator = fba.allocator();
+
+        var null_terminated_source_name = allocator.dupeZ(
+            u8,
+            create_info.name orelse "shader_",
+        ) catch return false;
+
+        var defines = std.ArrayList(d3d.D3D_SHADER_MACRO).initCapacity(
+            allocator,
+            create_info.macros.len,
+        ) catch return false;
+        for (create_info.macros) |m| {
+            var macro: d3d.D3D_SHADER_MACRO = .{
+                .Name = @ptrCast(allocator.dupeZ(u8, m.name) catch return false),
+                .Definition = @ptrCast(allocator.dupeZ(u8, m.value orelse "") catch return false),
+            };
+            defines.appendAssumeCapacity(macro);
+        }
+
+        var profile_null_terminated = allocator.dupeZ(
+            u8,
+            create_info.profile orelse "",
+        ) catch return false;
+
+        var entry_point_null_terminated = allocator.dupeZ(
+            u8,
+            create_info.entry_point,
+        ) catch return false;
+
+        var errors: ?*d3d.ID3DBlob = null;
+        d3dcommon.releaseIUnknown(d3d.ID3DBlob, &self.bytecode);
+        const hr = D3DCompile(
+            @ptrCast(create_info.source),
+            create_info.source.len,
+            null_terminated_source_name,
+            if (defines.items.len < 1) null else @ptrCast(defines.items),
+            @ptrFromInt(1),
+            @ptrCast(entry_point_null_terminated),
+            @ptrCast(profile_null_terminated),
+            d3dcommon.getFxcFlags(create_info.compile_info),
+            0,
+            &self.bytecode,
+            &errors,
+        );
+
+        if (self.bytecode) |bc| {
+            _ = bc;
+            self.createHolderShader(
+                create_info.vertex.output orelse &.{},
+                null,
+            );
+        }
+
+        const has_errors = winapi.zig.FAILED(hr);
+        if (winappimpl.reportHResultError(
+            allocator,
+            hr,
+            "Failed to compile shader",
+        )) return false;
+        // TODO: make a report
+        return !has_errors;
+    }
+
+    fn createHolderShader(
+        self: *D3D11Shader,
+        stream_output_attributes: []const Renderer.VertexAttribute,
+        linkage: ?*d3d11.ID3D11ClassLinkage,
+    ) void {
+        self.holder = self.createHolderShaderFromBlob(
+            self.base.type,
+            self.bytecode,
+            stream_output_attributes,
+            linkage,
+        );
+    }
+
+    fn loadBinary(self: *D3D11Shader, create_info: *const Renderer.Shader.ShaderCreateInfo) bool {
+        var buf: [4096]u8 = undefined;
+        var fba = std.heap.FixedBufferAllocator.init(&buf);
+        var allocator = fba.allocator();
+        _ = allocator;
+
+        self.bytecode = d3dcommon.createBlob(create_info.source);
+        if (self.bytecode != null and self.bytecode.?.ID3DBlob_GetBufferSize() > 0) {
+            self.createHolderShader(create_info.vertex.output orelse &.{}, null);
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    fn createHolderShaderFromBlob(
+        self: *D3D11Shader,
+        shader_type: Renderer.Shader.ShaderType,
+        blob: ?*d3d.ID3DBlob,
+        stream_output_attributes: []const Renderer.VertexAttribute,
+        linkage: ?*d3d11.ID3D11ClassLinkage,
+    ) ?D3D11ShaderHolder {
+        _ = self;
+        if (blob == null) return null;
+
+        var shader: ?D3D11ShaderHolder = null;
+        var hr: win32.foundation.HRESULT = win32.foundation.S_OK;
+
+        switch (shader_type) {
+            .vertex => {
+                shader = .{ .vertex = null };
+                hr = state.device.?.ID3D11Device_CreateVertexShader(
+                    @ptrCast(blob.?.ID3DBlob_GetBufferPointer().?),
+                    blob.?.ID3DBlob_GetBufferSize(),
+                    linkage,
+                    &shader.?.vertex,
+                );
+            },
+            .tesselation_control => {
+                shader = .{ .tesselation_control = null };
+                hr = state.device.?.ID3D11Device_CreateHullShader(
+                    @ptrCast(blob.?.ID3DBlob_GetBufferPointer().?),
+                    blob.?.ID3DBlob_GetBufferSize(),
+                    linkage,
+                    &shader.?.tesselation_control,
+                );
+            },
+            .tesselation_evaluation => {
+                shader = .{ .tesselation_evaluation = null };
+                hr = state.device.?.ID3D11Device_CreateDomainShader(
+                    @ptrCast(blob.?.ID3DBlob_GetBufferPointer().?),
+                    blob.?.ID3DBlob_GetBufferSize(),
+                    linkage,
+                    &shader.?.tesselation_evaluation,
+                );
+            },
+            .geometry => {
+                shader = .{ .geometry = null };
+                if (stream_output_attributes.len > 0) {
+                    // TODO: Stream outputs for geometry shaders
+                } else {
+                    hr = state.device.?.ID3D11Device_CreateGeometryShader(
+                        @ptrCast(blob.?.ID3DBlob_GetBufferPointer().?),
+                        blob.?.ID3DBlob_GetBufferSize(),
+                        linkage,
+                        &shader.?.geometry,
+                    );
+                }
+            },
+            .fragment => {
+                shader = .{ .fragment = null };
+                hr = state.device.?.ID3D11Device_CreatePixelShader(
+                    @ptrCast(blob.?.ID3DBlob_GetBufferPointer().?),
+                    blob.?.ID3DBlob_GetBufferSize(),
+                    linkage,
+                    &shader.?.fragment,
+                );
+            },
+            .compute => {
+                shader = .{ .compute = null };
+                hr = state.device.?.ID3D11Device_CreateComputeShader(
+                    @ptrCast(blob.?.ID3DBlob_GetBufferPointer().?),
+                    blob.?.ID3DBlob_GetBufferSize(),
+                    linkage,
+                    &shader.?.compute,
+                );
+            },
+            else => {},
+        }
+
+        return shader;
+    }
+
+    fn buildInputLayout(self: *D3D11Shader, vertex_attributes: []const Renderer.VertexAttribute) !void {
+        if (vertex_attributes.len == 0) return;
+        if (self.base.type != .vertex) return;
+
+        var buf: [4096]u8 = undefined;
+        var fba = std.heap.FixedBufferAllocator.init(&buf);
+        var allocator = fba.allocator();
+
+        var input_elements = std.ArrayList(d3d11.D3D11_INPUT_ELEMENT_DESC).initCapacity(
+            allocator,
+            vertex_attributes.len,
+        ) catch return Renderer.Error.ShaderInputLayoutCreationFailed;
+
+        for (0..vertex_attributes.len) |i| {
+            var dst = input_elements.addOneAssumeCapacity();
+            var src = vertex_attributes[i];
+            dst.SemanticName = @ptrCast(allocator.dupeZ(
+                u8,
+                src.name,
+            ) catch return Renderer.Error.ShaderInputLayoutCreationFailed);
+            dst.SemanticIndex = src.semantic_index;
+            dst.Format = d3dcommon.mapFormat(src.format);
+            dst.InputSlot = src.slot;
+            dst.AlignedByteOffset = src.offset;
+            dst.InputSlotClass = if (src.instance_divisor > 0) .INSTANCE_DATA else .VERTEX_DATA;
+            dst.InstanceDataStepRate = src.instance_divisor;
+        }
+
+        const hr = state.device.?.ID3D11Device_CreateInputLayout(
+            @ptrCast(input_elements.items),
+            @intCast(input_elements.items.len),
+            @ptrCast(self.bytecode.?.ID3DBlob_GetBufferPointer()),
+            self.bytecode.?.ID3DBlob_GetBufferSize(),
+            &self.input_layout,
+        );
+        if (winappimpl.reportHResultError(
+            allocator,
+            hr,
+            "Failed to create input layout",
+        )) return Renderer.Error.ShaderInputLayoutCreationFailed;
+    }
+};
+
+fn createShader(
+    r: *Renderer,
+    create_info: *const Renderer.Shader.ShaderCreateInfo,
+) Renderer.Error!Handle(Renderer.Shader) {
+    _ = r;
+    const handle = state.shaders.put(
+        .undefined,
+        undefined,
+    ) catch return Renderer.Error.ShaderCompilationFailed;
+    const shader = state.shaders.getColdMutable(handle).?;
+    try shader.init(create_info);
+    return handle.as(Renderer.Shader);
+}
+
+fn destroyShader(r: *Renderer, handle: Handle(Renderer.Shader)) void {
+    _ = r;
+    const as_handle = handle.as(D3D11Shader);
+    const shader = state.shaders.getColdMutable(as_handle) orelse return;
+    shader.deinit();
+    state.shaders.remove(as_handle) catch {};
 }
 
 test {

@@ -373,7 +373,7 @@ pub fn pickDepthStencilFormat(depth: u32, stencil: u32) dxgi.common.DXGI_FORMAT 
     return .D24_UNORM_S8_UINT;
 }
 
-fn mapFormat(fmt: Renderer.format.Format) dxgi.common.DXGI_FORMAT {
+pub fn mapFormat(fmt: Renderer.format.Format) dxgi.common.DXGI_FORMAT {
     return switch (fmt) {
         .undefined => .UNKNOWN,
 
@@ -411,7 +411,7 @@ fn mapFormat(fmt: Renderer.format.Format) dxgi.common.DXGI_FORMAT {
         .rg32sint => .R32G32_SINT,
         .rg32float => .R32G32_FLOAT,
 
-        // .rg64float => .R64G64_FLOAT,
+        .rg64float => unreachable,
 
         .rgb8unorm => unreachable,
         .rgb8unorm_srgb => unreachable,
@@ -593,4 +593,40 @@ pub fn releaseIUnknown(comptime T: type, obj: ?*?*T) void {
             }
         }
     }
+}
+
+pub fn getFxcFlags(ci: Renderer.Shader.ShaderCompileInfo) u32 {
+    var x: u32 = 0;
+    if (ci.debug) x |= d3d.fxc.D3DCOMPILE_DEBUG;
+    x |= switch (ci.optimisation_level) {
+        .none => d3d.fxc.D3DCOMPILE_SKIP_OPTIMIZATION,
+        .one => d3d.fxc.D3DCOMPILE_OPTIMIZATION_LEVEL1,
+        // .two => d3d.fxc.D3DCOMPILE_OPTIMIZATION_LEVEL2, // not found??
+        .three => d3d.fxc.D3DCOMPILE_OPTIMIZATION_LEVEL3,
+        else => 0,
+    };
+
+    if (ci.warnings_as_errors) x |= d3d.fxc.D3DCOMPILE_WARNINGS_ARE_ERRORS;
+
+    return x;
+}
+
+pub fn getBlobData(list: std.ArrayList(u8), blob: ?*d3d.ID3DBlob) !void {
+    if (blob) |b| {
+        var data: [*]const u8 = @ptrCast(b.ID3DBlob_GetBufferPointer().?);
+        var size = b.ID3DBlob_GetBufferSize();
+        return list.appendSlice(data[0..size]);
+    }
+}
+
+pub fn createBlob(data: []const u8) ?*d3d.ID3DBlob {
+    var blob: ?*d3d.ID3DBlob = null;
+    var hr = d3d.fxc.D3DCreateBlob(@intCast(data.len), &blob);
+    if (winapi.zig.FAILED(hr)) {
+        return null;
+    }
+
+    var dst: [*]u8 = @ptrCast(blob.?.ID3DBlob_GetBufferPointer().?);
+    @memcpy(dst[0..data.len], data);
+    return blob.?;
 }

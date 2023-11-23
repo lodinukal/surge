@@ -11,6 +11,10 @@ pub const Handle = @import("pool.zig").Handle;
 
 pub const RenderTarget = @import("RenderTarget.zig");
 pub const SwapChain = @import("SwapChain.zig");
+pub const Shader = @import("Shader.zig");
+pub const VertexAttribute = @import("VertexAttribute.zig");
+pub const VertexFormat = VertexAttribute.VertexFormat;
+pub const FragmentAttribute = @import("FragmentAttribute.zig");
 
 const Self = @This();
 
@@ -30,6 +34,10 @@ pub const Error = error{
     SwapChainCreationFailed,
     SwapChainBufferCreationFailed,
     SwapChainPresentFailed,
+
+    // Shader
+    ShaderCompilationFailed,
+    ShaderInputLayoutCreationFailed,
 };
 
 pub const RendererType = enum {
@@ -55,6 +63,9 @@ pub const SymbolTable = struct {
     /// Do not store this pointer returned, use the handle
     useSwapChainMutable: *const fn (self: *Self, swapchain: Handle(SwapChain)) Error!*SwapChain,
     destroySwapChain: *const fn (self: *Self, swapchain: Handle(SwapChain)) void,
+
+    createShader: *const fn (self: *Self, create_info: *const Shader.ShaderCreateInfo) Error!Handle(Shader),
+    destroyShader: *const fn (self: *Self, shader: Handle(Shader)) void,
 };
 
 backing_allocator: std.mem.Allocator,
@@ -182,6 +193,16 @@ pub fn useSwapchainMutable(self: *Self, swapchain: Handle(SwapChain)) Error!*Swa
 pub fn destroySwapchain(self: *Self, swapchain: Handle(SwapChain)) Error!void {
     try self.ensureLoaded();
     self.symbols.?.destroySwapChain(self, swapchain);
+}
+
+pub fn createShader(self: *Self, create_info: *const Shader.ShaderCreateInfo) Error!Handle(Shader) {
+    try self.ensureLoaded();
+    return self.symbols.?.createShader(self, create_info);
+}
+
+pub fn destroyShader(self: *Self, shader: Handle(Shader)) Error!void {
+    try self.ensureLoaded();
+    self.symbols.?.destroyShader(self, shader);
 }
 
 // info

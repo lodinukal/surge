@@ -6,14 +6,20 @@ const Renderer = @import("render/gpu/Renderer.zig");
 
 const interface = @import("core/interface.zig");
 
+const Vertex = struct {
+    position: [2]f32,
+    colour: [4]u8,
+};
+
 const Context = struct {
     allocator: std.mem.Allocator = undefined,
     application: *app.Application = undefined,
     window: *app.window.Window = undefined,
 
     ui_thread: ?std.Thread = null,
-    mutex: std.Thread.Mutex = .{},
-    ready: bool = false,
+
+    ready_condition: std.Thread.Condition = .{},
+    ready_mutex: std.Thread.Mutex = .{},
 
     renderer: *Renderer = undefined,
     swapchain: Renderer.Handle(Renderer.SwapChain) = undefined,
@@ -78,6 +84,9 @@ const Context = struct {
         self.ui_thread = try std.Thread.spawn(.{
             .allocator = self.allocator,
         }, windowLoop, .{self});
+        self.ready_mutex.lock();
+        defer self.ready_mutex.unlock();
+        self.ready_condition.wait(&self.ready_mutex);
     }
 
     pub const focused_sleep = std.time.ns_per_us * 100;
@@ -88,6 +97,10 @@ const Context = struct {
         self.swapchain = try self.renderer.createSwapchain(&.{
             .resolution = .{ 800, 600 },
         }, self.window);
+
+        self.ready_mutex.lock();
+        self.ready_condition.broadcast();
+        self.ready_mutex.unlock();
 
         while (self.running()) {
             try self.pumpEvents();
@@ -162,6 +175,30 @@ pub fn main() !void {
     defer context.destroy();
 
     try context.spawnWindowThread();
+
+    const src = @embedFile("shaders.hlsl");
+
+    var buf: [4096]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&buf);
+    var temp_allocator = fba.allocator();
+
+    var vertex_format = Renderer.VertexFormat.init(temp_allocator);
+    try vertex_format.appendAttribute(.{ .name = "position", .format = .rg32float });
+    try vertex_format.appendAttribute(.{ .name = "colour", .format = .rgba8unorm });
+    vertex_format.setStride(@sizeOf(Vertex));
+    var vertex_attributes = try vertex_format.done();
+
+    var desc: Renderer.Shader.ShaderCreateInfo = .{
+        .type = .vertex,
+        .source = src,
+        .entry_point = "vs_main",
+        .profile = "vs_5_0",
+        .vertex = .{
+            .input = vertex_attributes,
+        },
+    };
+    const shader = try context.renderer.createShader(&desc);
+    defer context.renderer.destroyShader(shader) catch {};
 
     std.debug.print("mem: {}\n", .{arena.queryCapacity()});
 
