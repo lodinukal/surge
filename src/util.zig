@@ -39,3 +39,52 @@ pub fn xorEnum(comptime E: type, other: anytype) E {
     }
     return @enumFromInt(result);
 }
+
+fn EnumStructInitialiser(comptime E: type) type {
+    const fields = @typeInfo(E).Enum.fields;
+    var new_fields: [fields.len]std.builtin.Type.StructField = undefined;
+    inline for (fields, 0..) |field, i| {
+        new_fields[i] = .{
+            .name = field.name,
+            .type = bool,
+            .default_value = @ptrCast(&@as(bool, false)),
+            .is_comptime = false,
+            .alignment = @alignOf(bool),
+        };
+    }
+    return @Type(.{ .Struct = .{
+        .layout = .Auto,
+        .fields = &new_fields,
+        .decls = &.{},
+        .is_tuple = false,
+    } });
+}
+
+pub fn initEnum(comptime E: type, flags: EnumStructInitialiser(E)) E {
+    var result: @typeInfo(E).Enum.tag_type = 0;
+    const fields = @typeInfo(E).Enum.fields;
+    inline for (fields) |field| {
+        if (@field(flags, field.name)) {
+            result |= field.value;
+        }
+    }
+    return @enumFromInt(result);
+}
+
+test initEnum {
+    const Foo = enum(u8) {
+        A = 1,
+        B = 2,
+        C = 4,
+        _,
+    };
+    const result = initEnum(Foo, .{
+        .A = true,
+        .B = false,
+        .C = true,
+    });
+    try std.testing.expectEqual(@as(
+        Foo,
+        @enumFromInt(@intFromEnum(Foo.A) | @intFromEnum(Foo.C)),
+    ), result);
+}
