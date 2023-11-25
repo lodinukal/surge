@@ -3,9 +3,8 @@ const std = @import("std");
 const app = @import("../../app/app.zig");
 
 const Renderer = @import("Renderer.zig");
-const Handle = @import("pool.zig").Handle;
-
-const RenderTarget = @import("RenderTarget.zig");
+const Handle = Renderer.Handle;
+const RenderTarget = Renderer.RenderTarget;
 
 const Self = @This();
 
@@ -21,7 +20,7 @@ fn_resizeBuffers: ?*const fn (*Self, [2]u32) Renderer.Error!void = null,
 surface: ?*app.window.Window = null,
 resolution: [2]u32 = .{ 0, 0 },
 
-pub const SwapChainCreateInfo = struct {
+pub const SwapChainDescriptor = struct {
     resolution: [2]u32 = .{ 0, 0 },
     colour_bits: u32 = 32,
     depth_bits: u32 = 24,
@@ -36,8 +35,8 @@ pub const SwapChainResizeInfo = struct {
     fullscreen: bool = false,
 };
 
-pub fn init(self: *Self, create_info: *const SwapChainCreateInfo) !void {
-    _ = create_info;
+pub fn init(self: *Self, descriptor: *const SwapChainDescriptor) !void {
+    _ = descriptor;
 
     self.* = .{
         .render_target = .{

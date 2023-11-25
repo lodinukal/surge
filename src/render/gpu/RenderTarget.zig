@@ -7,7 +7,7 @@ const Self = @This();
 
 pub const max_num_colour_attachments = 8;
 
-pub const AttachmentCreateInfo = struct {
+pub const AttachmentDescriptor = struct {
     format: Renderer.format.Format = .undefined,
     //TODO: texture: ?Handle(Texture) = null,
     mip_level: u32 = 0,
@@ -15,13 +15,13 @@ pub const AttachmentCreateInfo = struct {
     array_layer: u32 = 0,
 };
 
-pub const RenderTargetCreateInfo = struct {
+pub const RenderTargetDescriptor = struct {
     //TODO: render_pass: ?Handle(RenderPass) = null,
     resolution: [2]u32 = .{ 0, 0 },
     samples: u32 = 1,
-    colour_attachments: [max_num_colour_attachments]AttachmentCreateInfo = .{.{}} ** max_num_colour_attachments,
-    resolve_attachments: [max_num_colour_attachments]AttachmentCreateInfo = .{.{}} ** max_num_colour_attachments,
-    depth_stencil_attachment: AttachmentCreateInfo = .{ .format = .undefined },
+    colour_attachments: [max_num_colour_attachments]AttachmentDescriptor = .{.{}} ** max_num_colour_attachments,
+    resolve_attachments: [max_num_colour_attachments]AttachmentDescriptor = .{.{}} ** max_num_colour_attachments,
+    depth_stencil_attachment: AttachmentDescriptor = .{ .format = .undefined },
 };
 
 fn_getResolution: ?*const fn (*const Self) [2]u32 = null,

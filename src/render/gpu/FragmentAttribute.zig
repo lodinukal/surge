@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const Renderer = @import("Renderer.zig");
-const SystemValue = @import("Shader.zig").SystemValue;
+const SystemValue = Renderer.Shader.SystemValue;
 
 const Self = @This();
 

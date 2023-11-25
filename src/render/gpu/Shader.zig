@@ -3,13 +3,13 @@ const std = @import("std");
 const app = @import("../../app/app.zig");
 
 const Renderer = @import("Renderer.zig");
-const Handle = @import("pool.zig").Handle;
-const VertexAttribute = @import("VertexAttribute.zig");
-const FragmentAttribute = @import("FragmentAttribute.zig");
+const Handle = Renderer.Handle;
+const VertexAttribute = Renderer.VertexAttribute;
+const FragmentAttribute = Renderer.FragmentAttribute;
 
 const Self = @This();
 
-type: ShaderType,
+type: ShaderType = .undefined,
 
 pub fn init(self: *Self, t: ShaderType) void {
     self.type = t;
@@ -149,7 +149,7 @@ pub const ComputeShaderAttributes = struct {
     work_group_size: [3]u32,
 };
 
-pub const ShaderCreateInfo = struct {
+pub const ShaderDescriptor = struct {
     type: ShaderType = .undefined,
     source: []const u8,
     source_type: ShaderSourceType = .code_string,
