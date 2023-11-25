@@ -15,6 +15,8 @@ pub const Shader = @import("Shader.zig");
 pub const VertexAttribute = @import("VertexAttribute.zig");
 pub const VertexFormat = VertexAttribute.VertexFormat;
 pub const FragmentAttribute = @import("FragmentAttribute.zig");
+pub const Resource = @import("Resource.zig");
+pub const Buffer = @import("Buffer.zig");
 
 const Self = @This();
 
@@ -36,8 +38,12 @@ pub const Error = error{
     SwapChainPresentFailed,
 
     // Shader
-    ShaderCompilationFailed,
+    ShaderCreationFailed,
     ShaderInputLayoutCreationFailed,
+
+    // Buffer
+    BufferCreationFailed,
+    BufferSubresourceWriteOutOfBounds,
 };
 
 pub const RendererType = enum {
@@ -50,12 +56,12 @@ pub const RendererType = enum {
 };
 
 pub const SymbolTable = struct {
-    init: *const fn (self: *Self, create_info: RendererCreateInfo) Error!void,
+    init: *const fn (self: *Self, descriptor: RendererDescriptor) Error!void,
     deinit: *const fn (self: *Self) void,
 
     createSwapChain: *const fn (
         self: *Self,
-        create_info: *const SwapChain.SwapChainCreateInfo,
+        descriptor: *const SwapChain.SwapChainDescriptor,
         window: *app.window.Window,
     ) Error!Handle(SwapChain),
     /// Do not store this pointer returned, use the handle
@@ -64,14 +70,21 @@ pub const SymbolTable = struct {
     useSwapChainMutable: *const fn (self: *Self, swapchain: Handle(SwapChain)) Error!*SwapChain,
     destroySwapChain: *const fn (self: *Self, swapchain: Handle(SwapChain)) void,
 
-    createShader: *const fn (self: *Self, create_info: *const Shader.ShaderCreateInfo) Error!Handle(Shader),
+    createShader: *const fn (self: *Self, descriptor: *const Shader.ShaderDescriptor) Error!Handle(Shader),
     destroyShader: *const fn (self: *Self, shader: Handle(Shader)) void,
+
+    createBuffer: *const fn (
+        self: *Self,
+        descriptor: *const Buffer.BufferDescriptor,
+        initial_data: ?*const anyopaque,
+    ) Error!Handle(Buffer),
+    destroyBuffer: *const fn (self: *Self, buffer: Handle(Buffer)) void,
 };
 
 backing_allocator: std.mem.Allocator,
 arena: std.heap.ArenaAllocator,
 allocator: std.mem.Allocator,
-create_info: RendererCreateInfo = .{},
+descriptor: RendererDescriptor = .{},
 symbols: ?*const SymbolTable = null,
 library_loaded: ?std.DynLib = null,
 debug: bool = builtin.mode == .Debug, // TODO: make this a runtime option
@@ -90,11 +103,11 @@ pub fn availableRenderers() []const RendererType {
     };
 }
 
-pub fn create(allocator: std.mem.Allocator, create_info: RendererCreateInfo) !*Self {
+pub fn create(allocator: std.mem.Allocator, descriptor: RendererDescriptor) !*Self {
     if (global_renderer) |gr| return gr;
     var ptr = try allocator.create(Self);
     errdefer allocator.destroy(ptr);
-    try ptr.init(allocator, create_info);
+    try ptr.init(allocator, descriptor);
     global_renderer = ptr;
     return ptr;
 }
@@ -102,18 +115,19 @@ pub fn create(allocator: std.mem.Allocator, create_info: RendererCreateInfo) !*S
 pub fn destroy(self: *Self) void {
     if (self == global_renderer) global_renderer = null;
     self.deinit();
-    self.allocator.destroy(self);
+    self.backing_allocator.destroy(self);
 }
 
-pub fn init(self: *Self, allocator: std.mem.Allocator, create_info: RendererCreateInfo) Error!void {
+pub fn init(self: *Self, allocator: std.mem.Allocator, descriptor: RendererDescriptor) Error!void {
     self.* = .{
         .backing_allocator = allocator,
         .arena = std.heap.ArenaAllocator.init(allocator),
         .allocator = undefined,
-        .create_info = create_info,
+        .descriptor = descriptor,
     };
 
-    self.allocator = self.arena.allocator();
+    // self.allocator = self.arena.allocator();
+    self.allocator = allocator;
 }
 
 pub fn deinit(self: *Self) void {
@@ -137,7 +151,7 @@ pub fn load(self: *Self, backend: RendererType) !void {
             ) orelse return Error.RendererNotLoaded;
             self.symbols = symbols();
 
-            try self.symbols.?.init(self, self.create_info);
+            try self.symbols.?.init(self, self.descriptor);
         },
         .d3d12 => {},
         .gles => {},
@@ -171,11 +185,11 @@ fn ensureLoaded(self: *Self) Error!void {
 // Swapchain
 pub fn createSwapchain(
     self: *Self,
-    create_info: *const SwapChain.SwapChainCreateInfo,
+    descriptor: *const SwapChain.SwapChainDescriptor,
     window: *app.window.Window,
 ) Error!Handle(SwapChain) {
     try self.ensureLoaded();
-    return self.symbols.?.createSwapChain(self, create_info, window);
+    return self.symbols.?.createSwapChain(self, descriptor, window);
 }
 
 /// Do not store this pointer returned, use the handle
@@ -195,14 +209,24 @@ pub fn destroySwapchain(self: *Self, swapchain: Handle(SwapChain)) Error!void {
     self.symbols.?.destroySwapChain(self, swapchain);
 }
 
-pub fn createShader(self: *Self, create_info: *const Shader.ShaderCreateInfo) Error!Handle(Shader) {
+pub fn createShader(self: *Self, descriptor: *const Shader.ShaderDescriptor) Error!Handle(Shader) {
     try self.ensureLoaded();
-    return self.symbols.?.createShader(self, create_info);
+    return self.symbols.?.createShader(self, descriptor);
 }
 
 pub fn destroyShader(self: *Self, shader: Handle(Shader)) Error!void {
     try self.ensureLoaded();
     self.symbols.?.destroyShader(self, shader);
+}
+
+pub fn createBuffer(self: *Self, descriptor: *const Buffer.BufferDescriptor, initial_data: ?[]const u8) Error!Handle(Buffer) {
+    try self.ensureLoaded();
+    return self.symbols.?.createBuffer(self, descriptor, if (initial_data) |d| @ptrCast(d.ptr) else null);
+}
+
+pub fn destroyBuffer(self: *Self, buffer: Handle(Buffer)) Error!void {
+    try self.ensureLoaded();
+    self.symbols.?.destroyBuffer(self, buffer);
 }
 
 // info
@@ -321,8 +345,6 @@ pub const ScreenOrigin = enum { lower_left, upper_left };
 
 pub const DepthRange = enum { minus_one_to_one, zero_to_one };
 
-pub const CPUAccess = enum { read, write, write_discard, read_write };
-
 pub const RendererInfo = struct {
     name: ?[]const u8,
     vendor: []const u8,
@@ -374,7 +396,7 @@ pub const RendererDevicePreference = packed struct(u4) {
     }
 };
 
-pub const RendererCreateInfo = struct {
+pub const RendererDescriptor = struct {
     preference: RendererDevicePreference = .{},
     debugger: ?*const u8 = null,
     specific_config: ?[]const u8 = null,
