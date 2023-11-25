@@ -595,6 +595,14 @@ pub fn releaseIUnknown(comptime T: type, obj: ?*?*T) void {
     }
 }
 
+pub fn refIUnknown(comptime T: type, obj: ?*?*T) void {
+    if (obj) |o| {
+        if (o.*) |unwrapped| {
+            unwrapped.IUnknown_AddRef();
+        }
+    }
+}
+
 pub fn getFxcFlags(ci: Renderer.Shader.ShaderCompileInfo) u32 {
     var x: u32 = 0;
     if (ci.debug) x |= d3d.fxc.D3DCOMPILE_DEBUG;
