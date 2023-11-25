@@ -34,6 +34,9 @@ const symbols = Renderer.SymbolTable{
 
     .createBuffer = &createBuffer,
     .destroyBuffer = &destroyBuffer,
+
+    .createFence = &createFence,
+    .destroyFence = &destroyFence,
 };
 
 pub export fn getSymbols() *const Renderer.SymbolTable {
@@ -55,6 +58,7 @@ pub const RendererState = struct {
     swapchains: Pool(D3D11SwapChain, 2), // i think 2 is more than enough for now (2 game views)
     shaders: DynamicPool(D3D11Shader),
     buffers: DynamicPool(D3D11Buffer),
+    fences: DynamicPool(D3D11Fence),
 };
 pub var state: RendererState = undefined;
 
@@ -2518,6 +2522,156 @@ const D3D11StagingBufferPool = struct {
         );
         self.chunks.append(chunk);
         self.current_chunk = self.chunks.items.len - 1;
+    }
+};
+
+// Fence
+const D3D11Fence = struct {
+    pub const Hot = *d3d11.ID3D11Query;
+    pub const Cold = D3D11Fence;
+
+    query: ?*d3d11.ID3D11Query = null,
+
+    pub fn init(self: *D3D11Fence) !void {
+        var desc: d3d11.D3D11_QUERY_DESC = undefined;
+        desc.Query = .EVENT;
+        desc.MiscFlags = 0;
+        d3dcommon.releaseIUnknown(d3d11.ID3D11Query, &self.query);
+        const hr = state.device.?.ID3D11Device_CreateQuery(
+            &desc,
+            &self.query,
+        );
+        if (winappimpl.reportHResultError(
+            .allocator,
+            hr,
+            "Failed to create fence",
+        )) return Renderer.Error.FenceCreationFailed;
+    }
+
+    pub fn deinit(self: *D3D11Fence) void {
+        d3dcommon.releaseIUnknown(d3d11.ID3D11Query, &self.query);
+    }
+
+    pub fn submit(self: *D3D11Fence, context: ?*d3d11.ID3D11DeviceContext1) void {
+        context.?.ID3D11DeviceContext_End(@ptrCast(self.query));
+    }
+
+    pub fn wait(self: *D3D11Fence, context: ?*d3d11.ID3D11DeviceContext1) void {
+        context.?.ID3D11DeviceContext_End(@ptrCast(self.query));
+        while (context.?.ID3D11DeviceContext_GetData(
+            @ptrCast(self.query),
+            null,
+            0,
+            0,
+        ) == win32.foundation.S_FALSE) {}
+    }
+};
+
+fn createFence(r: *Renderer) Renderer.Error!Handle(Renderer.Fence) {
+    _ = r;
+    const handle = state.fences.put(
+        undefined,
+        undefined,
+    ) catch return Renderer.Error.FenceCreationFailed;
+    const fence = state.fences.getColdMutable(handle).?;
+    try fence.init();
+    var hot = state.fences.getHotMutable(handle);
+    hot.?.* = fence.query.?;
+    return handle.as(Renderer.Fence);
+}
+
+fn destroyFence(r: *Renderer, handle: Handle(Renderer.Fence)) void {
+    _ = r;
+    const as_handle = handle.as(D3D11Fence);
+    const fence = state.fences.getColdMutable(as_handle) orelse return;
+    fence.deinit();
+    state.fences.remove(as_handle) catch {};
+}
+
+// CommandQueue
+const D3D11CommandQueue = struct {
+    base: Renderer.CommandQueue,
+    fence: D3D11Fence,
+    context: ?*d3d11.ID3D11DeviceContext1 = null,
+
+    pub fn fromBaseMut(cc: *Renderer.CommandQueue) *D3D11CommandQueue {
+        return @fieldParentPtr(D3D11CommandQueue, "base", cc);
+    }
+
+    pub fn fromBase(cc: *const Renderer.CommandQueue) *const D3D11CommandQueue {
+        return @fieldParentPtr(D3D11CommandQueue, "base", @constCast(cc));
+    }
+
+    pub fn init(
+        self: *D3D11CommandQueue,
+    ) void {
+        self.* = .{ .base = .{
+            .vtable = &.{
+                .submit = _submit,
+                .submitFence = _submitFence,
+                .waitFence = _submitFence,
+                .waitIdle = _waitIdle,
+            },
+        } };
+        self.fence.init();
+    }
+
+    pub fn deinit(
+        self: *D3D11CommandQueue,
+    ) void {
+        self.fence.deinit();
+    }
+
+    fn _submit(
+        command_queue: *Renderer.CommandQueue,
+        command_buffer: Handle(Renderer.CommandBuffer),
+    ) void {
+        fromBaseMut(command_queue).submit(command_buffer);
+    }
+
+    pub fn submit(self: *D3D11CommandQueue, command_buffer: Handle(Renderer.CommandBuffer)) void {
+        _ = self;
+        _ = command_buffer;
+
+        // TODO: CommandBuffer
+    }
+
+    fn _submitFence(
+        command_queue: *Renderer.CommandQueue,
+        fence: Handle(Renderer.Fence),
+    ) void {
+        fromBaseMut(command_queue).submitFence(fence);
+    }
+
+    pub fn submitFence(self: *D3D11CommandQueue, fence: Handle(Renderer.Fence)) void {
+        var hot = state.fences.getColdMutable(fence.as(D3D11Fence)) orelse return;
+        hot.submit(self.context);
+    }
+
+    fn _waitFence(
+        command_queue: *Renderer.CommandQueue,
+        fence: Handle(Renderer.Fence),
+        timeout: u64,
+    ) void {
+        fromBaseMut(command_queue).waitFence(fence, timeout);
+    }
+
+    pub fn waitFence(self: *D3D11CommandQueue, fence: Handle(Renderer.Fence), timeout: u64) void {
+        _ = timeout;
+
+        var hot = state.fences.getColdMutable(fence.as(D3D11Fence)) orelse return;
+        hot.wait(self.context);
+    }
+
+    fn _waitIdle(
+        command_queue: *Renderer.CommandQueue,
+    ) void {
+        fromBaseMut(command_queue).waitIdle();
+    }
+
+    pub fn waitIdle(self: *D3D11CommandQueue) void {
+        self.fence.submit(self.context);
+        self.fence.wait(self.context, ~0);
     }
 };
 

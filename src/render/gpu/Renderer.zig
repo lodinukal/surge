@@ -16,7 +16,17 @@ pub const VertexAttribute = @import("VertexAttribute.zig");
 pub const VertexFormat = VertexAttribute.VertexFormat;
 pub const FragmentAttribute = @import("FragmentAttribute.zig");
 pub const Resource = @import("Resource.zig");
+pub const ResourceHeap = @import("ResourceHeap.zig");
 pub const Buffer = @import("Buffer.zig");
+pub const Fence = struct {};
+pub const Texture = @import("Texture.zig");
+pub const RenderPass = @import("RenderPass.zig");
+pub const PipelineLayout = @import("PipelineLayout.zig");
+pub const PipelineState = @import("PipelineState.zig");
+pub const Sampler = @import("Sampler.zig");
+pub const QueryHeap = @import("QueryHeap.zig");
+pub const CommandQueue = @import("CommandQueue.zig");
+pub const CommandBuffer = @import("CommandBuffer.zig");
 
 const Self = @This();
 
@@ -44,6 +54,9 @@ pub const Error = error{
     // Buffer
     BufferCreationFailed,
     BufferSubresourceWriteOutOfBounds,
+
+    // Fence
+    FenceCreationFailed,
 };
 
 pub const RendererType = enum {
@@ -79,6 +92,9 @@ pub const SymbolTable = struct {
         initial_data: ?*const anyopaque,
     ) Error!Handle(Buffer),
     destroyBuffer: *const fn (self: *Self, buffer: Handle(Buffer)) void,
+
+    createFence: *const fn (self: *Self) Error!Handle(Fence),
+    destroyFence: *const fn (self: *Self, fence: Handle(Fence)) void,
 };
 
 backing_allocator: std.mem.Allocator,
@@ -227,6 +243,16 @@ pub fn createBuffer(self: *Self, descriptor: *const Buffer.BufferDescriptor, ini
 pub fn destroyBuffer(self: *Self, buffer: Handle(Buffer)) Error!void {
     try self.ensureLoaded();
     self.symbols.?.destroyBuffer(self, buffer);
+}
+
+pub fn createFence(self: *Self) Error!Handle(Fence) {
+    try self.ensureLoaded();
+    return self.symbols.?.createFence(self);
+}
+
+pub fn destroyFence(self: *Self, fence: Handle(Fence)) Error!void {
+    try self.ensureLoaded();
+    self.symbols.?.destroyFence(self, fence);
 }
 
 // info
@@ -534,20 +560,4 @@ pub const RenderingCapabilities = struct {
         self.shading_languages.deinit();
         self.formats.deinit();
     }
-};
-
-pub const Viewport = struct {
-    x: f32 = 0.0,
-    y: f32 = 0.0,
-    width: f32 = 0.0,
-    height: f32 = 0.0,
-    min_depth: f32 = 0.0,
-    max_depth: f32 = 1.0,
-};
-
-pub const Scissor = struct {
-    x: u32 = 0,
-    y: u32 = 0,
-    width: u32 = 0,
-    height: u32 = 0,
 };
