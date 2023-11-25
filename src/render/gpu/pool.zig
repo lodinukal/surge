@@ -88,7 +88,7 @@ pub fn Pool(comptime T: type, comptime size: u16) type {
                 _ = try self.hot_list.addOne();
                 _ = try self.cold_list.addOne();
             }
-            self.generations.slice()[index] += 1;
+            // self.generations.slice()[index] += 1;
             self.hot_list.slice()[index] = hot;
             self.cold_list.slice()[index] = cold;
             return .{ .index = index, .generation = self.generations.get(index) };
@@ -100,6 +100,30 @@ pub fn Pool(comptime T: type, comptime size: u16) type {
             }
             self.generations.slice()[handle.index] += 1;
             try self.free_list.append(handle.index);
+        }
+
+        pub const Iterator = struct {
+            pool: *const Self,
+            index: u32,
+
+            pub fn next(self: *Iterator) ?Handle(T) {
+                if (self.index >= self.pool.generations.len) {
+                    return null;
+                }
+                var handle = Handle(T){
+                    .index = self.index,
+                    .generation = self.pool.generations.get(self.index),
+                };
+                self.index += 1;
+                return handle;
+            }
+        };
+
+        pub fn iterator(self: *const Self) Iterator {
+            return .{
+                .pool = self,
+                .index = 0,
+            };
         }
     };
 }
@@ -225,7 +249,7 @@ pub fn DynamicPool(comptime T: type) type {
                 _ = try self.hot_list.addOne(self.allocator);
                 _ = try self.cold_list.addOne(self.allocator);
             }
-            self.generations.items[index] += 1;
+            // self.generations.items[index] += 1;
             self.hot_list.items[index] = hot;
             self.cold_list.items[index] = cold;
             return .{ .index = @intCast(index), .generation = self.generations.items[index] };
@@ -237,6 +261,30 @@ pub fn DynamicPool(comptime T: type) type {
             }
             self.generations.items[handle.index] += 1;
             try self.free_list.append(self.allocator, handle.index);
+        }
+
+        pub const Iterator = struct {
+            pool: *const Self,
+            index: usize,
+
+            pub fn next(self: *Iterator) ?Handle(T) {
+                if (self.index >= self.pool.generations.items.len) {
+                    return null;
+                }
+                var handle = Handle(T){
+                    .index = @intCast(self.index),
+                    .generation = self.pool.generations.items[self.index],
+                };
+                self.index += 1;
+                return handle;
+            }
+        };
+
+        pub fn iterator(self: *const Self) Iterator {
+            return .{
+                .pool = self,
+                .index = 0,
+            };
         }
     };
 }
