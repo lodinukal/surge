@@ -535,3 +535,19 @@ pub const RenderingCapabilities = struct {
         self.formats.deinit();
     }
 };
+
+pub const Viewport = struct {
+    x: f32 = 0.0,
+    y: f32 = 0.0,
+    width: f32 = 0.0,
+    height: f32 = 0.0,
+    min_depth: f32 = 0.0,
+    max_depth: f32 = 1.0,
+};
+
+pub const Scissor = struct {
+    x: u32 = 0,
+    y: u32 = 0,
+    width: u32 = 0,
+    height: u32 = 0,
+};

@@ -48,6 +48,9 @@ pub const RendererState = struct {
     feature_level: d3d.D3D_FEATURE_LEVEL = .@"9_1",
     debug_layer: ?*d3d11.ID3D11Debug = null,
 
+    state_cache: D3D11StateCache = undefined,
+    // command_queue: ?*d3d11.ID3D11CommandQueue = null,
+
     // objects
     swapchains: Pool(D3D11SwapChain, 2), // i think 2 is more than enough for now (2 game views)
     shaders: DynamicPool(D3D11Shader),
@@ -118,7 +121,8 @@ fn createFactory(r: *Renderer) !void {
 }
 
 fn cleanupFactory() void {
-    d3dcommon.releaseIUnknown(dxgi.IDXGIFactory, &state.factory);
+    d3dcommon
+        .d3dcommon.releaseIUnknown(dxgi.IDXGIFactory, &state.factory);
 }
 
 // custom one because the one in d3d11 has a weird signature for Software (it is non nullable)
@@ -132,7 +136,7 @@ pub extern "d3d11" fn D3D11CreateDevice(
     SDKVersion: u32,
     ppDevice: ?*?*d3d11.ID3D11Device,
     pFeatureLevel: ?*d3d.D3D_FEATURE_LEVEL,
-    ppImmediateContext: ?*?*d3d11.ID3D11DeviceContext,
+    ppImmediateContext: ?*?*d3d11.ID3D11DeviceContext1,
 ) callconv(@import("std").os.windows.WINAPI) win32.foundation.HRESULT;
 
 fn createDeviceAndContext(r: *Renderer, adapter: ?*dxgi.IDXGIAdapter) !void {
@@ -142,8 +146,8 @@ fn createDeviceAndContext(r: *Renderer, adapter: ?*dxgi.IDXGIAdapter) !void {
 
     var base_device: ?*d3d11.ID3D11Device = null;
     defer d3dcommon.releaseIUnknown(d3d11.ID3D11Device, &base_device);
-    var base_device_context: ?*d3d11.ID3D11DeviceContext = null;
-    defer d3dcommon.releaseIUnknown(d3d11.ID3D11DeviceContext, &base_device_context);
+    var base_device_context: ?*d3d11.ID3D11DeviceContext1 = null;
+    defer d3dcommon.releaseIUnknown(d3d11.ID3D11DeviceContext1, &base_device_context);
 
     var hr: win32.foundation.HRESULT = 0;
 
@@ -299,8 +303,661 @@ fn cleanupRenderingCapabilities(r: *Renderer) void {
     r.rendering_capabilities.shading_languages.deinit();
 }
 
-// SwapChain
+fn createStateCacheAndCommandQueue(r: *Renderer) void {
+    state.state_cache.init(r.allocator, state.device_context);
+}
 
+// StateCache
+const D3D11StateCache = struct {
+    pub const ChangedBitField = packed struct {
+        viewports: bool,
+        scissors: bool,
+
+        primitive_topology: bool = false,
+        input_layout: bool = false,
+
+        vertex_shader: bool = false,
+        hull_shader: bool = false,
+        domain_shader: bool = false,
+        geometry_shader: bool = false,
+        fragment_shader: bool = false,
+        compute_shader: bool = false,
+
+        rasteriser_state: bool = false,
+        depth_stencil_ref_state: bool = false,
+        blend_state_factor_sample: bool = false,
+    };
+    pub const Changed = struct {
+        viewports: [d3d11.D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE]Renderer.Viewport,
+        used_viewports: u32 = 0,
+        scissors: [d3d11.D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE]Renderer.Scissor,
+        used_scissors: u32 = 0,
+
+        primitive_topology: d3d.D3D_PRIMITIVE_TOPOLOGY = ._PRIMITIVE_TOPOLOGY_UNDEFINED,
+        input_layout: ?*d3d11.ID3D11InputLayout = null,
+
+        vertex_shader: ?*d3d11.ID3D11VertexShader = null,
+        hull_shader: ?*d3d11.ID3D11HullShader = null,
+        domain_shader: ?*d3d11.ID3D11DomainShader = null,
+        geometry_shader: ?*d3d11.ID3D11GeometryShader = null,
+        fragment_shader: ?*d3d11.ID3D11PixelShader = null,
+        compute_shader: ?*d3d11.ID3D11ComputeShader = null,
+
+        rasteriser_state: ?*d3d11.ID3D11RasterizerState = null,
+        depth_stencil_state: ?*d3d11.ID3D11DepthStencilState = null, // linked with the one below
+        stencil_ref: u32 = 0,
+        blend_state: ?*d3d11.ID3D11BlendState = null, // linked with the two below
+        blend_factor: [4]f32 = .{ 0.0, 0.0, 0.0, 0.0 },
+        sample_mask: u32 = 0,
+    };
+
+    context: ?*d3d11.ID3D11DeviceContext1 = null,
+    constant_staging_pool: D3D11StagingBufferPool = undefined,
+    changed_fields: ChangedBitField = .{},
+    changed: Changed = .{},
+
+    const constant_buffer_chunk_size: u32 = 4096;
+
+    pub fn init(self: *D3D11StateCache, allocator: std.mem.Allocator, context: *d3d11.ID3D11DeviceContext1) void {
+        self.context = context;
+        d3dcommon.refIUnknown(d3d11.ID3D11DeviceContext1, &self.context);
+        self.constant_staging_pool = D3D11StagingBufferPool.init(
+            allocator,
+            context,
+            constant_buffer_chunk_size,
+            .DYNAMIC,
+            .WRITE,
+            .CONSTANT_BUFFER,
+        );
+    }
+
+    pub fn deinit(self: *D3D11StateCache) void {
+        self.constant_staging_pool.deinit();
+        d3dcommon.releaseIUnknown(d3d11.ID3D11DeviceContext1, &self.context);
+    }
+
+    pub fn setViewports(
+        self: *D3D11StateCache,
+        viewports: []const Renderer.Viewport,
+    ) void {
+        self.changed_fields.viewports = true;
+        self.changed.used_viewports = 0;
+        for (
+            viewports,
+            0..@min(viewports.len, d3d11.D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE),
+        ) |v, i| {
+            self.changed.viewports[i] = v;
+            self.changed.used_viewports += 1;
+        }
+    }
+
+    pub fn setScissors(
+        self: *D3D11StateCache,
+        scissors: []const Renderer.Scissor,
+    ) void {
+        self.changed_fields.scissors = true;
+        self.changed.used_scissors = 0;
+        for (
+            scissors,
+            0..@min(scissors.len, d3d11.D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE),
+        ) |s, i| {
+            self.changed.scissors[i] = s;
+            self.changed.used_scissors += 1;
+        }
+    }
+
+    pub fn setPrimitiveTopology(
+        self: *D3D11StateCache,
+        topology: Renderer.PrimitiveTopology,
+    ) void {
+        self.changed_fields.primitive_topology = true;
+        self.changed.primitive_topology = d3dcommon.mapPrimitiveTopology(topology);
+    }
+
+    pub fn setInputLayout(
+        self: *D3D11StateCache,
+        layout: ?*d3d11.ID3D11InputLayout,
+    ) void {
+        self.changed_fields.input_layout = true;
+        self.changed.input_layout = layout;
+    }
+
+    pub fn setVertexShader(
+        self: *D3D11StateCache,
+        shader: ?*d3d11.ID3D11VertexShader,
+    ) void {
+        self.changed_fields.vertex_shader = true;
+        self.changed.vertex_shader = shader;
+    }
+
+    pub fn setHullShader(
+        self: *D3D11StateCache,
+        shader: ?*d3d11.ID3D11HullShader,
+    ) void {
+        self.changed_fields.hull_shader = true;
+        self.changed.hull_shader = shader;
+    }
+
+    pub fn setDomainShader(
+        self: *D3D11StateCache,
+        shader: ?*d3d11.ID3D11DomainShader,
+    ) void {
+        self.changed_fields.domain_shader = true;
+        self.changed.domain_shader = shader;
+    }
+
+    pub fn setGeometryShader(
+        self: *D3D11StateCache,
+        shader: ?*d3d11.ID3D11GeometryShader,
+    ) void {
+        self.changed_fields.geometry_shader = true;
+        self.changed.geometry_shader = shader;
+    }
+
+    pub fn setFragmentShader(
+        self: *D3D11StateCache,
+        shader: ?*d3d11.ID3D11PixelShader,
+    ) void {
+        self.changed_fields.fragment_shader = true;
+        self.changed.fragment_shader = shader;
+    }
+
+    pub fn setComputeShader(
+        self: *D3D11StateCache,
+        shader: ?*d3d11.ID3D11ComputeShader,
+    ) void {
+        self.changed_fields.compute_shader = true;
+        self.changed.compute_shader = shader;
+    }
+
+    pub fn setRasteriserState(
+        self: *D3D11StateCache,
+        rasteriser_state: ?*d3d11.ID3D11RasterizerState,
+    ) void {
+        self.changed_fields.rasteriser_state = true;
+        self.changed.rasteriser_state = rasteriser_state;
+    }
+
+    pub fn setDepthStencilState(
+        self: *D3D11StateCache,
+        depth_stencil_state: ?*d3d11.ID3D11DepthStencilState,
+        stencil_ref: ?u32,
+    ) void {
+        self.changed_fields.depth_stencil_ref_state = true;
+        self.changed.depth_stencil_state = depth_stencil_state;
+        if (stencil_ref) |sr| self.changed.stencil_ref = sr;
+    }
+
+    pub fn setStencilRef(
+        self: *D3D11StateCache,
+        stencil_ref: u32,
+    ) void {
+        self.changed_fields.depth_stencil_ref_state = true;
+        self.changed.stencil_ref = stencil_ref;
+    }
+
+    pub fn setBlendState(
+        self: *D3D11StateCache,
+        blend_state: ?*d3d11.ID3D11BlendState,
+        blend_factor: ?[4]f32,
+        sample_mask: ?u32,
+    ) void {
+        self.changed_fields.blend_state_factor_sample = true;
+        self.changed.blend_state = blend_state;
+        if (blend_factor) |bf| self.changed.blend_factor = bf;
+        if (sample_mask) |sm| self.changed.sample_mask = sm;
+    }
+
+    pub fn setBlendFactor(
+        self: *D3D11StateCache,
+        blend_factor: [4]f32,
+    ) void {
+        self.changed_fields.blend_state_factor_sample = true;
+        self.changed.blend_factor = blend_factor;
+    }
+
+    pub fn setConstantBuffers(
+        self: *D3D11StateCache,
+        start_slot: u32,
+        buffers: []const *d3d11.ID3D11Buffer,
+        stages: Renderer.Shader.ShaderStages,
+    ) void {
+        if (stages.vertex) {
+            self.context.?.ID3D11DeviceContext_VSSetConstantBuffers(
+                start_slot,
+                buffers.len,
+                @ptrCast(buffers),
+            );
+        }
+        if (stages.hull) {
+            self.context.?.ID3D11DeviceContext_HSSetConstantBuffers(
+                start_slot,
+                buffers.len,
+                @ptrCast(buffers),
+            );
+        }
+        if (stages.domain) {
+            self.context.?.ID3D11DeviceContext_DSSetConstantBuffers(
+                start_slot,
+                buffers.len,
+                @ptrCast(buffers),
+            );
+        }
+        if (stages.geometry) {
+            self.context.?.ID3D11DeviceContext_GSSetConstantBuffers(
+                start_slot,
+                buffers.len,
+                @ptrCast(buffers),
+            );
+        }
+        if (stages.fragment) {
+            self.context.?.ID3D11DeviceContext_PSSetConstantBuffers(
+                start_slot,
+                buffers.len,
+                @ptrCast(buffers),
+            );
+        }
+        if (stages.compute) {
+            self.context.?.ID3D11DeviceContext_CSSetConstantBuffers(
+                start_slot,
+                buffers.len,
+                @ptrCast(buffers),
+            );
+        }
+    }
+
+    pub fn setConstantBuffersRange(
+        self: *D3D11StateCache,
+        start_slot: u32,
+        buffers: []const *d3d11.ID3D11Buffer,
+        offsets: []const u32,
+        sizes: []const u32,
+        stages: Renderer.Shader.ShaderStages,
+    ) void {
+        if (stages.vertex) {
+            self.context.?.ID3D11DeviceContext1_VSSetConstantBuffers1(
+                start_slot,
+                buffers.len,
+                @ptrCast(buffers),
+                @ptrCast(offsets),
+                sizes,
+            );
+        }
+        if (stages.hull) {
+            self.context.?.ID3D11DeviceContext1_HSSetConstantBuffers1(
+                start_slot,
+                buffers.len,
+                @ptrCast(buffers),
+                @ptrCast(offsets),
+                sizes,
+            );
+        }
+        if (stages.domain) {
+            self.context.?.ID3D11DeviceContext1_DSSetConstantBuffers1(
+                start_slot,
+                buffers.len,
+                @ptrCast(buffers),
+                @ptrCast(offsets),
+                sizes,
+            );
+        }
+        if (stages.geometry) {
+            self.context.?.ID3D11DeviceContext1_GSSetConstantBuffers1(
+                start_slot,
+                buffers.len,
+                @ptrCast(buffers),
+                @ptrCast(offsets),
+                sizes,
+            );
+        }
+        if (stages.fragment) {
+            self.context.?.ID3D11DeviceContext1_PSSetConstantBuffers1(
+                start_slot,
+                buffers.len,
+                @ptrCast(buffers),
+                @ptrCast(offsets),
+                sizes,
+            );
+        }
+        if (stages.compute) {
+            self.context.?.ID3D11DeviceContext1_CSSetConstantBuffers1(
+                start_slot,
+                buffers.len,
+                @ptrCast(buffers),
+                @ptrCast(offsets),
+                sizes,
+            );
+        }
+    }
+
+    pub fn setShaderResources(
+        self: *D3D11StateCache,
+        start_slot: u32,
+        resources: []const *d3d11.ID3D11ShaderResourceView,
+        stages: Renderer.Shader.ShaderStages,
+    ) void {
+        if (stages.vertex) {
+            self.context.?.ID3D11DeviceContext_VSSetShaderResources(
+                start_slot,
+                resources.len,
+                @ptrCast(resources),
+            );
+        }
+        if (stages.hull) {
+            self.context.?.ID3D11DeviceContext_HSSetShaderResources(
+                start_slot,
+                resources.len,
+                @ptrCast(resources),
+            );
+        }
+        if (stages.domain) {
+            self.context.?.ID3D11DeviceContext_DSSetShaderResources(
+                start_slot,
+                resources.len,
+                @ptrCast(resources),
+            );
+        }
+        if (stages.geometry) {
+            self.context.?.ID3D11DeviceContext_GSSetShaderResources(
+                start_slot,
+                resources.len,
+                @ptrCast(resources),
+            );
+        }
+        if (stages.fragment) {
+            self.context.?.ID3D11DeviceContext_PSSetShaderResources(
+                start_slot,
+                resources.len,
+                @ptrCast(resources),
+            );
+        }
+        if (stages.compute) {
+            self.context.?.ID3D11DeviceContext_CSSetShaderResources(
+                start_slot,
+                resources.len,
+                @ptrCast(resources),
+            );
+        }
+    }
+
+    pub fn setUnorderedAccessViews(
+        self: *D3D11StateCache,
+        start_slot: u32,
+        uavs: []const *d3d11.ID3D11UnorderedAccessView,
+        initial_counts: []const u32,
+        stages: Renderer.Shader.ShaderStages,
+    ) void {
+        if (stages.fragment) {
+            self.context.?.ID3D11DeviceContext_OMSetRenderTargetsAndUnorderedAccessViews(
+                d3d11.D3D11_KEEP_RENDER_TARGETS_AND_DEPTH_STENCIL,
+                null,
+                null,
+                start_slot,
+                uavs.len,
+                @ptrCast(uavs),
+                @ptrCast(initial_counts),
+            );
+        }
+        if (stages.compute) {
+            self.context.?.ID3D11DeviceContext_CSSetUnorderedAccessViews(
+                start_slot,
+                uavs.len,
+                @ptrCast(uavs),
+                @ptrCast(initial_counts),
+            );
+        }
+    }
+
+    pub fn setSamplers(
+        self: *D3D11StateCache,
+        start_slot: u32,
+        samplers: []const *d3d11.ID3D11SamplerState,
+        stages: Renderer.Shader.ShaderStages,
+    ) void {
+        if (stages.vertex) {
+            self.context.?.ID3D11DeviceContext_VSSetSamplers(
+                start_slot,
+                samplers.len,
+                @ptrCast(samplers),
+            );
+        }
+        if (stages.hull) {
+            self.context.?.ID3D11DeviceContext_HSSetSamplers(
+                start_slot,
+                samplers.len,
+                @ptrCast(samplers),
+            );
+        }
+        if (stages.domain) {
+            self.context.?.ID3D11DeviceContext_DSSetSamplers(
+                start_slot,
+                samplers.len,
+                @ptrCast(samplers),
+            );
+        }
+        if (stages.geometry) {
+            self.context.?.ID3D11DeviceContext_GSSetSamplers(
+                start_slot,
+                samplers.len,
+                @ptrCast(samplers),
+            );
+        }
+        if (stages.fragment) {
+            self.context.?.ID3D11DeviceContext_PSSetSamplers(
+                start_slot,
+                samplers.len,
+                @ptrCast(samplers),
+            );
+        }
+        if (stages.compute) {
+            self.context.?.ID3D11DeviceContext_CSSetSamplers(
+                start_slot,
+                samplers.len,
+                @ptrCast(samplers),
+            );
+        }
+    }
+
+    pub fn setGraphicsStaticSampler(
+        self: *D3D11StateCache,
+        static_sampler: *const D3D11StaticSampler,
+    ) void {
+        if (static_sampler.stage.vertex) {
+            self.context.?.ID3D11DeviceContext_VSSetSamplers(
+                static_sampler.slot,
+                1,
+                @ptrCast(&static_sampler.sampler_state),
+            );
+        }
+        if (static_sampler.stage.hull) {
+            self.context.?.ID3D11DeviceContext_HSSetSamplers(
+                static_sampler.slot,
+                1,
+                @ptrCast(&static_sampler.sampler_state),
+            );
+        }
+        if (static_sampler.stage.domain) {
+            self.context.?.ID3D11DeviceContext_DSSetSamplers(
+                static_sampler.slot,
+                1,
+                @ptrCast(&static_sampler.sampler_state),
+            );
+        }
+        if (static_sampler.stage.geometry) {
+            self.context.?.ID3D11DeviceContext_GSSetSamplers(
+                static_sampler.slot,
+                1,
+                @ptrCast(&static_sampler.sampler_state),
+            );
+        }
+        if (static_sampler.stage.fragment) {
+            self.context.?.ID3D11DeviceContext_PSSetSamplers(
+                static_sampler.slot,
+                1,
+                @ptrCast(&static_sampler.sampler_state),
+            );
+        }
+    }
+
+    pub fn setComputeStaticSampler(
+        self: *D3D11StateCache,
+        static_sampler: *const D3D11StaticSampler,
+    ) void {
+        if (static_sampler.stage.compute) {
+            self.context.?.ID3D11DeviceContext_CSSetSamplers(
+                static_sampler.slot,
+                1,
+                @ptrCast(&static_sampler.sampler_state),
+            );
+        }
+    }
+
+    pub fn setConstants(
+        self: *D3D11StateCache,
+        slot: u32,
+        constants: []const u8,
+        stages: Renderer.Shader.ShaderStages,
+    ) !void {
+        const alignment = 16 * 16;
+        var range = try self.constant_staging_pool.write(
+            constants,
+            alignment,
+        );
+
+        var buffers: []?*d3d11.ID3D11Buffer = .{range.buffer};
+        var offsets: []u32 = .{range.offset / 16};
+        var sizes: []u32 = .{range.size / 16};
+
+        self.setConstantBuffersRange(
+            slot,
+            buffers,
+            offsets,
+            sizes,
+            stages,
+        );
+    }
+
+    pub fn resetStagingBufferPools(self: *D3D11StateCache) void {
+        self.constant_staging_pool.reset();
+    }
+
+    pub fn apply(self: *D3D11StateCache) void {
+        // Viewports
+        if (self.changed_fields.viewports) {
+            var viewports: [d3d11.D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE]d3d11.D3D11_VIEWPORT = undefined;
+            for (self.changed.viewports, 0..self.changed.used_viewports) |v, i| {
+                viewports[i] = .{
+                    .TopLeftX = v.x,
+                    .TopLeftY = v.y,
+                    .Width = v.width,
+                    .Height = v.height,
+                    .MinDepth = v.min_depth,
+                    .MaxDepth = v.max_depth,
+                };
+            }
+            self.context.?.ID3D11DeviceContext_RSSetViewports(
+                self.changed.used_viewports,
+                &viewports,
+            );
+            self.changed.used_viewports = 0;
+        }
+        // Scissors
+        if (self.changed_fields.scissors) {
+            var scissors: [d3d11.D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE]d3d11.D3D11_RECT = undefined;
+            for (self.changed.scissors, 0..self.changed.used_scissors) |s, i| {
+                scissors[i] = .{
+                    .left = s.x,
+                    .top = s.y,
+                    .right = s.x + s.width,
+                    .bottom = s.y + s.height,
+                };
+            }
+            self.context.?.ID3D11DeviceContext_RSSetScissorRects(
+                self.changed.used_scissors,
+                &scissors,
+            );
+            self.changed.used_scissors = 0;
+        }
+        // Input Assembly
+        if (self.changed_fields.primitive_topology) {
+            self.context.?.ID3D11DeviceContext_IASetPrimitiveTopology(
+                self.changed.primitive_topology,
+            );
+        }
+        if (self.changed_fields.input_layout) {
+            self.context.?.ID3D11DeviceContext_IASetInputLayout(
+                @ptrCast(self.changed.input_layout),
+            );
+        }
+        // Shaders
+        if (self.changed_fields.vertex_shader) {
+            self.context.?.ID3D11DeviceContext_VSSetShader(
+                @ptrCast(self.changed.vertex_shader),
+                null,
+                0,
+            );
+        }
+        if (self.changed_fields.hull_shader) {
+            self.context.?.ID3D11DeviceContext_HSSetShader(
+                @ptrCast(self.changed.hull_shader),
+                null,
+                0,
+            );
+        }
+        if (self.changed_fields.domain_shader) {
+            self.context.?.ID3D11DeviceContext_DSSetShader(
+                @ptrCast(self.changed.domain_shader),
+                null,
+                0,
+            );
+        }
+        if (self.changed_fields.geometry_shader) {
+            self.context.?.ID3D11DeviceContext_GSSetShader(
+                @ptrCast(self.changed.geometry_shader),
+                null,
+                0,
+            );
+        }
+        if (self.changed_fields.fragment_shader) {
+            self.context.?.ID3D11DeviceContext_PSSetShader(
+                @ptrCast(self.changed.fragment_shader),
+                null,
+                0,
+            );
+        }
+        if (self.changed_fields.compute_shader) {
+            self.context.?.ID3D11DeviceContext_CSSetShader(
+                @ptrCast(self.changed.compute_shader),
+                null,
+                0,
+            );
+        }
+        // Rasteriser State
+        if (self.changed_fields.rasteriser_state) {
+            self.context.?.ID3D11DeviceContext_RSSetState(
+                @ptrCast(self.changed.rasteriser_state),
+            );
+        }
+        // Output Merger
+        if (self.changed_fields.depth_stencil_ref_state) {
+            self.context.?.ID3D11DeviceContext_OMSetDepthStencilState(
+                @ptrCast(self.changed.depth_stencil_state),
+                self.changed.stencil_ref,
+            );
+        }
+        if (self.changed_fields.blend_state_factor_sample) {
+            self.context.?.ID3D11DeviceContext_OMSetBlendState(
+                @ptrCast(self.changed.blend_state),
+                &self.changed.blend_factor,
+                self.changed.sample_mask,
+            );
+        }
+
+        self.changed_fields = .{};
+    }
+};
+
+// SwapChain
 pub const D3D11SwapChain = struct {
     pub const Hot = ?*dxgi.IDXGISwapChain;
     pub const Cold = D3D11SwapChain;
@@ -1214,7 +1871,7 @@ pub const D3D11Buffer = struct {
         )) return Renderer.Error.BufferCreationFailed;
     }
 
-    pub fn writeSubresource(self: *D3D11Buffer, context: *d3d11.ID3D11DeviceContext, data: []const u8, offset: u32) !void {
+    pub fn writeSubresource(self: *D3D11Buffer, context: *d3d11.ID3D11DeviceContext1, data: []const u8, offset: u32) !void {
         if (data.len + offset > self.size) return Renderer.Error.BufferSubresourceWriteOutOfBounds;
 
         const is_whole_buffer = offset == 0 and data.len == self.size;
@@ -1273,7 +1930,7 @@ pub const D3D11Buffer = struct {
 
     pub fn readSubresource(
         self: *D3D11Buffer,
-        context: *d3d11.ID3D11DeviceContext,
+        context: *d3d11.ID3D11DeviceContext1,
         data: []u8,
         offset: u32,
     ) !void {
@@ -1287,7 +1944,7 @@ pub const D3D11Buffer = struct {
 
     pub fn map(
         self: *D3D11Buffer,
-        context: *d3d11.ID3D11DeviceContext,
+        context: *d3d11.ID3D11DeviceContext1,
         access: Renderer.Resource.CPUAccess,
         offset: u32,
         length: u32,
@@ -1353,7 +2010,7 @@ pub const D3D11Buffer = struct {
         ))[0..length] else null;
     }
 
-    pub fn unmap(self: *D3D11Buffer, context: *d3d11.ID3D11DeviceContext) void {
+    pub fn unmap(self: *D3D11Buffer, context: *d3d11.ID3D11DeviceContext1) void {
         if (self.cpu_access_buffer) |cab| {
             context.ID3D11DeviceContext_Unmap(
                 @ptrCast(cab),
@@ -1391,7 +2048,7 @@ pub const D3D11Buffer = struct {
 
     pub fn readFromStagingBuffer(
         self: *D3D11Buffer,
-        context: *d3d11.ID3D11DeviceContext,
+        context: *d3d11.ID3D11DeviceContext1,
         staging_buffer: *d3d11.ID3D11Buffer,
         offset: u32,
         data: []u8,
@@ -1432,7 +2089,7 @@ pub const D3D11Buffer = struct {
         }
     }
 
-    pub fn readFromSubresourceCopyWithCpuAccess(self: *D3D11Buffer, context: *d3d11.ID3D11DeviceContext, data: []u8, offset: u32) void {
+    pub fn readFromSubresourceCopyWithCpuAccess(self: *D3D11Buffer, context: *d3d11.ID3D11DeviceContext1, data: []u8, offset: u32) void {
         const staging_buffer_desc: d3d11.D3D11_BUFFER_DESC = .{
             .ByteWidth = data.len,
             .Usage = .STAGING,
@@ -1466,7 +2123,7 @@ pub const D3D11Buffer = struct {
 
     pub fn writeWithStagingBuffer(
         self: *D3D11Buffer,
-        context: *d3d11.ID3D11DeviceContext,
+        context: *d3d11.ID3D11DeviceContext1,
         staging_buffer: *d3d11.ID3D11Buffer,
         data: []const u8,
         offset: u32,
@@ -1665,6 +2322,215 @@ fn destroyBuffer(r: *Renderer, handle: Handle(Renderer.Buffer)) void {
     buffer.deinit();
     state.buffers.remove(as_handle) catch {};
 }
+
+const D3D11BufferRange = struct {
+    buffer: ?*d3d11.ID3D11Buffer = null,
+    offset: u32 = 0,
+    size: u32 = 0,
+};
+
+const D3D11StagingBuffer = struct {
+    buffer: ?*d3d11.ID3D11Buffer = null,
+    usage: d3d11.D3D11_USAGE = .STAGING,
+    size: u32 = 0,
+    offset: u32 = 0,
+
+    fn cpuAccessFromUsage(usage: d3d11.D3D11_USAGE) d3d11.D3D11_CPU_ACCESS_FLAG {
+        switch (usage) {
+            .STAGING => return d3d11.D3D11_CPU_ACCESS_FLAG.initFlags(.{
+                .READ = 1,
+                .WRITE = 1,
+            }),
+            .DYNAMIC => return .WRITE,
+            else => return 0,
+        }
+    }
+
+    pub fn init(
+        size: u32,
+        usage: ?d3d11.D3D11_USAGE,
+        cpu_access_flags: ?d3d11.D3D11_CPU_ACCESS_FLAG,
+        bind_flags: ?d3d11.D3D11_BIND_FLAG,
+    ) !D3D11StagingBuffer {
+        var self = .{};
+        self.size = size;
+        self.usage = usage orelse .STAGING;
+        const access = cpu_access_flags orelse d3d11.D3D11_CPU_ACCESS_FLAG.initFlags(.{
+            .READ = 1,
+            .WRITE = 1,
+        });
+        std.debug.assert(cpuAccessFromUsage(self.usage) == access);
+        var desc: d3d11.D3D11_BUFFER_DESC = undefined;
+        desc.ByteWidth = size;
+        desc.Usage = self.usage;
+        desc.BindFlags = if (bind_flags) |bf| @intFromEnum(bf) else 0;
+        desc.CPUAccessFlags = @intFromEnum(access);
+        desc.MiscFlags = 0;
+        desc.StructureByteStride = 0;
+
+        const hr = state.device.?.ID3D11Device_CreateBuffer(
+            &desc,
+            null,
+            &self.buffer,
+        );
+        if (winappimpl.reportHResultError(
+            .allocator,
+            hr,
+            "Failed to create staging buffer",
+        )) return Renderer.Error.BufferCreationFailed;
+    }
+
+    pub fn deinit(self: *D3D11StagingBuffer) void {
+        d3dcommon.releaseIUnknown(d3d11.ID3D11Buffer, &self.buffer);
+    }
+
+    pub fn reset(self: *D3D11StagingBuffer) void {
+        self.offset = 0;
+    }
+
+    pub fn hasCapacity(self: *const D3D11StagingBuffer, size: u32) u32 {
+        return self.offset + size <= self.size;
+    }
+
+    pub fn write(
+        self: *D3D11StagingBuffer,
+        context: ?*d3d11.ID3D11DeviceContext1,
+        data: []const u8,
+    ) void {
+        if (self.usage == .DYNAMIC) {
+            var subresource: d3d11.D3D11_MAPPED_SUBRESOURCE = undefined;
+            if (winapi.zig.SUCCEEDED(context.?.ID3D11DeviceContext_Map(
+                @ptrCast(self.buffer),
+                0,
+                .WRITE_DISCARD,
+                0,
+                &subresource,
+            ))) {
+                var data_pointer: usize = @intFromPtr(subresource.pData.?);
+                data_pointer += self.offset;
+                const dst = @as([*]u8, @ptrFromInt(data_pointer))[0..data.len];
+                @memcpy(dst, data);
+                context.?.ID3D11DeviceContext_Unmap(@ptrCast(self.buffer), 0);
+            }
+        } else {
+            const dst_box: d3d11.D3D11_BOX = .{
+                .left = self.offset,
+                .top = 0,
+                .front = 0,
+                .right = self.offset + data.len,
+                .bottom = 1,
+                .back = 1,
+            };
+            context.?.ID3D11DeviceContext_UpdateSubresource(
+                @ptrCast(self.buffer),
+                0,
+                &dst_box,
+                @ptrCast(data),
+                0,
+                0,
+            );
+        }
+    }
+
+    pub fn writeAndMove(self: *D3D11StagingBuffer, context: ?*d3d11.ID3D11DeviceContext1, data: []const u8, stride: u32) void {
+        self.write(context, data);
+        self.offset += @max(data.len, stride);
+    }
+};
+
+const D3D11StagingBufferPool = struct {
+    context: ?*d3d11.ID3D11DeviceContext1 = null,
+
+    chunks: std.ArrayList(D3D11StagingBuffer),
+    current_chunk: usize = 0,
+    chunk_size: u32 = 0,
+    usage: d3d11.D3D11_USAGE,
+    cpu_access_flags: d3d11.D3D11_CPU_ACCESS_FLAG,
+    bind_flags: d3d11.D3D11_BIND_FLAG,
+
+    pub fn init(
+        allocator: std.mem.Allocator,
+        context: ?*d3d11.ID3D11DeviceContext1,
+        chunk_size: u32,
+        usage: ?d3d11.D3D11_USAGE,
+        cpu_access_flags: ?d3d11.D3D11_CPU_ACCESS_FLAG,
+        bind_flags: ?d3d11.D3D11_BIND_FLAG,
+    ) D3D11StagingBufferPool {
+        d3dcommon.refIUnknown(d3d11.ID3D11DeviceContext1, &context);
+        return .{
+            .context = context,
+            .chunks = std.ArrayList(D3D11StagingBuffer).init(allocator),
+            .chunk_size = chunk_size,
+            .usage = usage orelse .STAGING,
+            .cpu_access_flags = cpu_access_flags orelse d3d11.D3D11_CPU_ACCESS_FLAG.initFlags(.{
+                .READ = 1,
+                .WRITE = 1,
+            }),
+            .bind_flags = bind_flags orelse @enumFromInt(0),
+        };
+    }
+
+    pub fn deinit(self: *D3D11StagingBufferPool) void {
+        for (self.chunks.items) |*c| {
+            c.deinit();
+        }
+        self.chunks.deinit();
+        d3dcommon.releaseIUnknown(d3d11.ID3D11DeviceContext1, &self.context);
+    }
+
+    pub fn reset(self: *D3D11StagingBufferPool) void {
+        for (self.chunks) |*c| {
+            c.reset();
+        }
+        self.current_chunk = 0;
+    }
+
+    pub fn write(self: *D3D11StagingBufferPool, data: []const u8, alignment: ?u32) !D3D11BufferRange {
+        const _alignment = alignment orelse 1;
+        const size = std.mem.alignForward(u32, data.len, _alignment);
+
+        if (self.current_chunk == self.chunks.items.len) {
+            try self.allocateChunk(size);
+        } else if (!self.chunks.items[self.current_chunk].hasCapacity(size)) {
+            self.current_chunk += 1;
+            if (self.current_chunk == self.chunks.items.len) {
+                try self.allocateChunk(size);
+            }
+        }
+
+        var chunk = &self.chunks.items[self.current_chunk];
+        const range: D3D11BufferRange = .{
+            .buffer = chunk.buffer,
+            .offset = chunk.offset,
+            .size = size,
+        };
+        chunk.write(self.context, data);
+        return range;
+    }
+
+    fn allocateChunk(self: *D3D11StagingBufferPool, min_size: u32) !void {
+        const size = @max(self.chunk_size, min_size);
+        var chunk = try D3D11StagingBuffer.init(
+            size,
+            self.usage,
+            self.cpu_access_flags,
+            self.bind_flags,
+        );
+        self.chunks.append(chunk);
+        self.current_chunk = self.chunks.items.len - 1;
+    }
+};
+
+// Samplers
+const D3D11StaticSampler = struct {
+    slot: u32 = 0,
+    stage: Renderer.Shader.ShaderStages = .{},
+    sampler_state: ?*d3d11.ID3D11SamplerState = null,
+};
+
+const D3D11Sampler = struct {
+    // base: Sampler
+};
 
 test {
     std.testing.refAllDecls(@This());
