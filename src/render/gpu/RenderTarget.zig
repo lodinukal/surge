@@ -5,53 +5,66 @@ const Handle = @import("pool.zig").Handle;
 
 const Self = @This();
 
-pub const max_num_colour_attachments = 8;
-
 pub const AttachmentDescriptor = struct {
     format: Renderer.format.Format = .undefined,
-    //TODO: texture: ?Handle(Texture) = null,
+    texture: ?Handle(Renderer.Texture) = null,
     mip_level: u32 = 0,
     /// only valid when there is a bound texture,
     array_layer: u32 = 0,
+
+    pub fn isAttachmentEnabled(self: AttachmentDescriptor) bool {
+        return self.format != .undefined or self.texture != null;
+    }
+
+    pub fn getAttachmentFormat(self: AttachmentDescriptor) Renderer.format.Format {
+        if (self.format != .undefined) return self.format;
+        // Renderer.getTextureFormat(self.texture);
+        // if (self.texture) |t|
+        return .undefined;
+    }
 };
 
 pub const RenderTargetDescriptor = struct {
-    //TODO: render_pass: ?Handle(RenderPass) = null,
+    render_pass: ?Handle(Renderer.RenderPass) = null,
     resolution: [2]u32 = .{ 0, 0 },
     samples: u32 = 1,
-    colour_attachments: [max_num_colour_attachments]AttachmentDescriptor = .{.{}} ** max_num_colour_attachments,
-    resolve_attachments: [max_num_colour_attachments]AttachmentDescriptor = .{.{}} ** max_num_colour_attachments,
+    colour_attachments: [Renderer.max_num_colour_attachments]AttachmentDescriptor = .{.{}} ** Renderer.max_num_colour_attachments,
+    resolve_attachments: [Renderer.max_num_colour_attachments]AttachmentDescriptor = .{.{}} ** Renderer.max_num_colour_attachments,
     depth_stencil_attachment: AttachmentDescriptor = .{ .format = .undefined },
 };
 
-fn_getResolution: ?*const fn (*const Self) [2]u32 = null,
-fn_getSamples: ?*const fn (*const Self) u32 = null,
-fn_getNumColourAttachments: ?*const fn (*const Self) u32 = null,
-fn_hasDepthAttachment: ?*const fn (*const Self) bool = null,
-fn_hasStencilAttachment: ?*const fn (*const Self) bool = null,
-// getRenderPass: fn(*const Self) ?Handle(Renderer.RenderPass),
+vtable: *const struct {
+    getResolution: *const fn (*const Self) [2]u32 = undefined,
+    getSamples: *const fn (*const Self) u32 = undefined,
+    getNumColourAttachments: *const fn (*const Self) u32 = undefined,
+    hasDepthAttachment: *const fn (*const Self) bool = undefined,
+    hasStencilAttachment: *const fn (*const Self) bool = undefined,
+    getRenderPass: fn (*const Self) ?Handle(Renderer.RenderPass) = undefined,
+},
 
 pub fn getResolution(self: *const Self) [2]u32 {
-    return self.fn_getResolution.?(self);
+    return self.vtable.getResolution(self);
 }
 
 pub fn getSamples(self: *const Self) u32 {
-    return self.fn_getSamples.?(self);
+    return self.vtable.getSamples(self);
 }
 
 pub fn getNumColourAttachments(self: *const Self) u32 {
-    return self.fn_getNumColourAttachments.?(self);
+    return self.vtable.getNumColourAttachments(self);
 }
 
 pub fn hasDepthAttachment(self: *const Self) bool {
-    return self.fn_hasDepthAttachment.?(self);
+    return self.vtable.hasDepthAttachment(self);
 }
 
 pub fn hasStencilAttachment(self: *const Self) bool {
-    return self.fn_hasStencilAttachment.?(self);
+    return self.vtable.hasStencilAttachment(self);
 }
 
-// TODO: pub fn getRenderPass(self: *const Self) ?Handle(Renderer.RenderPass)
+pub fn getRenderPass(self: *const Self) ?Handle(Renderer.RenderPass) {
+    return self.vtable.getRenderPass(self);
+}
 
 pub fn validateResolution(self: *Self, resolution: [2]u32) !void {
     if (resolution[0] == 0 or resolution[1] == 0) {

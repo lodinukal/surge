@@ -1004,14 +1004,16 @@ pub const D3D11SwapChain = struct {
         self.* = .{};
         try self.base.init(descriptor);
 
-        self.base.fn_present = &_present;
-        self.base.fn_getCurrentSwapIndex = &_getCurrentSwapIndex;
-        self.base.fn_getNumSwapBuffers = &_getNumSwapBuffers;
-        self.base.fn_getColourFormat = &_getColourFormat;
-        self.base.fn_getDepthStencilFormat = &_getDepthStencilFormat;
-        self.base.fn_resizeBuffers = &_resizeBuffers;
+        self.base.vtable = &.{
+            .present = &_present,
+            .getCurrentSwapIndex = &_getCurrentSwapIndex,
+            .getNumSwapBuffers = &_getNumSwapBuffers,
+            .getColourFormat = &_getColourFormat,
+            .getDepthStencilFormat = &_getDepthStencilFormat,
+            .resizeBuffers = &_resizeBuffers,
+        };
 
-        self.base.render_target.fn_getSamples = &_getSamples;
+        self.base.render_target.vtable.getSamples = &_getSamples;
 
         self.depth_stencil_format = d3dcommon.pickDepthStencilFormat(
             descriptor.depth_bits,
@@ -2636,6 +2638,37 @@ const D3D11CommandQueue = struct {
         // TODO: CommandBuffer
     }
 
+    fn _queryResult(
+        command_queue: *Renderer.CommandQueue,
+        query_heap: Handle(Renderer.QueryHeap),
+        first_query: u32,
+        num_queries: u32,
+        data: []const u8,
+    ) bool {
+        return fromBaseMut(command_queue).queryResult(
+            query_heap,
+            first_query,
+            num_queries,
+            data,
+        );
+    }
+
+    pub fn queryResult(
+        self: *D3D11CommandQueue,
+        query_heap: Handle(Renderer.QueryHeap),
+        first_query: u32,
+        num_queries: u32,
+        data: []const u8,
+    ) bool {
+        _ = self;
+        _ = query_heap;
+        _ = first_query;
+        _ = num_queries;
+        _ = data;
+        // TODO: Implement this
+        return false;
+    }
+
     fn _submitFence(
         command_queue: *Renderer.CommandQueue,
         fence: Handle(Renderer.Fence),
@@ -2673,6 +2706,219 @@ const D3D11CommandQueue = struct {
         self.fence.submit(self.context);
         self.fence.wait(self.context, ~0);
     }
+};
+
+// Texture
+const D3D11TextureHolder = union {
+    resource: ?*d3d11.ID3D11Resource,
+    tex_1d: ?*d3d11.ID3D11Texture1D,
+    tex_2d: ?*d3d11.ID3D11Texture2D,
+    tex_3d: ?*d3d11.ID3D11Texture3D,
+
+    pub fn deinit(self: *D3D11TextureHolder) void {
+        d3dcommon.releaseIUnknown(d3d11.ID3D11Resource, &self.resource);
+    }
+};
+
+const D3D11Texture = struct {
+    base: Renderer.Texture,
+    holder: D3D11TextureHolder,
+    srv: ?*d3d11.ID3D11ShaderResourceView = null,
+    uav: ?*d3d11.ID3D11UnorderedAccessView = null,
+
+    base_format: Renderer.format.Format = .undefined,
+    format: dxgi.common.DXGI_FORMAT = .UNKNOWN,
+    num_mip_levels: u32 = 0,
+    num_array_layers: u32 = 0,
+
+    pub fn init(
+        self: *D3D11Texture,
+        descriptor: *const Renderer.Texture.TextureDescriptor,
+    ) !void {
+        self.base.init(descriptor.texture_type, descriptor.binding);
+        self.base_format = descriptor.format;
+
+        switch (descriptor.texture_type) {}
+    }
+
+    fn createTexture1D(
+        self: *D3D11Texture,
+        descriptor: *const Renderer.Texture.TextureDescriptor,
+        initial: *const d3d11.D3D11_SUBRESOURCE_DATA,
+    ) void {
+        _ = self;
+        _ = initial;
+        var desc: d3d11.D3D11_TEXTURE1D_DESC = undefined;
+        desc.Width = descriptor.extent[0];
+        desc.MipLevels = descriptor.numberOfMipLevels();
+        desc.ArraySize = descriptor.array_layers;
+        desc.Format = d3dcommon.selectTextureDxgiFormat(descriptor.format);
+        desc.Usage = .DEFAULT;
+        desc.BindFlags = getTextureBindFlags(descriptor);
+        desc.CPUAccessFlags = getCpuAccessFlagsFromInfo(descriptor.info);
+        desc.MiscFlags = getTextureMiscFlags(descriptor);
+    }
+};
+
+fn getTextureBindFlags(descriptor: *const Renderer.Texture.TextureDescriptor) u32 {
+    return @intCast(@intFromEnum(d3d11.D3D11_BIND_FLAG.initFlags(.{
+        .SHADER_RESOURCE = descriptor.binding.sampled or descriptor.binding.copy_source,
+        .UNORDERED_ACCESS = descriptor.binding.storage or descriptor.binding.copy_destination,
+        .RENDER_TARGET = descriptor.binding.colour_attachment,
+        .DEPTH_STENCIL = descriptor.binding.depth_stencil_attachment,
+    })));
+}
+
+fn getTextureMiscFlags(descriptor: *const Renderer.Texture.TextureDescriptor) u32 {
+    var flags: u32 = 0;
+
+    if (descriptor.isMipMapped()) {
+        if (descriptor.binding.colour_attachment and
+            descriptor.binding.sampled and
+            !descriptor.binding.depth_stencil_attachment)
+        {
+            flags |= @intFromEnum(d3d11.D3D11_RESOURCE_MISC_FLAG.GENERATE_MIPS);
+        }
+    }
+
+    if (descriptor.texture_type.isCube()) {
+        flags |= @intFromEnum(d3d11.D3D11_RESOURCE_MISC_FLAG.TEXTURECUBE);
+    }
+
+    return flags;
+}
+
+// RenderPass
+const D3D11RenderPass = struct {};
+
+// RenderTarget
+const D3D11RenderTarget = struct {
+    base: Renderer.RenderTarget,
+
+    resolution: [2]u32,
+    render_target_views: std.ArrayList(?*d3d11.ID3D11RenderTargetView),
+    textures: std.ArrayList(?*d3d11.ID3D11Texture2D),
+
+    depth_stencil_view: ?*d3d11.ID3D11DepthStencilView = null,
+    depth_stencil_format: dxgi.common.DXGI_FORMAT = .UNKNOWN,
+
+    sample_desc: dxgi.DXGI_FORMAT = .{
+        .Count = 1,
+        .Quality = 0,
+    },
+    resolve_targets: std.ArrayList(ResolveTarget),
+
+    render_pass: ?Handle(D3D11RenderPass),
+
+    pub const ResolveTarget = struct {
+        resolve_dst_texture: ?*d3d11.ID3D11Resource = null,
+        resolve_dst_subresource: u32 = 0,
+        multi_sampled_src_texture: ?*d3d11.ID3D11Resource = null,
+        format: dxgi.common.DXGI_FORMAT = .UNKNOWN,
+    };
+
+    pub fn fromBaseMut(rt: *Renderer.RenderTarget) *D3D11RenderTarget {
+        return @fieldParentPtr(D3D11RenderTarget, "base", rt);
+    }
+
+    pub fn fromBase(rt: *const Renderer.RenderTarget) *const D3D11RenderTarget {
+        return @fieldParentPtr(D3D11RenderTarget, "base", @constCast(rt));
+    }
+
+    pub fn init(
+        self: *D3D11RenderTarget,
+        allocator: std.mem.Allocator,
+        descriptor: *const Renderer.RenderTarget.RenderTargetDescriptor,
+    ) !void {
+        self.* = .{
+            .base = .{
+                .vtable = &.{},
+            },
+            .resolution = descriptor.resolution,
+            .render_target_views = std.ArrayList(?*d3d11.ID3D11RenderTargetView).init(allocator),
+            .textures = std.ArrayList(?*d3d11.ID3D11Texture2D).init(allocator),
+            .resolve_targets = std.ArrayList(ResolveTarget).init(allocator),
+            .render_pass = if (descriptor.render_pass) |rp| rp.as(D3D11RenderPass) else null,
+        };
+
+        if (descriptor.samples > 1) {
+            self.findSuitableRTVSampleDesc(descriptor);
+        }
+    }
+
+    pub fn deinit(self: *D3D11RenderTarget) void {
+        for (self.render_target_views.items) |*rtv| {
+            d3dcommon.releaseIUnknown(d3d11.ID3D11RenderTargetView, rtv);
+        }
+        self.render_target_views.deinit();
+        for (self.textures.items) |*t| {
+            d3dcommon.releaseIUnknown(d3d11.ID3D11Texture2D, t);
+        }
+        self.textures.deinit();
+        for (self.resolve_targets.items) |rt| {
+            d3dcommon.releaseIUnknown(d3d11.ID3D11Resource, &rt.resolve_dst_texture);
+            d3dcommon.releaseIUnknown(d3d11.ID3D11Resource, &rt.multi_sampled_src_texture);
+        }
+        self.resolve_targets.deinit();
+        d3dcommon.releaseIUnknown(d3d11.ID3D11DepthStencilView, &self.depth_stencil_view);
+    }
+
+    fn findSuitableRTVSampleDesc(
+        self: *D3D11RenderTarget,
+        descriptor: *const Renderer.RenderTarget.RenderTargetDescriptor,
+    ) void {
+        var formats = std.BoundedArray(
+            dxgi.common.DXGI_FORMAT,
+            Renderer.max_num_attachments,
+        ).init(Renderer.max_num_attachments) catch {};
+
+        for (descriptor.colour_attachments) |ca| {
+            if (ca.isAttachmentEnabled()) {
+                formats.append(d3dcommon.mapToRenderTargetViewFormat(d3dcommon.mapFormat(ca.getAttachmentFormat()))) catch {};
+            }
+        }
+        if (descriptor.depth_stencil_attachment.isAttachmentEnabled()) {
+            formats.append(d3dcommon.mapToRenderTargetViewFormat(d3dcommon.mapFormat(
+                descriptor.depth_stencil_attachment.getAttachmentFormat(),
+            ))) catch {};
+        }
+
+        self.sample_desc = findSuitableSampleDescFromMany(state.device.?, &formats.buffer, descriptor.samples);
+    }
+
+    fn createRenderTargetView(
+        self: *D3D11RenderTarget,
+        attachment: *const Renderer.RenderTarget.AttachmentDescriptor,
+        resolve_attachment: *const Renderer.RenderTarget.AttachmentDescriptor,
+    ) void {
+        _ = self;
+        _ = attachment;
+        _ = resolve_attachment;
+    }
+};
+
+// CommandBuffer
+const D3D11CommandBuffer = struct {
+    base: Renderer.CommandBuffer,
+
+    context: ?*d3d11.ID3D11DeviceContext1 = null,
+    command_list: ?*d3d11.ID3D11CommandList = null,
+    is_deferred_context: bool = false,
+    is_secondary: bool = false,
+
+    state_cache: *D3D11StateCache,
+
+    framebuffer_view: D3D11FramebufferView,
+    bound_render_target: ?*D3D11RenderTarget = null,
+    bound_swap_chain: ?*D3D11SwapChain = null,
+    bound_pipeline_layout: ?*D3D11PipelineLayout = null,
+    bound_pipeline_state: ?*D3D11PipelineState = null,
+    bound_constants_cache: ?*D3D11ConstantsCache = null,
+
+    pub const D3D11FramebufferView = struct {
+        render_target_views: []const ?*d3d11.ID3D11RenderTargetView,
+        depth_stencil_view: ?*d3d11.ID3D11DepthStencilView = null,
+    };
 };
 
 // Samplers

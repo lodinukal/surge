@@ -585,6 +585,20 @@ pub fn unmapFormat(fmt: dxgi.common.DXGI_FORMAT) Renderer.format.Format {
     };
 }
 
+pub fn mapToRenderTargetViewFormat(fmt: dxgi.common.DXGI_FORMAT) dxgi.common.DXGI_FORMAT {
+    return mapToShaderResourceViewFormat(fmt);
+}
+
+pub fn mapToShaderResourceViewFormat(fmt: dxgi.common.DXGI_FORMAT) dxgi.common.DXGI_FORMAT {
+    return switch (fmt) {
+        .R16_TYPELESS => .R16_UNORM,
+        .R32_TYPELESS => .R32_FLOAT,
+        .R24G8_TYPELESS => .UNKNOWN,
+        .R32G8X24_TYPELESS => .UNKNOWN,
+        else => fmt,
+    };
+}
+
 pub fn releaseIUnknown(comptime T: type, obj: ?*?*T) void {
     if (obj) |o| {
         if (o.*) |unwrapped| {
@@ -637,4 +651,61 @@ pub fn createBlob(data: []const u8) ?*d3d.ID3DBlob {
     var dst: [*]u8 = @ptrCast(blob.?.ID3DBlob_GetBufferPointer().?);
     @memcpy(dst[0..data.len], data);
     return blob.?;
+}
+
+pub fn toTypeless(fmt: dxgi.common.DXGI_FORMAT) dxgi.common.DXGI_FORMAT {
+    return switch (fmt) {
+        .R8_SNORM, .R8_SNORM, .R8_UINT, .R8_SINT => .R8_TYPELESS,
+        .R16_UNORM, .R16_SNORM, .R16_UINT, .R16_SINT, .R16_FLOAT => .R16_TYPELESS,
+        .R32_UINT, .R32_SINT, .R32_FLOAT => .R32_TYPELESS,
+        .R8G8_UNORM,
+        .R8G8_SNORM,
+        .R8G8_UINT,
+        .R8G8_SINT,
+        => .R8G8_TYPELESS,
+        .R16G16_UNORM, .R16G16_SNORM, .R16G16_UINT, .R16G16_SINT, .R16G16_FLOAT => .R16G16_TYPELESS,
+        .R32G32_UINT, .R32G32_SINT, .R32G32_FLOAT => .R32G32_TYPELESS,
+        .R8G8B8A8_UNORM, .R8G8B8A8_UNORM_SRGB, .R8G8B8A8_SNORM, .R8G8B8A8_UINT, .R8G8B8A8_SINT => .R8G8B8A8_TYPELESS,
+        .R16G16B16A16_UNORM, .R16G16B16A16_SNORM, .R16G16B16A16_UINT, .R16G16B16A16_SINT, .R16G16B16A16_FLOAT => .R16G16B16A16_TYPELESS,
+        .R32G32B32A32_UINT, .R32G32B32A32_SINT, .R32G32B32A32_FLOAT => .R32G32B32A32_TYPELESS,
+        .B8G8R8A8_UNORM, .B8G8R8A8_UNORM_SRGB => .B8G8R8A8_TYPELESS,
+        .R10G10B10A2_UNORM, .R10G10B10A2_UINT => .R10G10B10A2_TYPELESS,
+        .R32G32B32A32_TYPELESS,
+        .R32G32B32_TYPELESS,
+        .R16G16B16A16_TYPELESS,
+        .R32G32_TYPELESS,
+        .R32G8X24_TYPELESS,
+        .R32_FLOAT_X8X24_TYPELESS,
+        .X32_TYPELESS_G8X24_UINT,
+        .R10G10B10A2_TYPELESS,
+        .R8G8B8A8_TYPELESS,
+        .R16G16_TYPELESS,
+        .R32_TYPELESS,
+        .R24G8_TYPELESS,
+        .R24_UNORM_X8_TYPELESS,
+        .X24_TYPELESS_G8_UINT,
+        .R8G8_TYPELESS,
+        .R16_TYPELESS,
+        .R8_TYPELESS,
+        .BC1_TYPELESS,
+        .BC2_TYPELESS,
+        .BC3_TYPELESS,
+        .BC4_TYPELESS,
+        .BC5_TYPELESS,
+        .B8G8R8A8_TYPELESS,
+        .B8G8R8X8_TYPELESS,
+        .BC6H_TYPELESS,
+        .BC7_TYPELESS,
+        => fmt,
+        else => .UNKNOWN,
+    };
+}
+
+pub fn selectTextureDxgiFormat(fmt: Renderer.format.Format, binding: Renderer.Resource.BindingInfo) dxgi.common.DXGI_FORMAT {
+    const fmt_found = mapFormat(fmt);
+    if (binding.sampled or binding.storage) {
+        const typeless = toTypeless(fmt_found);
+        if (typeless != .UNKNOWN) return typeless;
+    }
+    return fmt_found;
 }

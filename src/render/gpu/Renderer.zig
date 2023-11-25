@@ -97,6 +97,9 @@ pub const SymbolTable = struct {
     destroyFence: *const fn (self: *Self, fence: Handle(Fence)) void,
 };
 
+pub const max_num_colour_attachments = 8;
+pub const max_num_attachments = max_num_colour_attachments + 1;
+
 backing_allocator: std.mem.Allocator,
 arena: std.heap.ArenaAllocator,
 allocator: std.mem.Allocator,

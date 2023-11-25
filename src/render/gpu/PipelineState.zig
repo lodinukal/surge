@@ -219,7 +219,7 @@ pub const BlendTargetDescriptor = struct {
 };
 
 pub const BlendDescriptor = struct {
-    const max_num = Renderer.RenderTarget.max_num_colour_attachments;
+    const max_num = Renderer.max_num_colour_attachments;
     alpha_to_coverage_enabled: bool = false,
     independent_blend_enabled: bool = false,
     sample_mask: u32 = ~0,

@@ -10,12 +10,14 @@ const Self = @This();
 
 render_target: RenderTarget,
 
-fn_present: ?*const fn (*Self) Renderer.Error!void = null,
-fn_getCurrentSwapIndex: ?*const fn (*const Self) u32 = null,
-fn_getNumSwapBuffers: ?*const fn (*const Self) u32 = null,
-fn_getColourFormat: ?*const fn (*const Self) Renderer.format.Format = null,
-fn_getDepthStencilFormat: ?*const fn (*const Self) Renderer.format.Format = null,
-fn_resizeBuffers: ?*const fn (*Self, [2]u32) Renderer.Error!void = null,
+vtable: *const struct {
+    present: *const fn (*Self) Renderer.Error!void = undefined,
+    getCurrentSwapIndex: *const fn (*const Self) u32 = undefined,
+    getNumSwapBuffers: *const fn (*const Self) u32 = undefined,
+    getColourFormat: *const fn (*const Self) Renderer.format.Format = undefined,
+    getDepthStencilFormat: *const fn (*const Self) Renderer.format.Format = undefined,
+    resizeBuffers: *const fn (*Self, [2]u32) Renderer.Error!void = undefined,
+},
 
 surface: ?*app.window.Window = null,
 resolution: [2]u32 = .{ 0, 0 },
@@ -39,12 +41,12 @@ pub fn init(self: *Self, descriptor: *const SwapChainDescriptor) !void {
     _ = descriptor;
 
     self.* = .{
-        .render_target = .{
-            .fn_getResolution = &_getResolution,
-            .fn_getNumColourAttachments = &_getNumColourAttachments,
-            .fn_hasDepthAttachment = &_hasDepthAttachment,
-            .fn_hasStencilAttachment = &_hasStencilAttachment,
-        },
+        .render_target = .{ .vtable = &.{
+            .getResolution = &_getResolution,
+            .getNumColourAttachments = &_getNumColourAttachments,
+            .hasDepthAttachment = &_hasDepthAttachment,
+            .hasStencilAttachment = &_hasStencilAttachment,
+        } },
     };
 }
 
@@ -88,27 +90,23 @@ pub inline fn hasStencilAttachment(self: *const Self) bool {
 
 // SwapChain
 pub fn present(self: *Self) void {
-    if (self.fn_present) |f| f(self) catch {};
+    self.vtable.present(self) catch {};
 }
 
 pub fn getCurrentSwapIndex(self: *const Self) u32 {
-    if (self.fn_getCurrentSwapIndex) |f| return f(self);
-    unreachable;
+    return self.vtable.getCurrentSwapIndex(self);
 }
 
 pub fn getNumSwapBuffers(self: *const Self) u32 {
-    if (self.fn_getNumSwapBuffers) |f| return f(self);
-    unreachable;
+    return self.vtable.getNumSwapBuffers(self);
 }
 
 pub fn getColourFormat(self: *const Self) Renderer.format.Format {
-    if (self.fn_getColourFormat) |f| return f(self);
-    unreachable;
+    return self.vtable.getColourFormat(self);
 }
 
 pub fn getDepthStencilFormat(self: *const Self) Renderer.format.Format {
-    if (self.fn_getDepthStencilFormat) |f| return f(self);
-    unreachable;
+    return self.vtable.getDepthStencilFormat(self);
 }
 
 pub fn resizeBuffers(self: *Self, resolution: [2]u32, resize_info: SwapChainResizeInfo) Renderer.Error!void {
@@ -117,13 +115,13 @@ pub fn resizeBuffers(self: *Self, resolution: [2]u32, resize_info: SwapChainResi
             s.setFullscreenMode(if (resize_info.fullscreen) .fullscreen else .windowed);
             s.setSize(resolution, true);
             s.update();
-            try self.fn_resizeBuffers.?(self, resolution);
+            try self.vtable.resizeBuffers(self, resolution);
             {
                 self.resolution = resolution;
             }
         }
     } else {
-        try self.fn_resizeBuffers.?(self, resolution);
+        try self.vtable.resizeBuffers(self, resolution);
         {
             self.resolution = resolution;
         }
