@@ -137,7 +137,7 @@ const WindowsWindow = struct {
             null,
             win32.ui.windows_and_messaging.IDC_ARROW,
         );
-        wc.hbrBackground = win32.graphics.gdi.GetStockObject(.WHITE_BRUSH);
+        wc.hbrBackground = @ptrFromInt(@intFromEnum(win32.graphics.gdi.COLOR_WINDOW));
         wc.lpszClassName = class_name;
         wc.cbClsExtra = 0;
         wc.cbWndExtra = 0;
