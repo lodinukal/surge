@@ -701,6 +701,39 @@ pub fn toTypeless(fmt: dxgi.common.DXGI_FORMAT) dxgi.common.DXGI_FORMAT {
     };
 }
 
+pub fn isTypeless(fmt: dxgi.common.DXGI_FORMAT) bool {
+    return switch (fmt) {
+        .R32G32B32A32_TYPELESS,
+        .R32G32B32_TYPELESS,
+        .R16G16B16A16_TYPELESS,
+        .R32G32_TYPELESS,
+        .R32G8X24_TYPELESS,
+        .R32_FLOAT_X8X24_TYPELESS,
+        .X32_TYPELESS_G8X24_UINT,
+        .R10G10B10A2_TYPELESS,
+        .R8G8B8A8_TYPELESS,
+        .R16G16_TYPELESS,
+        .R32_TYPELESS,
+        .R24G8_TYPELESS,
+        .R24_UNORM_X8_TYPELESS,
+        .X24_TYPELESS_G8_UINT,
+        .R8G8_TYPELESS,
+        .R16_TYPELESS,
+        .R8_TYPELESS,
+        .BC1_TYPELESS,
+        .BC2_TYPELESS,
+        .BC3_TYPELESS,
+        .BC4_TYPELESS,
+        .BC5_TYPELESS,
+        .B8G8R8A8_TYPELESS,
+        .B8G8R8X8_TYPELESS,
+        .BC6H_TYPELESS,
+        .BC7_TYPELESS,
+        => true,
+        else => false,
+    };
+}
+
 pub fn selectTextureDxgiFormat(fmt: Renderer.format.Format, binding: Renderer.Resource.BindingInfo) dxgi.common.DXGI_FORMAT {
     const fmt_found = mapFormat(fmt);
     if (binding.sampled or binding.storage) {
@@ -708,4 +741,16 @@ pub fn selectTextureDxgiFormat(fmt: Renderer.format.Format, binding: Renderer.Re
         if (typeless != .UNKNOWN) return typeless;
     }
     return fmt_found;
+}
+
+pub fn toUAV(fmt: dxgi.common.DXGI_FORMAT) dxgi.common.DXGI_FORMAT {
+    return switch (fmt) {
+        .R16_TYPELESS => .R16_UNORM,
+        .R32_TYPELESS => .R32_FLOAT,
+        .R24G8_TYPELESS => .UNKNOWN,
+        .R32G8X24_TYPELESS => .UNKNOWN,
+        .R8G8B8A8_UNORM_SRGB => .R8G8B8A8_UNORM,
+        .B8G8R8A8_UNORM_SRGB => .B8G8R8A8_UNORM,
+        else => fmt,
+    };
 }

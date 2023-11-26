@@ -362,7 +362,7 @@ const D3D11StateCache = struct {
 
     const constant_buffer_chunk_size: u32 = 4096;
 
-    pub fn init(self: *D3D11StateCache, allocator: std.mem.Allocator, context: *d3d11.ID3D11DeviceContext1) void {
+    pub fn init(self: *D3D11StateCache, allocator: std.mem.Allocator, context: ?*d3d11.ID3D11DeviceContext1) void {
         self.context = context;
         d3dcommon.refIUnknown(d3d11.ID3D11DeviceContext1, &self.context);
         self.constant_staging_pool = D3D11StagingBufferPool.init(
@@ -1109,9 +1109,8 @@ pub const D3D11SwapChain = struct {
         samples: u32,
         buffers: u32,
     ) Renderer.Error!void {
-        var buf: [4096]u8 = undefined;
-        var fba = std.heap.FixedBufferAllocator.init(&buf);
-        var allocator = fba.allocator();
+        var scratch = common.ScratchSpace(4096){};
+        var temp_allocator = scratch.init().allocator();
 
         const refresh_rate: dxgi.common.DXGI_RATIONAL = .{
             .Numerator = 75,
@@ -1149,19 +1148,8 @@ pub const D3D11SwapChain = struct {
             &self.swapchain,
         );
 
-        if (winapi.zig.FAILED(hr)) {
-            winappimpl.messageBox(
-                allocator,
-                "Failed to create swapchain",
-                "Error: {}",
-                .{hr},
-                .OK,
-            );
-            return Renderer.Error.SwapChainCreationFailed;
-        }
-
         if (winappimpl.reportHResultError(
-            allocator,
+            temp_allocator,
             hr,
             "Failed to create SwapChain",
         )) return Renderer.Error.SwapChainCreationFailed;
@@ -1172,9 +1160,8 @@ pub const D3D11SwapChain = struct {
     }
 
     pub fn resizeBuffers(self: *D3D11SwapChain, resolution: [2]u32) Renderer.Error!void {
-        var buf: [4096]u8 = undefined;
-        var fba = std.heap.FixedBufferAllocator.init(&buf);
-        var allocator = fba.allocator();
+        var scratch = common.ScratchSpace(4096){};
+        var temp_allocator = scratch.init().allocator();
 
         // TODO: implement this
         // if (state.command_buffers.getColdMutable(self.binding_command_buffer)) |cb| {
@@ -1199,7 +1186,7 @@ pub const D3D11SwapChain = struct {
             0,
         );
         if (winappimpl.reportHResultError(
-            allocator,
+            temp_allocator,
             hr,
             "Failed to resize swapchain buffers",
         )) return Renderer.Error.SwapChainBufferCreationFailed;
@@ -1208,9 +1195,8 @@ pub const D3D11SwapChain = struct {
     }
 
     pub fn recreateBuffers(self: *D3D11SwapChain) Renderer.Error!void {
-        var buf: [4096]u8 = undefined;
-        var fba = std.heap.FixedBufferAllocator.init(&buf);
-        var allocator = fba.allocator();
+        var scratch = common.ScratchSpace(4096){};
+        var temp_allocator = scratch.init().allocator();
 
         var hr: win32.foundation.HRESULT = 0;
 
@@ -1221,7 +1207,7 @@ pub const D3D11SwapChain = struct {
             @ptrCast(&self.colour_buffer),
         );
         if (winappimpl.reportHResultError(
-            allocator,
+            temp_allocator,
             hr,
             "Failed to get swapchain buffer",
         )) return Renderer.Error.SwapChainBufferCreationFailed;
@@ -1233,7 +1219,7 @@ pub const D3D11SwapChain = struct {
             &self.render_target_view,
         );
         if (winappimpl.reportHResultError(
-            allocator,
+            temp_allocator,
             hr,
             "Failed to create render target view",
         )) return Renderer.Error.SwapChainBufferCreationFailed;
@@ -1261,7 +1247,7 @@ pub const D3D11SwapChain = struct {
                 &self.depth_buffer,
             );
             if (winappimpl.reportHResultError(
-                allocator,
+                temp_allocator,
                 hr,
                 "Failed to create depth buffer",
             )) return Renderer.Error.SwapChainBufferCreationFailed;
@@ -1273,7 +1259,7 @@ pub const D3D11SwapChain = struct {
                 &self.depth_stencil_view,
             );
             if (winappimpl.reportHResultError(
-                allocator,
+                temp_allocator,
                 hr,
                 "Failed to create depth stencil view",
             )) return Renderer.Error.SwapChainBufferCreationFailed;
@@ -1405,33 +1391,32 @@ pub const D3D11Shader = struct {
     ) callconv(@import("std").os.windows.WINAPI) win32.foundation.HRESULT;
 
     fn compileSource(self: *D3D11Shader, descriptor: *const Renderer.Shader.ShaderDescriptor) bool {
-        var buf: [4096]u8 = undefined;
-        var fba = std.heap.FixedBufferAllocator.init(&buf);
-        var allocator = fba.allocator();
+        var scratch = common.ScratchSpace(4096){};
+        var temp_allocator = scratch.init().allocator();
 
-        var null_terminated_source_name = allocator.dupeZ(
+        var null_terminated_source_name = temp_allocator.dupeZ(
             u8,
             descriptor.name orelse "shader_",
         ) catch return false;
 
         var defines = std.ArrayList(d3d.D3D_SHADER_MACRO).initCapacity(
-            allocator,
+            temp_allocator,
             descriptor.macros.len,
         ) catch return false;
         for (descriptor.macros) |m| {
             var macro: d3d.D3D_SHADER_MACRO = .{
-                .Name = @ptrCast(allocator.dupeZ(u8, m.name) catch return false),
-                .Definition = @ptrCast(allocator.dupeZ(u8, m.value orelse "") catch return false),
+                .Name = @ptrCast(temp_allocator.dupeZ(u8, m.name) catch return false),
+                .Definition = @ptrCast(temp_allocator.dupeZ(u8, m.value orelse "") catch return false),
             };
             defines.appendAssumeCapacity(macro);
         }
 
-        var profile_null_terminated = allocator.dupeZ(
+        var profile_null_terminated = temp_allocator.dupeZ(
             u8,
             descriptor.profile orelse "",
         ) catch return false;
 
-        var entry_point_null_terminated = allocator.dupeZ(
+        var entry_point_null_terminated = temp_allocator.dupeZ(
             u8,
             descriptor.entry_point,
         ) catch return false;
@@ -1462,7 +1447,7 @@ pub const D3D11Shader = struct {
 
         const has_errors = winapi.zig.FAILED(hr);
         if (winappimpl.reportHResultError(
-            allocator,
+            temp_allocator,
             hr,
             "Failed to compile shader",
         )) return false;
@@ -1484,10 +1469,9 @@ pub const D3D11Shader = struct {
     }
 
     fn loadBinary(self: *D3D11Shader, descriptor: *const Renderer.Shader.ShaderDescriptor) bool {
-        var buf: [4096]u8 = undefined;
-        var fba = std.heap.FixedBufferAllocator.init(&buf);
-        var allocator = fba.allocator();
-        _ = allocator;
+        var scratch = common.ScratchSpace(4096){};
+        var temp_allocator = scratch.init().allocator();
+        _ = temp_allocator;
 
         self.bytecode = d3dcommon.createBlob(descriptor.source);
         if (self.bytecode != null and self.bytecode.?.ID3DBlob_GetBufferSize() > 0) {
@@ -1580,19 +1564,18 @@ pub const D3D11Shader = struct {
         if (vertex_attributes.len == 0) return;
         if (self.base.type != .vertex) return;
 
-        var buf: [4096]u8 = undefined;
-        var fba = std.heap.FixedBufferAllocator.init(&buf);
-        var allocator = fba.allocator();
+        var scratch = common.ScratchSpace(4096){};
+        var temp_allocator = scratch.init().allocator();
 
         var input_elements = std.ArrayList(d3d11.D3D11_INPUT_ELEMENT_DESC).initCapacity(
-            allocator,
+            temp_allocator,
             vertex_attributes.len,
         ) catch return Renderer.Error.ShaderInputLayoutCreationFailed;
 
         for (0..vertex_attributes.len) |i| {
             var dst = input_elements.addOneAssumeCapacity();
             var src = vertex_attributes[i];
-            dst.SemanticName = @ptrCast(allocator.dupeZ(
+            dst.SemanticName = @ptrCast(temp_allocator.dupeZ(
                 u8,
                 src.name,
             ) catch return Renderer.Error.ShaderInputLayoutCreationFailed);
@@ -1612,7 +1595,7 @@ pub const D3D11Shader = struct {
             &self.input_layout,
         );
         if (winappimpl.reportHResultError(
-            allocator,
+            temp_allocator,
             hr,
             "Failed to create input layout",
         )) return Renderer.Error.ShaderInputLayoutCreationFailed;
@@ -1799,9 +1782,8 @@ pub const D3D11Buffer = struct {
         descriptor: *const Renderer.Buffer.BufferDescriptor,
         initial_data: ?*const anyopaque,
     ) Renderer.Error!void {
-        var buffer: [4096]u8 = undefined;
-        var fba = std.heap.FixedBufferAllocator.init(&buffer);
-        var temp_allocator = fba.allocator();
+        var scratch = common.ScratchSpace(4096){};
+        var temp_allocator = scratch.init().allocator();
 
         var desc: d3d11.D3D11_BUFFER_DESC = undefined;
         desc.ByteWidth = getBufferSizeFromDescriptor(descriptor);
@@ -1852,9 +1834,8 @@ pub const D3D11Buffer = struct {
     }
 
     pub fn createCpuAccessBuffer(self: *D3D11Buffer, access_flags: u32, stride: u32) !void {
-        var buffer: [4096]u8 = undefined;
-        var fba = std.heap.FixedBufferAllocator.init(&buffer);
-        var temp_allocator = fba.allocator();
+        var scratch = common.ScratchSpace(4096){};
+        var temp_allocator = scratch.init().allocator();
 
         var desc: d3d11.D3D11_BUFFER_DESC = undefined;
         desc.ByteWidth = self.size;
@@ -1877,7 +1858,7 @@ pub const D3D11Buffer = struct {
         )) return Renderer.Error.BufferCreationFailed;
     }
 
-    pub fn writeSubresource(self: *D3D11Buffer, context: *d3d11.ID3D11DeviceContext1, data: []const u8, offset: u32) !void {
+    pub fn writeSubresource(self: *D3D11Buffer, context: ?*d3d11.ID3D11DeviceContext1, data: []const u8, offset: u32) !void {
         if (data.len + offset > self.size) return Renderer.Error.BufferSubresourceWriteOutOfBounds;
 
         const is_whole_buffer = offset == 0 and data.len == self.size;
@@ -1885,7 +1866,7 @@ pub const D3D11Buffer = struct {
         if (self.usage == .DYNAMIC) {
             if (is_whole_buffer) {
                 var mapped_subresource: d3d11.D3D11_MAPPED_SUBRESOURCE = undefined;
-                if (winapi.zig.SUCCEEDED(context.ID3D11DeviceContext_Map(
+                if (winapi.zig.SUCCEEDED(context.?.ID3D11DeviceContext_Map(
                     @ptrCast(self.buffer),
                     0,
                     .DISCARD,
@@ -1903,7 +1884,7 @@ pub const D3D11Buffer = struct {
         } else {
             if (is_whole_buffer) {
                 // ASSERT(dataSize == GetSize(), "cannot update D3D11 buffer partially when it is created with static usage");
-                context.ID3D11DeviceContext_UpdateSubresource(
+                context.?.ID3D11DeviceContext_UpdateSubresource(
                     @ptrCast(self.buffer),
                     0,
                     null,
@@ -1922,7 +1903,7 @@ pub const D3D11Buffer = struct {
                     .bottom = 1,
                     .back = 1,
                 };
-                context.ID3D11DeviceContext_UpdateSubresource(
+                context.?.ID3D11DeviceContext_UpdateSubresource(
                     @ptrCast(self.buffer),
                     0,
                     &dst_box,
@@ -1936,7 +1917,7 @@ pub const D3D11Buffer = struct {
 
     pub fn readSubresource(
         self: *D3D11Buffer,
-        context: *d3d11.ID3D11DeviceContext1,
+        context: ?*d3d11.ID3D11DeviceContext1,
         data: []u8,
         offset: u32,
     ) !void {
@@ -1950,7 +1931,7 @@ pub const D3D11Buffer = struct {
 
     pub fn map(
         self: *D3D11Buffer,
-        context: *d3d11.ID3D11DeviceContext1,
+        context: ?*d3d11.ID3D11DeviceContext1,
         access: Renderer.Resource.CPUAccess,
         offset: u32,
         length: u32,
@@ -1963,7 +1944,7 @@ pub const D3D11Buffer = struct {
         if (self.cpu_access_buffer) |cab| {
             if (access.read) {
                 if (offset == 0 and length == self.size) {
-                    context.ID3D11DeviceContext_CopyResource(
+                    context.?.ID3D11DeviceContext_CopyResource(
                         @ptrCast(cab),
                         @ptrCast(self.buffer),
                     );
@@ -1976,7 +1957,7 @@ pub const D3D11Buffer = struct {
                         .bottom = 1,
                         .back = 1,
                     };
-                    context.ID3D11DeviceContext_CopySubresourceRegion(
+                    context.?.ID3D11DeviceContext_CopySubresourceRegion(
                         @ptrCast(cab),
                         0,
                         offset,
@@ -1994,7 +1975,7 @@ pub const D3D11Buffer = struct {
                 self.mapped_write_range[1] = offset + length;
             }
 
-            hr = context.ID3D11DeviceContext_Map(
+            hr = context.?.ID3D11DeviceContext_Map(
                 @ptrCast(cab),
                 0,
                 getCpuAccessTypeForUsage(.DEFAULT, access),
@@ -2002,7 +1983,7 @@ pub const D3D11Buffer = struct {
                 &mapped_subresource,
             );
         } else {
-            hr = context.ID3D11DeviceContext_Map(
+            hr = context.?.ID3D11DeviceContext_Map(
                 @ptrCast(self.buffer),
                 0,
                 getCpuAccessTypeForUsage(self.usage, access),
@@ -2016,9 +1997,9 @@ pub const D3D11Buffer = struct {
         ))[0..length] else null;
     }
 
-    pub fn unmap(self: *D3D11Buffer, context: *d3d11.ID3D11DeviceContext1) void {
+    pub fn unmap(self: *D3D11Buffer, context: ?*d3d11.ID3D11DeviceContext1) void {
         if (self.cpu_access_buffer) |cab| {
-            context.ID3D11DeviceContext_Unmap(
+            context.?.ID3D11DeviceContext_Unmap(
                 @ptrCast(cab),
                 0,
             );
@@ -2031,7 +2012,7 @@ pub const D3D11Buffer = struct {
                     .bottom = 1,
                     .back = 1,
                 };
-                context.ID3D11DeviceContext_CopySubresourceRegion(
+                context.?.ID3D11DeviceContext_CopySubresourceRegion(
                     @ptrCast(self.buffer),
                     0,
                     self.mapped_write_range[0],
@@ -2045,7 +2026,7 @@ pub const D3D11Buffer = struct {
                 self.mapped_write_range[1] = 0;
             }
         } else {
-            context.ID3D11DeviceContext_Unmap(
+            context.?.ID3D11DeviceContext_Unmap(
                 @ptrCast(self.buffer),
                 0,
             );
@@ -2054,7 +2035,7 @@ pub const D3D11Buffer = struct {
 
     pub fn readFromStagingBuffer(
         self: *D3D11Buffer,
-        context: *d3d11.ID3D11DeviceContext1,
+        context: ?*d3d11.ID3D11DeviceContext1,
         staging_buffer: *d3d11.ID3D11Buffer,
         offset: u32,
         data: []u8,
@@ -2068,7 +2049,7 @@ pub const D3D11Buffer = struct {
             .bottom = 1,
             .back = 1,
         };
-        context.ID3D11DeviceContext_CopySubresourceRegion(
+        context.?.ID3D11DeviceContext_CopySubresourceRegion(
             @ptrCast(staging_buffer),
             0,
             offset,
@@ -2080,7 +2061,7 @@ pub const D3D11Buffer = struct {
         );
 
         var mapped_subresource: d3d11.D3D11_MAPPED_SUBRESOURCE = undefined;
-        if (winapi.zig.SUCCEEDED(context.ID3D11DeviceContext_Map(
+        if (winapi.zig.SUCCEEDED(context.?.ID3D11DeviceContext_Map(
             @ptrCast(staging_buffer),
             0,
             .READ,
@@ -2091,11 +2072,11 @@ pub const D3D11Buffer = struct {
             data_pointer += offset;
             const src = @as([*]u8, @ptrFromInt(data_pointer))[0..data.len];
             @memcpy(data, src);
-            context.ID3D11DeviceContext_Unmap(@ptrCast(staging_buffer), 0);
+            context.?.ID3D11DeviceContext_Unmap(@ptrCast(staging_buffer), 0);
         }
     }
 
-    pub fn readFromSubresourceCopyWithCpuAccess(self: *D3D11Buffer, context: *d3d11.ID3D11DeviceContext1, data: []u8, offset: u32) void {
+    pub fn readFromSubresourceCopyWithCpuAccess(self: *D3D11Buffer, context: ?*d3d11.ID3D11DeviceContext1, data: []u8, offset: u32) void {
         const staging_buffer_desc: d3d11.D3D11_BUFFER_DESC = .{
             .ByteWidth = data.len,
             .Usage = .STAGING,
@@ -2129,13 +2110,13 @@ pub const D3D11Buffer = struct {
 
     pub fn writeWithStagingBuffer(
         self: *D3D11Buffer,
-        context: *d3d11.ID3D11DeviceContext1,
+        context: ?*d3d11.ID3D11DeviceContext1,
         staging_buffer: *d3d11.ID3D11Buffer,
         data: []const u8,
         offset: u32,
     ) void {
         var mapped_subresource: d3d11.D3D11_MAPPED_SUBRESOURCE = undefined;
-        if (winapi.zig.SUCCEEDED(context.ID3D11DeviceContext_Map(
+        if (winapi.zig.SUCCEEDED(context.?.ID3D11DeviceContext_Map(
             @ptrCast(staging_buffer),
             0,
             .WRITE_DISCARD,
@@ -2146,7 +2127,7 @@ pub const D3D11Buffer = struct {
             data_pointer += offset;
             const dst = @as([*]u8, @ptrFromInt(data_pointer))[0..data.len];
             @memcpy(dst, data);
-            context.ID3D11DeviceContext_Unmap(@ptrCast(staging_buffer), 0);
+            context.?.ID3D11DeviceContext_Unmap(@ptrCast(staging_buffer), 0);
         }
 
         const src_range: d3d11.D3D11_BOX = .{
@@ -2157,7 +2138,7 @@ pub const D3D11Buffer = struct {
             .bottom = 1,
             .back = 1,
         };
-        context.ID3D11DeviceContext_CopySubresourceRegion(
+        context.?.ID3D11DeviceContext_CopySubresourceRegion(
             @ptrCast(self.buffer),
             0,
             offset,
@@ -2174,6 +2155,9 @@ pub const D3D11Buffer = struct {
         data: []const u8,
         offset: u32,
     ) void {
+        var scratch = common.ScratchSpace(4096){};
+        var temp_allocator = scratch.init().allocator();
+
         const staging_buffer_desc: d3d11.D3D11_BUFFER_DESC = .{
             .ByteWidth = data.len,
             .Usage = .DYNAMIC,
@@ -2189,7 +2173,7 @@ pub const D3D11Buffer = struct {
             &staging_buffer,
         );
         if (winappimpl.reportHResultError(
-            .allocator,
+            temp_allocator,
             hr,
             "Failed to create staging buffer",
         )) return;
@@ -2246,9 +2230,8 @@ pub const D3D11Buffer = struct {
         first: u32,
         elements: u32,
     ) !void {
-        var buffer: [4096]u8 = undefined;
-        var fba = std.heap.FixedBufferAllocator.init(&buffer);
-        var temp_allocator = fba.allocator();
+        var scratch = common.ScratchSpace(4096){};
+        var temp_allocator = scratch.init().allocator();
 
         var desc: d3d11.D3D11_SHADER_RESOURCE_VIEW_DESC = undefined;
         desc.Format = format;
@@ -2281,9 +2264,8 @@ pub const D3D11Buffer = struct {
         first: u32,
         elements: u32,
     ) !void {
-        var buffer: [4096]u8 = undefined;
-        var fba = std.heap.FixedBufferAllocator.init(&buffer);
-        var temp_allocator = fba.allocator();
+        var scratch = common.ScratchSpace(4096){};
+        var temp_allocator = scratch.init().allocator();
 
         var desc: d3d11.D3D11_UNORDERED_ACCESS_VIEW_DESC = undefined;
         desc.Format = format;
@@ -2358,6 +2340,9 @@ const D3D11StagingBuffer = struct {
         cpu_access_flags: ?d3d11.D3D11_CPU_ACCESS_FLAG,
         bind_flags: ?d3d11.D3D11_BIND_FLAG,
     ) !D3D11StagingBuffer {
+        var scratch = common.ScratchSpace(4096){};
+        var temp_allocator = scratch.init().allocator();
+
         var self = .{};
         self.size = size;
         self.usage = usage orelse .STAGING;
@@ -2380,7 +2365,7 @@ const D3D11StagingBuffer = struct {
             &self.buffer,
         );
         if (winappimpl.reportHResultError(
-            .allocator,
+            temp_allocator,
             hr,
             "Failed to create staging buffer",
         )) return Renderer.Error.BufferCreationFailed;
@@ -2535,6 +2520,9 @@ const D3D11Fence = struct {
     query: ?*d3d11.ID3D11Query = null,
 
     pub fn init(self: *D3D11Fence) !void {
+        var scratch = common.ScratchSpace(4096){};
+        var temp_allocator = scratch.init().allocator();
+
         var desc: d3d11.D3D11_QUERY_DESC = undefined;
         desc.Query = .EVENT;
         desc.MiscFlags = 0;
@@ -2544,7 +2532,7 @@ const D3D11Fence = struct {
             &self.query,
         );
         if (winappimpl.reportHResultError(
-            .allocator,
+            temp_allocator,
             hr,
             "Failed to create fence",
         )) return Renderer.Error.FenceCreationFailed;
@@ -2731,23 +2719,619 @@ const D3D11Texture = struct {
     num_mip_levels: u32 = 0,
     num_array_layers: u32 = 0,
 
+    pub fn fromBaseMut(t: *Renderer.Texture) *D3D11Texture {
+        return @fieldParentPtr(D3D11Texture, "base", t);
+    }
+
+    pub fn fromBase(t: *const Renderer.Texture) *const D3D11Texture {
+        return @fieldParentPtr(D3D11Texture, "base", @constCast(t));
+    }
+
     pub fn init(
         self: *D3D11Texture,
         descriptor: *const Renderer.Texture.TextureDescriptor,
     ) !void {
+        self.base.* = .{
+            .vtable = &.{
+                .getDescriptor = &_getDescriptor,
+                .getFormat = &_getFormat,
+                .getMipExtent = &_getMipExtent,
+                .getSubresourceFootprint = &_getSubresourceFootprint,
+            },
+        };
+
         self.base.init(descriptor.texture_type, descriptor.binding);
         self.base_format = descriptor.format;
 
-        switch (descriptor.texture_type) {}
+        switch (descriptor.texture_type) {
+            .texture_1d, .texture_1d_array => {
+                try self.createTexture1D(descriptor, null);
+            },
+        }
     }
 
-    fn createTexture1D(
+    pub fn deinit(self: *D3D11Texture) void {
+        self.holder.deinit();
+        d3dcommon.releaseIUnknown(d3d11.ID3D11ShaderResourceView, &self.srv);
+        d3dcommon.releaseIUnknown(d3d11.ID3D11UnorderedAccessView, &self.uav);
+    }
+
+    fn _getDescriptor(self: *const Renderer.Texture) Renderer.Texture.TextureDescriptor {
+        return fromBase(self).getDescriptor();
+    }
+
+    pub fn getDescriptor(self: *const D3D11Texture) Renderer.Texture.TextureDescriptor {
+        var tex_desc: Renderer.Texture.TextureDescriptor = .{};
+        tex_desc.texture_type = self.base.texture_type;
+        tex_desc.binding = self.base.binding;
+        tex_desc.format = self.base_format;
+
+        var dimension: d3d11.D3D11_RESOURCE_DIMENSION = undefined;
+        self.holder.resource.?.ID3D11Resource_GetType(&dimension);
+
+        switch (dimension) {
+            .TEXTURE1D => {
+                var desc: d3d11.D3D11_TEXTURE1D_DESC = undefined;
+                self.holder.tex_1d.?.ID3D11Texture1D_GetDesc(&desc);
+
+                tex_desc.extent = .{ desc.Width, 1, 1 };
+                tex_desc.num_array_layers = desc.ArraySize;
+                tex_desc.num_mip_levels = desc.MipLevels;
+            },
+            .TEXTURE2D => {
+                var desc: d3d11.D3D11_TEXTURE2D_DESC = undefined;
+                self.holder.tex_2d.?.ID3D11Texture2D_GetDesc(&desc);
+
+                tex_desc.extent = .{ desc.Width, desc.Height, 1 };
+                tex_desc.num_array_layers = desc.ArraySize;
+                tex_desc.num_mip_levels = desc.MipLevels;
+                tex_desc.samples = desc.SampleDesc.Count;
+            },
+            .TEXTURE3D => {
+                var desc: d3d11.D3D11_TEXTURE3D_DESC = undefined;
+                self.holder.tex_3d.?.ID3D11Texture3D_GetDesc(&desc);
+
+                tex_desc.extent = .{ desc.Width, desc.Height, desc.Depth };
+                tex_desc.num_mip_levels = desc.MipLevels;
+            },
+            else => {},
+        }
+
+        return tex_desc;
+    }
+
+    fn _getFormat(self: *const Renderer.Texture) Renderer.format.Format {
+        return fromBase(self).getFormat();
+    }
+
+    pub fn getFormat(self: *const D3D11Texture) Renderer.format.Format {
+        return self.base_format;
+    }
+
+    fn _getMipExtent(self: *const Renderer.Texture, mip_level: u32) [3]u32 {
+        return fromBase(self).getMipExtent(mip_level);
+    }
+
+    pub fn getMipExtent(self: *const D3D11Texture, mip_level: u32) [3]u32 {
+        _ = mip_level;
+
+        var size: [3]u32 = undefined;
+
+        if (self.holder.resource) |resource| {
+            var desc: d3d11.D3D11_RESOURCE_DIMENSION = undefined;
+            resource.ID3D11Resource_GetType(&desc);
+
+            switch (desc) {
+                .TEXTURE1D => {
+                    var tex_desc: d3d11.D3D11_TEXTURE1D_DESC = undefined;
+                    self.holder.tex_1d.?.ID3D11Texture1D_GetDesc(&tex_desc);
+                    size = .{ @max(1, tex_desc.Width), tex_desc.ArraySize, 1 };
+                },
+                .TEXTURE2D => {
+                    var tex_desc: d3d11.D3D11_TEXTURE2D_DESC = undefined;
+                    self.holder.tex_2d.?.ID3D11Texture2D_GetDesc(&tex_desc);
+                    size = .{ @max(1, tex_desc.Width), @max(1, tex_desc.Height), tex_desc.ArraySize };
+                },
+                .TEXTURE3D => {
+                    var tex_desc: d3d11.D3D11_TEXTURE3D_DESC = undefined;
+                    self.holder.tex_3d.?.ID3D11Texture3D_GetDesc(&tex_desc);
+                    size = .{ @max(1, tex_desc.Width), @max(1, tex_desc.Height), @max(1, tex_desc.Depth) };
+                },
+                else => {},
+            }
+        }
+
+        return size;
+    }
+
+    fn _getSubresourceFootprint(
+        self: *const Renderer.Texture,
+        mip_level: u32,
+    ) Renderer.Texture.SubresourceFootprint {
+        return fromBase(self).getSubresourceFootprint(mip_level);
+    }
+
+    pub fn getSubresourceFootprint(
+        self: *const D3D11Texture,
+        mip_level: u32,
+    ) Renderer.Texture.SubresourceFootprint {
+        return Renderer.Texture.calculatePackedSubResourceFootprint(
+            self.base.texture_type,
+            self.base_format,
+            self.getMipExtent(0),
+            mip_level,
+            self.num_array_layers,
+            null,
+        );
+    }
+
+    // TODO: Implement Texture subresource updating
+    // pub fn updateSubresource(
+    //     self: *D3D11Texture,
+    //     context: *d3d11.ID3D11DeviceContext1,
+    //     mip_level: u32,
+    //     base_array_layer: u32,
+    //     num_array_layers: u32,
+    //     dst_box: *const d3d11.D3D11_BOX,
+    //     image_view: *const Renderer.Image.ImageView,
+    //     //report: ?*Renderer.Report,
+    // ) win32.foundation.HRESULT {
+    //     var scratch = common.ScratchSpace(4096){};
+    //     var temp_allocator = scratch.init().allocator();
+    //     _ = temp_allocator;
+
+    //     _ = context;
+    //     _ = mip_level;
+    //     _ = base_array_layer;
+    //     const format = self.base_format;
+    //     const format_attributes = Renderer.format.getFormatAttributes(format);
+    //     _ = format_attributes;
+
+    //     const extent: [3]u32 = .{
+    //         dst_box.right - dst_box.left,
+    //         dst_box.bottom - dst_box.top,
+    //         dst_box.back - dst_box.front,
+    //     };
+
+    //     const data_layout = Renderer.Texture.calculateSubresourceCPUMappingLayout(
+    //         format,
+    //         extent,
+    //         num_array_layers,
+    //         image_view.format,
+    //         image_view.data_type,
+    //     );
+
+    //     if (image_view.data.len < data_layout.image_size) {
+    //         //report?.addMessage(Renderer.Report.MessageKind.Error, "Image data is too small for the specified subresource layout");
+    //         return win32.foundation.E_INVALIDARG;
+    //     }
+
+    //     var inter
+    // }
+
+    inline fn d3d11CalculateSubresource(mip_slice: u32, array_slice: u32, mip_levels: u32) u32 {
+        return mip_slice + array_slice * mip_levels;
+    }
+
+    pub fn createSubresourceCopyWithCPUAccess(
+        self: *D3D11Texture,
+        context: ?*d3d11.ID3D11DeviceContext1,
+        texture_output: *D3D11TextureHolder,
+        cpu_access_flags: d3d11.D3D11_CPU_ACCESS_FLAG,
+        region: Renderer.Texture.TextureRegion,
+    ) !void {
+        const offset = Renderer.Texture.calculateTextureOffset(
+            self.base.texture_type,
+            region.offset,
+            null,
+        );
+        const extent = Renderer.Texture.calculateTextureExtent(
+            self.base.texture_type,
+            region.extent,
+            null,
+        );
+
+        const src_box: d3d11.D3D11_BOX = .{
+            .left = offset[0],
+            .top = offset[1],
+            .front = offset[2],
+            .right = offset[0] + extent[0],
+            .bottom = offset[1] + extent[1],
+            .back = offset[2] + extent[2],
+        };
+
+        const is_depth_stencil_or_multisampled = self.base.binding.depth_stencil_attachment or
+            self.base.texture_type.isMultisample();
+        if (is_depth_stencil_or_multisampled) {
+            var intermediate_texture: D3D11TextureHolder = undefined;
+            defer intermediate_texture.deinit();
+            try self.createD3d11TextureSubresourceCopyWithCPUAccess(
+                context,
+                &self.holder,
+                self.num_mip_levels,
+                region.subresource.num_array_layers,
+                &intermediate_texture,
+                .DEFAULT,
+                @enumFromInt(0),
+                region.subresource.base_mip_level,
+                region.subresource.base_array_layer,
+                null,
+            );
+
+            try self.createD3d11TextureSubresourceCopyWithCPUAccess(
+                context,
+                &intermediate_texture,
+                1,
+                region.subresource.num_array_layers,
+                &texture_output,
+                .STAGING,
+                cpu_access_flags,
+                0,
+                0,
+                &src_box,
+            );
+        } else {
+            try self.createD3d11TextureSubresourceCopyWithCPUAccess(
+                context,
+                &self.holder,
+                self.num_mip_levels,
+                region.subresource.num_array_layers,
+                &texture_output,
+                .STAGING,
+                cpu_access_flags,
+                region.subresource.base_mip_level,
+                region.subresource.base_array_layer,
+                &src_box,
+            );
+        }
+    }
+
+    fn createD3d11TextureSubresourceCopyWithCPUAccess(
+        context: ?*d3d11.ID3D11DeviceContext1,
+        in_texture: *const D3D11TextureHolder,
+        in_texture_mip_levels: u32,
+        in_texture_array_size: u32,
+        out_texture: *D3D11TextureHolder,
+        out_texture_usage: d3d11.D3D11_USAGE,
+        cpu_access_flags: d3d11.D3D11_CPU_ACCESS_FLAG,
+        src_first_mip_level: u32,
+        src_first_array_layer: u32,
+        src_box: ?*const d3d11.D3D11_BOX,
+    ) !void {
+        var dimension: d3d11.D3D11_RESOURCE_DIMENSION = undefined;
+        in_texture.resource.?.ID3D11Resource_GetType(&dimension);
+
+        switch (dimension) {
+            .TEXTURE1D => {
+                var desc: d3d11.D3D11_TEXTURE1D_DESC = undefined;
+                in_texture.tex_1d.?.ID3D11Texture1D_GetDesc(&desc);
+
+                if (src_box) |box| {
+                    desc.Width = box.right - box.left;
+                }
+                desc.MipLevels = 1;
+                desc.ArraySize = in_texture_array_size;
+                desc.Usage = out_texture_usage;
+                desc.BindFlags = 0;
+                desc.CPUAccessFlags = @intFromEnum(cpu_access_flags);
+                desc.MiscFlags = 0;
+                out_texture.tex_1d = try dxCreateTexture1D(&desc, null);
+            },
+            .TEXTURE2D => {
+                var desc: d3d11.D3D11_TEXTURE2D_DESC = undefined;
+                in_texture.tex_2d.?.ID3D11Texture2D_GetDesc(&desc);
+
+                if (src_box) |box| {
+                    desc.Width = box.right - box.left;
+                    desc.Height = box.bottom - box.top;
+                    desc.ArraySize = in_texture_array_size;
+                }
+                desc.MipLevels = 1;
+                desc.Usage = out_texture_usage;
+                desc.BindFlags = 0;
+                desc.CPUAccessFlags = @intFromEnum(cpu_access_flags);
+                desc.MiscFlags = 0;
+                out_texture.tex_2d = try dxCreateTexture2D(&desc, null);
+            },
+            .TEXTURE3D => {
+                var desc: d3d11.D3D11_TEXTURE3D_DESC = undefined;
+                in_texture.tex_3d.?.ID3D11Texture3D_GetDesc(&desc);
+
+                if (src_box) |box| {
+                    desc.Width = box.right - box.left;
+                    desc.Height = box.bottom - box.top;
+                    desc.Depth = box.back - box.front;
+                }
+                desc.MipLevels = 1;
+                desc.Usage = out_texture_usage;
+                desc.BindFlags = 0;
+                desc.CPUAccessFlags = @intFromEnum(cpu_access_flags);
+                desc.MiscFlags = 0;
+                out_texture.tex_3d = try dxCreateTexture3D(&desc, null);
+            },
+            else => {},
+        }
+
+        for (0..in_texture_array_size) |layer| {
+            const dst_subresource = d3d11CalculateSubresource(0, layer, 1);
+            const src_subresource = d3d11CalculateSubresource(
+                src_first_mip_level,
+                src_first_array_layer + layer,
+                in_texture_mip_levels,
+            );
+            context.?.ID3D11DeviceContext_CopySubresourceRegion(
+                out_texture.resource,
+                dst_subresource,
+                0,
+                0,
+                0,
+                in_texture.resource,
+                src_subresource,
+                src_box,
+            );
+        }
+    }
+
+    pub fn createSubresourceCopyWithUintFormat(
+        texture_output: ?*D3D11TextureHolder,
+        srv_output: ?*?*d3d11.ID3D11ShaderResourceView,
+        uav_output: ?*?*d3d11.ID3D11UnorderedAccessView,
+        region: Renderer.Texture.TextureRegion,
+        subresource_type: Renderer.Texture.SubresourceType,
+    ) !void {
+        _ = texture_output;
+        _ = srv_output;
+        _ = uav_output;
+        _ = region;
+        _ = subresource_type;
+    }
+
+    pub fn createSubresourceSRV(
+        self: *D3D11Texture,
+        out_srv: ?*?*d3d11.ID3D11ShaderResourceView,
+        texture_type: Renderer.Texture.TextureType,
+        format: dxgi.common.DXGI_FORMAT,
+        base_mip_level: u32,
+        mip_levels: u32,
+        base_array_layer: u32,
+        array_layers: u32,
+    ) !void {
+        return createSubresourceSRVInternal(
+            self.holder.resource,
+            out_srv,
+            texture_type,
+            format,
+            base_mip_level,
+            mip_levels,
+            base_array_layer,
+            array_layers,
+        );
+    }
+
+    pub fn createSubresourceUAV(
+        self: *D3D11Texture,
+        out_uav: ?*?*d3d11.ID3D11UnorderedAccessView,
+        texture_type: Renderer.Texture.TextureType,
+        format: dxgi.common.DXGI_FORMAT,
+        mip_level: u32,
+        base_array_layer_or_slices: u32,
+        array_layers_or_slices: u32,
+    ) !void {
+        return createSubresourceUAVInternal(
+            self.holder.resource,
+            out_uav,
+            texture_type,
+            format,
+            mip_level,
+            base_array_layer_or_slices,
+            array_layers_or_slices,
+        );
+    }
+
+    fn createSubresourceSRVInternal(
+        resource: ?*d3d11.ID3D11Resource,
+        out_srv: ?*?*d3d11.ID3D11ShaderResourceView,
+        texture_type: Renderer.Texture.TextureType,
+        format: dxgi.common.DXGI_FORMAT,
+        base_mip_level: u32,
+        mip_levels: u32,
+        base_array_layer: u32,
+        array_layers: u32,
+    ) !void {
+        _ = format;
+        var scratch = common.ScratchSpace(4096){};
+        var temp_allocator = scratch.init().allocator();
+
+        var srv_desc: d3d11.D3D11_SHADER_RESOURCE_VIEW_DESC = undefined;
+        switch (texture_type) {
+            .texture_1d => {
+                srv_desc.ViewDimension = ._SRV_DIMENSION_TEXTURE1D;
+                srv_desc.Anonymous.Texture1D.MostDetailedMip = base_mip_level;
+                srv_desc.Anonymous.Texture1D.MipLevels = mip_levels;
+            },
+            .texture_2d => {
+                srv_desc.ViewDimension = ._SRV_DIMENSION_TEXTURE2D;
+                srv_desc.Anonymous.Texture2D.MostDetailedMip = base_mip_level;
+                srv_desc.Anonymous.Texture2D.MipLevels = mip_levels;
+            },
+            .texture_3d => {
+                srv_desc.ViewDimension = ._SRV_DIMENSION_TEXTURE3D;
+                srv_desc.Anonymous.Texture3D.MostDetailedMip = base_mip_level;
+                srv_desc.Anonymous.Texture3D.MipLevels = mip_levels;
+            },
+            .texture_cube => {
+                srv_desc.ViewDimension = ._SRV_DIMENSION_TEXTURECUBE;
+                srv_desc.Anonymous.TextureCube.MostDetailedMip = base_mip_level;
+                srv_desc.Anonymous.TextureCube.MipLevels = mip_levels;
+            },
+            .texture_1d_array => {
+                srv_desc.ViewDimension = ._SRV_DIMENSION_TEXTURE1DARRAY;
+                srv_desc.Anonymous.Texture1DArray.MostDetailedMip = base_mip_level;
+                srv_desc.Anonymous.Texture1DArray.MipLevels = mip_levels;
+                srv_desc.Anonymous.Texture1DArray.FirstArraySlice = base_array_layer;
+                srv_desc.Anonymous.Texture1DArray.ArraySize = array_layers;
+            },
+            .texture_2d_array => {
+                srv_desc.ViewDimension = ._SRV_DIMENSION_TEXTURE2DARRAY;
+                srv_desc.Anonymous.Texture2DArray.MostDetailedMip = base_mip_level;
+                srv_desc.Anonymous.Texture2DArray.MipLevels = mip_levels;
+                srv_desc.Anonymous.Texture2DArray.FirstArraySlice = base_array_layer;
+                srv_desc.Anonymous.Texture2DArray.ArraySize = array_layers;
+            },
+            .texture_cube_array => {
+                srv_desc.ViewDimension = ._SRV_DIMENSION_TEXTURECUBEARRAY;
+                srv_desc.Anonymous.TextureCubeArray.MostDetailedMip = base_mip_level;
+                srv_desc.Anonymous.TextureCubeArray.MipLevels = mip_levels;
+                srv_desc.Anonymous.TextureCubeArray.First2DArrayFace = base_array_layer;
+                srv_desc.Anonymous.TextureCubeArray.NumCubes = array_layers / 6;
+            },
+            .texture_2d_multisample => {
+                srv_desc.ViewDimension = ._SRV_DIMENSION_TEXTURE2DMS;
+            },
+            .texture_2d_multisample_array => {
+                srv_desc.ViewDimension = ._SRV_DIMENSION_TEXTURE2DMSARRAY;
+                srv_desc.Anonymous.Texture2DMSArray.FirstArraySlice = base_array_layer;
+                srv_desc.Anonymous.Texture2DMSArray.ArraySize = array_layers;
+            },
+            else => {},
+        }
+
+        const hr = state.device.?.ID3D11Device_CreateShaderResourceView(
+            resource,
+            &srv_desc,
+            out_srv,
+        );
+        if (winappimpl.reportHResultError(
+            temp_allocator,
+            hr,
+            "Failed to create texture subresource SRV",
+        )) return Renderer.Error.TextureCreationFailed;
+    }
+
+    pub fn createSubresourceUAVInternal(
+        resource: ?*d3d11.ID3D11Resource,
+        out_uav: ?*?*d3d11.ID3D11UnorderedAccessView,
+        texture_type: Renderer.Texture.TextureType,
+        format: dxgi.common.DXGI_FORMAT,
+        mip_level: u32,
+        base_array_layer_or_slices: u32,
+        array_layers_or_slices: u32,
+    ) !void {
+        var scratch = common.ScratchSpace(4096){};
+        var temp_allocator = scratch.init().allocator();
+
+        var uav_desc: d3d11.D3D11_UNORDERED_ACCESS_VIEW_DESC = undefined;
+        uav_desc.Format = d3dcommon.toUAV(format);
+        switch (texture_type) {
+            .texture_1d => {
+                uav_desc.ViewDimension = .TEXTURE1D;
+                uav_desc.Anonymous.Texture1D.MipSlice = mip_level;
+            },
+            .texture_2d => {
+                uav_desc.ViewDimension = .TEXTURE2D;
+                uav_desc.Anonymous.Texture2D.MipSlice = mip_level;
+            },
+            .texture_3d => {
+                uav_desc.ViewDimension = .TEXTURE3D;
+                uav_desc.Anonymous.Texture3D.MipSlice = mip_level;
+                uav_desc.Anonymous.Texture3D.FirstWSlice = base_array_layer_or_slices;
+                uav_desc.Anonymous.Texture3D.WSize = array_layers_or_slices;
+            },
+            .texture_1d_array => {
+                uav_desc.ViewDimension = .TEXTURE1DARRAY;
+                uav_desc.Anonymous.Texture1DArray.MipSlice = mip_level;
+                uav_desc.Anonymous.Texture1DArray.FirstArraySlice = base_array_layer_or_slices;
+                uav_desc.Anonymous.Texture1DArray.ArraySize = array_layers_or_slices;
+            },
+            .texture_2d_array, .texture_cube, .texture_cube_array => {
+                uav_desc.ViewDimension = .TEXTURE2DARRAY;
+                uav_desc.Anonymous.Texture2DArray.MipSlice = mip_level;
+                uav_desc.Anonymous.Texture2DArray.FirstArraySlice = base_array_layer_or_slices;
+                uav_desc.Anonymous.Texture2DArray.ArraySize = array_layers_or_slices;
+            },
+            else => {},
+        }
+
+        const hr = state.device.?.ID3D11Device_CreateUnorderedAccessView(
+            resource,
+            &uav_desc,
+            out_uav,
+        );
+        if (winappimpl.reportHResultError(
+            temp_allocator,
+            hr,
+            "Failed to create texture subresource UAV",
+        )) return Renderer.Error.TextureCreationFailed;
+    }
+
+    fn dxCreateTexture1D(
+        desc: *const d3d11.D3D11_TEXTURE1D_DESC,
+        initial: ?*const d3d11.D3D11_SUBRESOURCE_DATA,
+    ) !?*d3d11.ID3D11Texture1D {
+        var scratch = common.ScratchSpace(4096){};
+        var temp_allocator = scratch.init().allocator();
+
+        var texture: ?*d3d11.ID3D11Texture1D = null;
+        const hr = state.device.?.ID3D11Device_CreateTexture1D(
+            desc,
+            initial,
+            &texture,
+        );
+        if (winappimpl.reportHResultError(
+            temp_allocator,
+            hr,
+            "Failed to create 1D texture",
+        )) return Renderer.Error.TextureCreationFailed;
+        return texture;
+    }
+
+    fn dxCreateTexture2D(
+        desc: *const d3d11.D3D11_TEXTURE2D_DESC,
+        initial: ?*const d3d11.D3D11_SUBRESOURCE_DATA,
+    ) !?*d3d11.ID3D11Texture2D {
+        var scratch = common.ScratchSpace(4096){};
+        var temp_allocator = scratch.init().allocator();
+
+        var texture: ?*d3d11.ID3D11Texture2D = null;
+        const hr = state.device.?.ID3D11Device_CreateTexture2D(
+            desc,
+            initial,
+            &texture,
+        );
+        if (winappimpl.reportHResultError(
+            temp_allocator,
+            hr,
+            "Failed to create 2D texture",
+        )) return Renderer.Error.TextureCreationFailed;
+        return texture;
+    }
+
+    fn dxCreateTexture3D(
+        desc: *const d3d11.D3D11_TEXTURE3D_DESC,
+        initial: ?*const d3d11.D3D11_SUBRESOURCE_DATA,
+    ) !?*d3d11.ID3D11Texture3D {
+        var scratch = common.ScratchSpace(4096){};
+        var temp_allocator = scratch.init().allocator();
+
+        var texture: ?*d3d11.ID3D11Texture3D = null;
+        const hr = state.device.?.ID3D11Device_CreateTexture3D(
+            desc,
+            initial,
+            &texture,
+        );
+        if (winappimpl.reportHResultError(
+            temp_allocator,
+            hr,
+            "Failed to create 3D texture",
+        )) return Renderer.Error.TextureCreationFailed;
+        return texture;
+    }
+
+    pub fn createTexture1D(
         self: *D3D11Texture,
         descriptor: *const Renderer.Texture.TextureDescriptor,
-        initial: *const d3d11.D3D11_SUBRESOURCE_DATA,
-    ) void {
-        _ = self;
-        _ = initial;
+        initial: ?*const d3d11.D3D11_SUBRESOURCE_DATA,
+    ) !void {
         var desc: d3d11.D3D11_TEXTURE1D_DESC = undefined;
         desc.Width = descriptor.extent[0];
         desc.MipLevels = descriptor.numberOfMipLevels();
@@ -2757,6 +3341,150 @@ const D3D11Texture = struct {
         desc.BindFlags = getTextureBindFlags(descriptor);
         desc.CPUAccessFlags = getCpuAccessFlagsFromInfo(descriptor.info);
         desc.MiscFlags = getTextureMiscFlags(descriptor);
+        self.holder.tex_1d = try dxCreateTexture1D(&desc, initial);
+        self.setResourceParams(
+            desc.Format,
+            .{ desc.Width, 1, 1 },
+            desc.MipLevels,
+            desc.ArraySize,
+        );
+        self.createDefaultRVs(descriptor.binding);
+    }
+
+    pub fn createTexture2D(
+        self: *D3D11Texture,
+        descriptor: *const Renderer.Texture.TextureDescriptor,
+        initial: ?*const d3d11.D3D11_SUBRESOURCE_DATA,
+    ) !void {
+        var desc: d3d11.D3D11_TEXTURE2D_DESC = undefined;
+        desc.Width = descriptor.extent[0];
+        desc.Height = descriptor.extent[1];
+        desc.MipLevels = descriptor.numberOfMipLevels();
+        desc.ArraySize = descriptor.array_layers;
+        desc.Format = d3dcommon.selectTextureDxgiFormat(descriptor.format);
+        desc.SampleDesc.Count = if (descriptor.texture_type.isMultisample()) @max(1, descriptor.samples) else 1;
+        desc.SampleDesc.Quality = 0;
+        desc.Usage = .DEFAULT;
+        desc.BindFlags = getTextureBindFlags(descriptor);
+        desc.CPUAccessFlags = getCpuAccessFlagsFromInfo(descriptor.info);
+        desc.MiscFlags = getTextureMiscFlags(descriptor);
+        self.holder.tex_2d = try dxCreateTexture2D(&desc, initial);
+        self.setResourceParams(
+            desc.Format,
+            .{ desc.Width, desc.Height, 1 },
+            desc.MipLevels,
+            desc.ArraySize,
+        );
+        self.createDefaultRVs(descriptor.binding);
+    }
+
+    pub fn createTexture3D(
+        self: *D3D11Texture,
+        descriptor: *const Renderer.Texture.TextureDescriptor,
+        initial: ?*const d3d11.D3D11_SUBRESOURCE_DATA,
+    ) !void {
+        var desc: d3d11.D3D11_TEXTURE3D_DESC = undefined;
+        desc.Width = descriptor.extent[0];
+        desc.Height = descriptor.extent[1];
+        desc.Depth = descriptor.extent[2];
+        desc.MipLevels = descriptor.numberOfMipLevels();
+        desc.Format = d3dcommon.selectTextureDxgiFormat(descriptor.format);
+        desc.Usage = .DEFAULT;
+        desc.BindFlags = getTextureBindFlags(descriptor);
+        desc.CPUAccessFlags = getCpuAccessFlagsFromInfo(descriptor.info);
+        desc.MiscFlags = getTextureMiscFlags(descriptor);
+        self.holder.tex_3d = try dxCreateTexture3D(&desc, initial);
+        self.setResourceParams(
+            desc.Format,
+            .{ desc.Width, desc.Height, desc.Depth },
+            desc.MipLevels,
+            1,
+        );
+        self.createDefaultRVs(descriptor.binding);
+    }
+
+    fn createDefaultRVs(self: *D3D11Texture, binding: Renderer.Resource.BindingInfo) !void {
+        if (binding.sampled) {
+            self.createDefaultSRV();
+        }
+        if (binding.storage) {
+            self.createDefaultUAV();
+        }
+    }
+
+    fn createDefaultSRV(self: *D3D11Texture) !void {
+        var scratch = common.ScratchSpace(4096){};
+        var temp_allocator = scratch.init().allocator();
+
+        const has_typeless = d3dcommon.isTypeless(self.format);
+        const has_depth_stencil_format = Renderer.format.isDepthOrStencilFormat(self.base_format);
+        d3dcommon.releaseIUnknown(d3d11.ID3D11ShaderResourceView, &self.srv);
+        if (has_typeless or has_depth_stencil_format) {
+            createSubresourceSRVInternal(
+                self.holder.resource,
+                &self.srv,
+                self.base.texture_type,
+                d3dcommon.mapFormat(self.base_format),
+                0,
+                self.num_mip_levels,
+                0,
+                self.num_array_layers,
+            );
+        } else {
+            const hr = state.device.?.ID3D11Device_CreateShaderResourceView(
+                self.holder.resource,
+                null,
+                &self.srv,
+            );
+            if (winappimpl.reportHResultError(
+                temp_allocator,
+                hr,
+                "Failed to create texture default SRV",
+            )) return Renderer.Error.TextureCreationFailed;
+        }
+    }
+
+    fn createDefaultUAV(self: *D3D11Texture) !void {
+        var scratch = common.ScratchSpace(4096){};
+        var temp_allocator = scratch.init().allocator();
+
+        const has_typeless = d3dcommon.isTypeless(self.format);
+        const has_depth_stencil_format = Renderer.format.isDepthOrStencilFormat(self.base_format);
+        d3dcommon.releaseIUnknown(d3d11.ID3D11UnorderedAccessView, &self.uav);
+        if (has_typeless or has_depth_stencil_format) {
+            try createSubresourceUAVInternal(
+                self.holder.resource,
+                &self.uav,
+                self.base.texture_type,
+                d3dcommon.mapFormat(self.base_format),
+                0,
+                0,
+                self.num_array_layers,
+            );
+        } else {
+            const hr = state.device.?.ID3D11Device_CreateUnorderedAccessView(
+                self.holder.resource,
+                null,
+                &self.uav,
+            );
+            if (winappimpl.reportHResultError(
+                temp_allocator,
+                hr,
+                "Failed to create texture default UAV",
+            )) return Renderer.Error.TextureCreationFailed;
+        }
+    }
+
+    fn setResourceParams(
+        self: *D3D11Texture,
+        format: dxgi.common.DXGI_FORMAT,
+        extent: [3]u32,
+        mip_levels: u32,
+        array_size: u32,
+    ) void {
+        self.format = format;
+        self.num_mip_levels = if (mip_levels == 0) Renderer.Texture.numberOfMipLevels(extent) else mip_levels;
+        self.num_array_layers = array_size;
     }
 };
 

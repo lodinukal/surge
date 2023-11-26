@@ -27,6 +27,7 @@ pub const Sampler = @import("Sampler.zig");
 pub const QueryHeap = @import("QueryHeap.zig");
 pub const CommandQueue = @import("CommandQueue.zig");
 pub const CommandBuffer = @import("CommandBuffer.zig");
+pub const Image = @import("Image.zig");
 
 const Self = @This();
 
@@ -57,6 +58,9 @@ pub const Error = error{
 
     // Fence
     FenceCreationFailed,
+
+    // Texture
+    TextureCreationFailed,
 };
 
 pub const RendererType = enum {
