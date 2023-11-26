@@ -134,6 +134,11 @@ pub fn main() !void {
     });
     defer surface.deinit();
 
+    const adapter = try instance.requestAdapter(&.{
+        .power_preference = .high_performance,
+    });
+    defer adapter.deinit();
+
     // std.debug.print("mem: {}\n", .{arena.queryCapacity()});
 
     var start = std.time.timestamp();

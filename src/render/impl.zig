@@ -6,6 +6,7 @@ pub const Procs = struct {
     pub var loaded_procs: ?*const Procs = null;
 
     // Adapter
+    destroyAdapter: *const fn (adapter: *gpu.Adapter) void,
     // BindGroup
     // BindGroupLayout
     // Buffer
@@ -17,6 +18,7 @@ pub const Procs = struct {
     // Instance
     createInstance: *const fn (allocator: std.mem.Allocator) gpu.Instance.Error!*gpu.Instance,
     instanceCreateSurface: *const fn (instance: *gpu.Instance, desc: *const gpu.Surface.Descriptor) gpu.Surface.Error!*gpu.Surface,
+    instanceRequestAdapter: *const fn (instance: *gpu.Instance, options: *const gpu.Adapter.Options) gpu.Adapter.Error!*gpu.Adapter,
     destroyInstance: *const fn (instance: *gpu.Instance) void,
     // PipelineLayout
     // QuerySet
@@ -61,6 +63,11 @@ pub fn closeBackend() void {
     }
 }
 
+// Adapter
+pub inline fn destroyAdapter(adapter: *gpu.Adapter) void {
+    return Procs.loaded_procs.?.destroyAdapter(adapter);
+}
+
 // Instance
 pub inline fn createInstance(allocator: std.mem.Allocator) gpu.Instance.Error!*gpu.Instance {
     return Procs.loaded_procs.?.createInstance(allocator);
@@ -71,6 +78,13 @@ pub inline fn instanceCreateSurface(
     desc: *const gpu.Surface.Descriptor,
 ) gpu.Surface.Error!*gpu.Surface {
     return Procs.loaded_procs.?.instanceCreateSurface(instance, desc);
+}
+
+pub inline fn instanceRequestAdapter(
+    instance: *gpu.Instance,
+    options: *const gpu.Adapter.Options,
+) gpu.Adapter.Error!*gpu.Adapter {
+    return Procs.loaded_procs.?.instanceRequestAdapter(instance, options);
 }
 
 pub inline fn destroyInstance(instance: *gpu.Instance) void {

@@ -15,7 +15,7 @@ pub const query_set_index_undefined = 0xffffffff;
 pub const whole_map_size = std.math.maxInt(u64);
 pub const whole_size = 0xffffffffffffffff;
 
-pub const Adapter = opaque {};
+pub const Adapter = @import("adapter.zig").Adapter;
 pub const BindGroup = opaque {};
 pub const BindGroupLayout = opaque {};
 pub const Buffer = opaque {};
