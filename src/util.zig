@@ -4,7 +4,7 @@ pub fn enumFromValue(comptime E: type, value: anytype) E {
     const typeInfo = @typeInfo(@TypeOf(value));
     if (typeInfo == std.builtin.Type.EnumLiteral) {
         return @as(E, value);
-    } else if (comptime std.meta.trait.isIntegral(@TypeOf(value))) {
+    } else if (typeInfo == .Int) {
         return @enumFromInt(value);
     } else if (@TypeOf(value) == E) {
         return value;

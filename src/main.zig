@@ -3,7 +3,7 @@ const std = @import("std");
 const app = @import("app/app.zig");
 const math = @import("math.zig");
 
-const interface = @import("core/interface.zig");
+const gpu = @import("render/gpu.zig");
 
 const Context = struct {
     allocator: std.mem.Allocator,
@@ -12,7 +12,9 @@ const Context = struct {
 
     ui_thread: ?std.Thread = null,
     mutex: std.Thread.Mutex = .{},
-    ready: bool = false,
+
+    ready_condition: std.Thread.Condition = .{},
+    ready_mutex: std.Thread.Mutex = .{},
 
     pub fn init(allocator: std.mem.Allocator) !Context {
         var application = try app.Application.create(allocator);
@@ -39,6 +41,7 @@ const Context = struct {
         if (self.ui_thread) |t| {
             t.join();
         }
+        self.window.destroy();
         self.application.destroy();
     }
 
@@ -54,6 +57,9 @@ const Context = struct {
         self.ui_thread = try std.Thread.spawn(.{
             .allocator = self.allocator,
         }, windowLoop, .{self});
+        self.ready_mutex.lock();
+        defer self.ready_mutex.unlock();
+        self.ready_condition.wait(&self.ready_mutex);
     }
 
     pub const focused_sleep = std.time.ns_per_us * 100;
@@ -61,7 +67,11 @@ const Context = struct {
 
     fn windowLoop(self: *Context) !void {
         try self.window.build();
-        defer self.window.destroy();
+
+        self.ready_mutex.lock();
+        self.ready_condition.broadcast();
+        self.ready_mutex.unlock();
+
         while (self.running()) {
             try self.pumpEvents();
             self.window.setTitle(if (self.window.isFocused()) "focused" else "not focused");
@@ -103,18 +113,28 @@ const Context = struct {
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
-    const gpa_alloc = gpa.allocator();
+    const alloc = gpa.allocator();
 
-    var arena = std.heap.ArenaAllocator.init(gpa_alloc);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    // var arena = std.heap.ArenaAllocator.init(gpa_alloc);
+    // defer arena.deinit();
+    // const alloc = arena.allocator();
 
     var context = try Context.init(alloc);
     defer context.deinit();
 
     try context.spawnWindowThread();
 
-    std.debug.print("mem: {}\n", .{arena.queryCapacity()});
+    if (gpu.loadBackend(.d3d11) == false) return;
+    const instance = try gpu.createInstance(alloc);
+    defer instance.deinit();
+
+    const surface = try instance.createSurface(&.{
+        .native_handle = context.window.getNativeHandle().wnd,
+        .native_handle_size = 8,
+    });
+    defer surface.deinit();
+
+    // std.debug.print("mem: {}\n", .{arena.queryCapacity()});
 
     var start = std.time.timestamp();
     while (context.running()) {
@@ -125,7 +145,5 @@ pub fn main() !void {
         std.time.sleep(std.time.ns_per_s);
     }
 
-    std.debug.print("mem: {}\n", .{arena.queryCapacity()});
+    // std.debug.print("mem: {}\n", .{arena.queryCapacity()});
 }
-
-test {}

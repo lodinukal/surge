@@ -21,16 +21,16 @@ pub const Platform = enum {
     none,
 
     pub fn fromTag(target: std.Target) Platform {
-        if (std.meta.trait.hasDecls(root, .{"target_override"}))
+        if (@hasDecl(root, "target_override"))
             return root.target_override;
         return switch (target.os.tag) {
-            .windows => if (std.meta.trait.hasDecls(root, .{"xbox"}))
+            .windows => if (@hasDecl(root, "xbox"))
                 .xboxone
             else
                 .windows,
             .macos => .osx,
             .linux => switch (target.abi) {
-                .android => if (std.meta.trait.hasDecls(root, .{"android_tv"}))
+                .android => if (@hasDecl(root, "android_tv"))
                     .androidtv
                 else
                     .android,
@@ -44,7 +44,7 @@ pub const Platform = enum {
     }
 };
 
-pub const this_platform = if (std.meta.trait.hasDecls(root, .{"target_override"}))
+pub const this_platform = if (@hasDecl(root, "target_override"))
     root.target_override
 else
     Platform.fromTag(builtin.target);

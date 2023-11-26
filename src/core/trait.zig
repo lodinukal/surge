@@ -315,7 +315,7 @@ pub const TypeInfo = @Type(std.builtin.Type{ .Union = .{
                     .decls = &[0]std.builtin.Type.Declaration{},
                     .is_tuple = struct_info.is_tuple,
                     .fields = sinit: {
-                        var og_sflds = struct_info.fields;
+                        const og_sflds = struct_info.fields;
                         var sflds: [og_sflds.len]std.builtin.Type.StructField = undefined;
                         var i: usize = 0;
                         inline for (og_sflds) |fld| {

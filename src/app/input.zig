@@ -13,11 +13,11 @@ pub const Input = struct {
             ?*void,
         };
         buffers: [buffered_event_buffer_count]std.ArrayList(EventPair),
-        current_buffer: std.atomic.Atomic(usize),
+        current_buffer: std.atomic.Value(usize),
 
         pub fn init(allocator: std.mem.Allocator) !BufferedEventsList {
             var self: BufferedEventsList = undefined;
-            self.current_buffer = std.atomic.Atomic(usize).init(0);
+            self.current_buffer = std.atomic.Value(usize).init(0);
             for (&self.buffers) |*buffer| {
                 buffer.* = try std.ArrayList(EventPair).initCapacity(
                     allocator,
