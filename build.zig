@@ -72,6 +72,10 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_unit_tests.step);
 
+    const sysgpu_dep = b.dependency("mach-sysgpu", .{});
+    const sysgpu_module = sysgpu_dep.module("mach-sysgpu");
+    exe.addModule("gpu", sysgpu_module);
+
     if (target.isWindows()) {
         const win32_dep = b.dependency("win32", .{});
         const win32_module = win32_dep.module("zigwin32");
@@ -89,8 +93,6 @@ pub fn build(b: *std.Build) void {
             // CUrrently uses 221001
             // t.c_std = .C11;
         }
-
-        buildD3d11(b, target, optimize);
     }
 }
 
@@ -150,19 +152,4 @@ fn buildBackend(
     const artifact = b.addInstallArtifact(lib, .{ .dest_dir = .{ .override = .bin } });
     b.getInstallStep().dependOn(&artifact.step);
     return lib;
-}
-
-fn buildD3d11(
-    b: *std.Build,
-    target: std.zig.CrossTarget,
-    optimize: std.builtin.OptimizeMode,
-) void {
-    const src = "src/render/gpu/dx11/impl.zig";
-    const name = "render_d3d11";
-    const d3d11 = buildBackend(b, name, src, target, optimize);
-
-    const win32_dep = b.dependency("win32", .{});
-    const win32_module = win32_dep.module("zigwin32");
-    d3d11.addModule("win32", win32_module);
-    // b.linkSystemLibraryName("Imm32");
 }

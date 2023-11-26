@@ -195,7 +195,7 @@ pub const Input = struct {
 
     fn updateCurrentMousePosition(self: *Input, input_object: *InputObject) void {
         if (input_object.type == .mousemove) {
-            var rounded = @round(input_object.position);
+            const rounded = @round(input_object.position);
             self.mouse_state.position[0] = @intFromFloat(rounded[0]);
             self.mouse_state.position[1] = @intFromFloat(rounded[1]);
         }

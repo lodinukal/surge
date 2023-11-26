@@ -2,7 +2,6 @@ const std = @import("std");
 
 const app = @import("app/app.zig");
 const math = @import("math.zig");
-const Renderer = @import("render/gpu/Renderer.zig");
 
 const interface = @import("core/interface.zig");
 
@@ -10,7 +9,6 @@ const Context = struct {
     allocator: std.mem.Allocator,
     application: *app.Application,
     window: *app.window.Window,
-    // renderer: *app.renderer.Renderer,
 
     ui_thread: ?std.Thread = null,
     mutex: std.Thread.Mutex = .{},
@@ -105,19 +103,14 @@ const Context = struct {
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
-    var gpa_alloc = gpa.allocator();
+    const gpa_alloc = gpa.allocator();
 
     var arena = std.heap.ArenaAllocator.init(gpa_alloc);
     defer arena.deinit();
-    var alloc = arena.allocator();
+    const alloc = arena.allocator();
 
     var context = try Context.init(alloc);
     defer context.deinit();
-
-    var renderer = try Renderer.create(alloc);
-    defer renderer.destroy();
-    try renderer.load(.d3d11);
-    std.debug.print("{}\n", .{try renderer.getRendererInfo()});
 
     try context.spawnWindowThread();
 
@@ -135,6 +128,4 @@ pub fn main() !void {
     std.debug.print("mem: {}\n", .{arena.queryCapacity()});
 }
 
-test {
-    std.testing.refAllDecls(Renderer);
-}
+test {}

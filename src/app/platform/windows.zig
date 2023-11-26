@@ -52,7 +52,7 @@ const WindowsApplication = struct {
         _ = self;
         var msg: win32.ui.windows_and_messaging.MSG = undefined;
         while (result: {
-            var x = win32.ui.windows_and_messaging.PeekMessageW(
+            const x = win32.ui.windows_and_messaging.PeekMessageW(
                 &msg,
                 null,
                 0,
@@ -180,7 +180,7 @@ const WindowsWindow = struct {
         al: std.mem.Allocator,
         str: []const u8,
     ) ?[:0]const u16 {
-        var converted = std.unicode.utf8ToUtf16LeWithNull(
+        const converted = std.unicode.utf8ToUtf16LeWithNull(
             al,
             str,
         ) catch return null;
@@ -193,13 +193,13 @@ const WindowsWindow = struct {
         var stack_allocator = std.heap.stackFallback(1024, self.allocator());
         var temp_allocator = stack_allocator.get();
 
-        var converted_title = convertToUtf16WithAllocator(
+        const converted_title = convertToUtf16WithAllocator(
             temp_allocator,
             descriptor.title,
         ) orelse return WindowsError.StringConversionFailed;
         defer temp_allocator.free(converted_title);
 
-        var hwnd = win32.ui.windows_and_messaging.CreateWindowExW(
+        const hwnd = win32.ui.windows_and_messaging.CreateWindowExW(
             win32.ui.windows_and_messaging.WINDOW_EX_STYLE.initFlags(.{}),
             class_name,
             converted_title,
@@ -271,7 +271,7 @@ const WindowsWindow = struct {
             self.hwnd,
             ._STYLE,
         );
-        var styles = self.getStyles();
+        const styles = self.getStyles();
         current_style &= ~@intFromEnum(Styles.mask);
         current_style = @bitCast(@intFromEnum(util.orEnum(
             Styles.ws,
@@ -522,7 +522,7 @@ const WindowsWindow = struct {
             var stack_allocator = std.heap.stackFallback(1024, self.allocator());
             var temp_allocator = stack_allocator.get();
 
-            var converted_title = convertToUtf16WithAllocator(
+            const converted_title = convertToUtf16WithAllocator(
                 temp_allocator,
                 self.modified_state.descriptor.title,
             ) orelse return WindowsError.StringConversionFailed;
@@ -547,7 +547,7 @@ const WindowsWindow = struct {
 };
 
 pub fn getHInstance() !win32.foundation.HINSTANCE {
-    var module = win32.system.library_loader.GetModuleHandleW(null);
+    const module = win32.system.library_loader.GetModuleHandleW(null);
     return module;
 }
 
@@ -564,18 +564,18 @@ pub fn messageBox(
     );
     var temp_allocator = stack_allocator.get();
 
-    var message = std.fmt.bufPrint(
+    const message = std.fmt.bufPrint(
         temp_allocator.alloc(u8, 512) catch unreachable,
         fmt,
         args,
     ) catch unreachable;
 
-    var converted_title = std.unicode.utf8ToUtf16LeWithNull(
+    const converted_title = std.unicode.utf8ToUtf16LeWithNull(
         temp_allocator,
         title,
     ) catch return;
     defer temp_allocator.free(converted_title);
-    var converted_message = std.unicode.utf8ToUtf16LeWithNull(
+    const converted_message = std.unicode.utf8ToUtf16LeWithNull(
         temp_allocator,
         message,
     ) catch return;
@@ -591,7 +591,7 @@ pub fn messageBox(
 pub fn reportError(
     allocator: std.mem.Allocator,
 ) void {
-    var err = win32.foundation.GetLastError();
+    const err = win32.foundation.GetLastError();
     messageBox(
         allocator,
         "Fatal error",
@@ -621,10 +621,7 @@ const WindowsInput = struct {
     }
 
     pub fn init(self: *WindowsInput) WindowsError!void {
-        var hr: std.os.windows.HRESULT = 0;
-        _ = hr;
-
-        var stack_allocator = std.heap.stackFallback(
+        const stack_allocator = std.heap.stackFallback(
             1024,
             self.allocator(),
         );
@@ -654,7 +651,7 @@ const WindowsInput = struct {
             .dwFlags = .INPUTSINK,
             .hwndTarget = wnd,
         };
-        var res = win32.ui.input.RegisterRawInputDevices(
+        const res = win32.ui.input.RegisterRawInputDevices(
             @ptrCast(&mouse_device),
             1,
             @sizeOf(win32.ui.input.RAWINPUTDEVICE),
@@ -689,7 +686,7 @@ const WindowsInput = struct {
         const MI_WP_SIGNATURE = 0xFF515700;
         const MI_WP_SIGNATURE_MASK = 0xFFFFFF00;
 
-        var extra_info = win32.ui.windows_and_messaging.GetMessageExtraInfo();
+        const extra_info = win32.ui.windows_and_messaging.GetMessageExtraInfo();
         if ((extra_info & MI_WP_SIGNATURE_MASK) == MI_WP_SIGNATURE) {
             if ((extra_info & 0x80) != 0) {
                 return .touch;
@@ -722,7 +719,7 @@ const WindowsInput = struct {
         }
         window.focused = focused;
 
-        var iobj = app.input.InputObject{
+        const iobj = app.input.InputObject{
             .type = .focus,
             .input_state = if (focused) .begin else .end,
             .data = .{ .focus = window.getBase() },
@@ -756,7 +753,7 @@ const WindowsInput = struct {
                 const width = LOWORD(@bitCast(lparam));
                 const height = HIWORD(@bitCast(lparam));
 
-                var iobj = app.input.InputObject{
+                const iobj = app.input.InputObject{
                     .type = .resize,
                     .input_state = .change,
                     .data = .{ .resize = .{ width, height } },
@@ -797,7 +794,7 @@ const WindowsInput = struct {
             win32.ui.windows_and_messaging.WM_KEYDOWN => self.postKeyEvent(wparam, lparam, true),
             win32.ui.windows_and_messaging.WM_KEYUP => self.postKeyEvent(wparam, lparam, false),
             win32.ui.windows_and_messaging.WM_CHAR => {
-                var iobj = app.input.InputObject{
+                const iobj = app.input.InputObject{
                     .type = .textinput,
                     .input_state = .begin,
                     .data = .{ .textinput = .{ .short = @truncate(wparam) } },
@@ -806,7 +803,7 @@ const WindowsInput = struct {
             },
 
             win32.ui.windows_and_messaging.WM_MOUSEWHEEL => {
-                var iobj = app.input.InputObject{
+                const iobj = app.input.InputObject{
                     .type = .mousewheel,
                     .input_state = .begin,
                     .data = .mousewheel,
@@ -870,7 +867,7 @@ const WindowsInput = struct {
     }
 
     fn postKeyEvent(self: *WindowsInput, wparam: std.os.windows.WPARAM, lparam: std.os.windows.LPARAM, down: bool) void {
-        var iobj = app.input.InputObject{
+        const iobj = app.input.InputObject{
             .type = .keyboard,
             .input_state = if (down) .begin else .end,
             .data = .{
@@ -901,9 +898,9 @@ const WindowsInput = struct {
             }
         }
 
-        var old_state = self.getBase().mouse_state.buttons[use_button_index];
-        var new_state = ((wparam & @as(usize, @intFromEnum(button_flag))) != 0);
-        var should_update = (old_state != new_state);
+        const old_state = self.getBase().mouse_state.buttons[use_button_index];
+        const new_state = ((wparam & @as(usize, @intFromEnum(button_flag))) != 0);
+        const should_update = (old_state != new_state);
 
         if (should_update) {
             self.getBase().mouse_state.buttons[use_button_index] = new_state;
@@ -914,7 +911,7 @@ const WindowsInput = struct {
                 self.releaseInput();
             }
 
-            var iobj = app.input.InputObject{
+            const iobj = app.input.InputObject{
                 .type = .mousebutton,
                 .input_state = if (new_state) .begin else .end,
                 .data = .{ .mousebutton = @truncate(use_button_index) },
@@ -966,7 +963,7 @@ const WindowsInput = struct {
 
         const last_pos = self.getBase().mouse_state.position;
 
-        var iobj = app.input.InputObject{
+        const iobj = app.input.InputObject{
             .type = .mousemove,
             .input_state = .change,
             .data = .mousemove,
@@ -1002,7 +999,7 @@ const WindowsInput = struct {
 
                 const new_pos = getMouseRelativePosition(wnd);
 
-                var iobj = app.input.InputObject{
+                const iobj = app.input.InputObject{
                     .type = .mousemove,
                     .input_state = .change,
                     .data = .mousemove,
@@ -1346,10 +1343,10 @@ const RegKey = struct {
         security_attributes: ?*win32.security.SECURITY_ATTRIBUTES,
         out_disposition: ?*win32.system.registry.REG_CREATE_KEY_DISPOSITION,
     ) WindowsError!win32.foundation.WIN32_ERROR {
-        var use_options = options orelse win32.system.registry.REG_OPEN_CREATE_OPTIONS.initFlags(.{
+        const use_options = options orelse win32.system.registry.REG_OPEN_CREATE_OPTIONS.initFlags(.{
             .RESERVED = 1, // NON_VOLATILE
         });
-        var use_desired = desired orelse win32.system.registry.REG_SAM_FLAGS.initFlags(.{
+        const use_desired = desired orelse win32.system.registry.REG_SAM_FLAGS.initFlags(.{
             .READ = 1,
             .WRITE = 1,
         });
@@ -1361,9 +1358,9 @@ const RegKey = struct {
             1024,
             self.allocator,
         );
-        var temp_allocator = stack_allocator.get();
+        const temp_allocator = stack_allocator.get();
 
-        var res: win32.foundation.WIN32_ERROR = @enumFromInt(win32.system.registry.RegCreateKeyExW(
+        const res: win32.foundation.WIN32_ERROR = @enumFromInt(win32.system.registry.RegCreateKeyExW(
             key_present,
             std.unicode.utf8ToUtf16LeWithNull(
                 temp_allocator,
@@ -1404,9 +1401,9 @@ const RegKey = struct {
             1024,
             self.allocator,
         );
-        var temp_allocator = stack_allocator.get();
+        const temp_allocator = stack_allocator.get();
 
-        var res: win32.foundation.WIN32_ERROR = win32.system.registry.RegOpenKeyExW(
+        const res: win32.foundation.WIN32_ERROR = win32.system.registry.RegOpenKeyExW(
             key_parent.*,
             std.unicode.utf8ToUtf16LeWithNull(
                 temp_allocator,
@@ -1437,7 +1434,7 @@ const RegKey = struct {
             1024,
             self.allocator,
         );
-        var temp_allocator = stack_allocator.get();
+        const temp_allocator = stack_allocator.get();
 
         return @enumFromInt(win32.system.registry.RegDeleteKeyW(
             self.handle,
@@ -1493,7 +1490,7 @@ const RegKey = struct {
             1024,
             self.allocator,
         );
-        var temp_allocator = stack_allocator.get();
+        const temp_allocator = stack_allocator.get();
 
         return @enumFromInt(win32.system.registry.RegDeleteValueW(
             self.handle,
@@ -1517,7 +1514,7 @@ const RegKey = struct {
         );
         var temp_allocator = stack_allocator.get();
 
-        var data = temp_allocator.alloc(
+        const data = temp_allocator.alloc(
             std.os.windows.WCHAR,
             use_max_chars,
         ) catch return WindowsError.AllocationFailed;
@@ -1556,9 +1553,9 @@ const RegKey = struct {
             1024,
             self.allocator,
         );
-        var temp_allocator = stack_allocator.get();
+        const temp_allocator = stack_allocator.get();
 
-        var value_converted = std.unicode.utf8ToUtf16LeWithNull(
+        const value_converted = std.unicode.utf8ToUtf16LeWithNull(
             temp_allocator,
             value,
         ) catch return WindowsError.StringConversionFailed;
@@ -1586,7 +1583,7 @@ const RegKey = struct {
             1024,
             self.allocator,
         );
-        var temp_allocator = stack_allocator.get();
+        const temp_allocator = stack_allocator.get();
 
         res = win32.system.registry.RegQueryValueExW(
             self.handle,
