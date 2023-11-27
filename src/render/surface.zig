@@ -11,7 +11,7 @@ pub const Surface = opaque {
         native_handle_size: usize,
     };
 
-    pub fn deinit(self: *Surface) void {
-        impl.destroySurface(self);
+    pub inline fn destroy(self: *Surface) void {
+        impl.surfaceDestroy(self);
     }
 };

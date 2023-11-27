@@ -5,27 +5,40 @@ const ProcFn = *const fn () callconv(.C) ?*const Procs;
 pub const Procs = struct {
     pub var loaded_procs: ?*const Procs = null;
 
-    // Adapter
-    adapterCreateDevice: *const fn (adapter: *gpu.Adapter, desc: *const gpu.Device.Descriptor) gpu.Device.Error!*gpu.Device,
-    adapterGetProperties: *const fn (adapter: *gpu.Adapter, out_props: *gpu.Adapter.Properties) bool,
-    destroyAdapter: *const fn (adapter: *gpu.Adapter) void,
     // BindGroup
     // BindGroupLayout
     // Buffer
+    bufferDestroy: *const fn (buffer: *gpu.Buffer) void,
     // CommandBuffer
+    commandBufferDestroy: *const fn (command_buffer: *gpu.CommandBuffer) void,
     // CommandEncoder
+    commandEncoderFinish: *const fn (
+        command_encoder: *gpu.CommandEncoder,
+        desc: *const gpu.CommandBuffer.Descriptor,
+    ) gpu.CommandBuffer.Error!*gpu.CommandBuffer,
+    commandEncoderDestroy: *const fn (command_encoder: *gpu.CommandEncoder) void,
     // ComputePassEncoder
     // ComputePipeline
     // Device
-    destroyDevice: *const fn (device: *gpu.Device) void,
+    deviceGetQueue: *const fn (device: *gpu.Device) *gpu.Queue,
+    deviceCreateBuffer: *const fn (device: *gpu.Device, desc: *const gpu.Buffer.Descriptor) gpu.Buffer.Error!*gpu.Buffer,
+    deviceDestroy: *const fn (device: *gpu.Device) void,
     // Instance
     createInstance: *const fn (allocator: std.mem.Allocator, desc: *const gpu.Instance.Descriptor) gpu.Instance.Error!*gpu.Instance,
     instanceCreateSurface: *const fn (instance: *gpu.Instance, desc: *const gpu.Surface.Descriptor) gpu.Surface.Error!*gpu.Surface,
-    instanceRequestAdapter: *const fn (instance: *gpu.Instance, options: *const gpu.Adapter.Options) gpu.Adapter.Error!*gpu.Adapter,
-    destroyInstance: *const fn (instance: *gpu.Instance) void,
+    instanceRequestPhysicalDevice: *const fn (instance: *gpu.Instance, options: *const gpu.PhysicalDevice.Options) gpu.PhysicalDevice.Error!*gpu.PhysicalDevice,
+    instanceDestroy: *const fn (instance: *gpu.Instance) void,
+    // PhysicalDevice
+    physicalDeviceCreateDevice: *const fn (physicalDevice: *gpu.PhysicalDevice, desc: *const gpu.Device.Descriptor) gpu.Device.Error!*gpu.Device,
+    physicalDeviceGetProperties: *const fn (physicalDevice: *gpu.PhysicalDevice, out_props: *gpu.PhysicalDevice.Properties) bool,
+    physicalDeviceDestroy: *const fn (physicalDevice: *gpu.PhysicalDevice) void,
     // PipelineLayout
     // QuerySet
     // Queue
+    queueSubmit: *const fn (
+        queue: *gpu.Queue,
+        command_buffers: []const *gpu.CommandBuffer,
+    ) gpu.Queue.Error!void,
     // RenderBundle
     // RenderBundleEncoder
     // RenderPassEncoder
@@ -33,7 +46,7 @@ pub const Procs = struct {
     // Sampler
     // ShaderModule
     // Surface
-    destroySurface: *const fn (surface: *gpu.Surface) void,
+    surfaceDestroy: *const fn (surface: *gpu.Surface) void,
     // Texture
     // TextureView
 };
@@ -66,22 +79,32 @@ pub fn closeBackend() void {
     }
 }
 
-// Adapter
-pub inline fn adapterCreateDevice(adapter: *gpu.Adapter, desc: *const gpu.Device.Descriptor) gpu.Device.Error!*gpu.Device {
-    return Procs.loaded_procs.?.adapterCreateDevice(adapter, desc);
+// Buffer
+pub inline fn bufferDestroy(buffer: *gpu.Buffer) void {
+    return Procs.loaded_procs.?.bufferDestroy(buffer);
 }
 
-pub inline fn adapterGetProperties(adapter: *gpu.Adapter, out_props: *gpu.Adapter.Properties) bool {
-    return Procs.loaded_procs.?.adapterGetProperties(adapter, out_props);
+// CommandBuffer
+pub inline fn commandBufferDestroy(command_buffer: *gpu.CommandBuffer) void {
+    return Procs.loaded_procs.?.commandBufferDestroy(command_buffer);
 }
 
-pub inline fn destroyAdapter(adapter: *gpu.Adapter) void {
-    return Procs.loaded_procs.?.destroyAdapter(adapter);
+// CommandEncoder
+pub inline fn commandEncoderDestroy(command_encoder: *gpu.CommandEncoder) void {
+    return Procs.loaded_procs.?.commandEncoderDestroy(command_encoder);
 }
 
 // Device
-pub inline fn destroyDevice(device: *gpu.Device) void {
-    return Procs.loaded_procs.?.destroyDevice(device);
+pub inline fn deviceGetQueue(device: *gpu.Device) *gpu.Queue {
+    return Procs.loaded_procs.?.deviceGetQueue(device);
+}
+
+pub inline fn deviceCreateBuffer(device: *gpu.Device, desc: *const gpu.Buffer.Descriptor) gpu.Buffer.Error!*gpu.Buffer {
+    return Procs.loaded_procs.?.deviceCreateBuffer(device, desc);
+}
+
+pub inline fn deviceDestroy(device: *gpu.Device) void {
+    return Procs.loaded_procs.?.deviceDestroy(device);
 }
 
 // Instance
@@ -99,18 +122,39 @@ pub inline fn instanceCreateSurface(
     return Procs.loaded_procs.?.instanceCreateSurface(instance, desc);
 }
 
-pub inline fn instanceRequestAdapter(
+pub inline fn instanceRequestPhysicalDevice(
     instance: *gpu.Instance,
-    options: *const gpu.Adapter.Options,
-) gpu.Adapter.Error!*gpu.Adapter {
-    return Procs.loaded_procs.?.instanceRequestAdapter(instance, options);
+    options: *const gpu.PhysicalDevice.Options,
+) gpu.PhysicalDevice.Error!*gpu.PhysicalDevice {
+    return Procs.loaded_procs.?.instanceRequestPhysicalDevice(instance, options);
 }
 
-pub inline fn destroyInstance(instance: *gpu.Instance) void {
-    return Procs.loaded_procs.?.destroyInstance(instance);
+pub inline fn instanceDestroy(instance: *gpu.Instance) void {
+    return Procs.loaded_procs.?.instanceDestroy(instance);
+}
+
+// PhysicalDevice
+pub inline fn physicalDeviceCreateDevice(physicalDevice: *gpu.PhysicalDevice, desc: *const gpu.Device.Descriptor) gpu.Device.Error!*gpu.Device {
+    return Procs.loaded_procs.?.physicalDeviceCreateDevice(physicalDevice, desc);
+}
+
+pub inline fn physicalDeviceGetProperties(physicalDevice: *gpu.PhysicalDevice, out_props: *gpu.PhysicalDevice.Properties) bool {
+    return Procs.loaded_procs.?.physicalDeviceGetProperties(physicalDevice, out_props);
+}
+
+pub inline fn physicalDeviceDestroy(physicalDevice: *gpu.PhysicalDevice) void {
+    return Procs.loaded_procs.?.physicalDeviceDestroy(physicalDevice);
+}
+
+// Queue
+pub inline fn queueSubmit(
+    queue: *gpu.Queue,
+    command_buffers: []const *gpu.CommandBuffer,
+) gpu.Queue.Error!void {
+    return Procs.loaded_procs.?.queueSubmit(queue, command_buffers);
 }
 
 // Surface
-pub inline fn destroySurface(surface: *gpu.Surface) void {
-    return Procs.loaded_procs.?.destroySurface(surface);
+pub inline fn surfaceDestroy(surface: *gpu.Surface) void {
+    return Procs.loaded_procs.?.surfaceDestroy(surface);
 }

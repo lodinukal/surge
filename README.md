@@ -8,7 +8,7 @@ Based around the wrbgpu api but cutting out a lot of the C compatibility. Curren
 
 ### D3D11
 
-- [X] Adapter
+- [X] PhysicalDevice
 - [ ] BindGroup
 - [ ] BindGroupLayout
 - [ ] Buffer

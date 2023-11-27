@@ -1,9 +1,9 @@
 const gpu = @import("gpu.zig");
 const impl = gpu.impl;
 
-pub const Adapter = opaque {
+pub const PhysicalDevice = opaque {
     pub const Error = error{
-        AdapterFailedToCreate,
+        PhysicalDeviceFailedToCreate,
     };
 
     pub const PowerPreference = enum(u8) {
@@ -37,15 +37,15 @@ pub const Adapter = opaque {
         vendor: Vendor,
     };
 
-    pub fn createDevice(self: *Adapter, desc: *const gpu.Device.Descriptor) gpu.Device.Error!*gpu.Device {
-        return impl.adapterCreateDevice(self, desc);
+    pub inline fn createDevice(self: *PhysicalDevice, desc: *const gpu.Device.Descriptor) gpu.Device.Error!*gpu.Device {
+        return impl.physicalDeviceCreateDevice(self, desc);
     }
 
-    pub fn getProperties(self: *Adapter, out_props: *Properties) bool {
-        return impl.adapterGetProperties(self, out_props);
+    pub inline fn getProperties(self: *PhysicalDevice, out_props: *Properties) bool {
+        return impl.physicalDeviceGetProperties(self, out_props);
     }
 
-    pub fn deinit(self: *Adapter) void {
-        impl.destroyAdapter(self);
+    pub inline fn destroy(self: *PhysicalDevice) void {
+        impl.physicalDeviceDestroy(self);
     }
 };

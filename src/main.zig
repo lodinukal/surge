@@ -126,27 +126,30 @@ pub fn main() !void {
 
     if (gpu.loadBackend(.d3d11) == false) return;
     const instance = try gpu.createInstance(alloc, &.{});
-    defer instance.deinit();
+    defer instance.destroy();
 
     const surface = try instance.createSurface(&.{
         .native_handle = context.window.getNativeHandle().wnd,
         .native_handle_size = 8,
     });
-    defer surface.deinit();
+    defer surface.destroy();
 
-    const adapter = try instance.requestAdapter(&.{
+    const physicalDevice = try instance.requestPhysicalDevice(&.{
         .power_preference = .high_performance,
     });
-    defer adapter.deinit();
+    defer physicalDevice.destroy();
 
-    const device = try adapter.createDevice(&.{ .label = "device" });
-    defer device.deinit();
+    const device = try physicalDevice.createDevice(&.{ .label = "device" });
+    defer device.destroy();
 
-    var props: gpu.Adapter.Properties = undefined;
-    if (adapter.getProperties(&props)) {
-        std.debug.print("adapter: {s}\n", .{props.name});
+    var props: gpu.PhysicalDevice.Properties = undefined;
+    if (physicalDevice.getProperties(&props)) {
+        std.debug.print("physicalDevice: {s}\n", .{props.name});
         std.debug.print("vendor: {}\n", .{props.vendor});
     }
+
+    const queue = device.getQueue();
+    _ = queue;
 
     // std.debug.print("mem: {}\n", .{arena.queryCapacity()});
 

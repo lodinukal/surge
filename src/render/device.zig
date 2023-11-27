@@ -21,7 +21,15 @@ pub const Device = opaque {
         lost_callback: ?LostCallback = null,
     };
 
-    pub fn deinit(self: *Device) void {
-        impl.destroyDevice(self);
+    pub inline fn getQueue(self: *Device) *gpu.Queue {
+        return impl.deviceGetQueue(self);
+    }
+
+    pub inline fn createBuffer(self: *Device, descriptor: *const gpu.Buffer.Descriptor) !*gpu.Buffer {
+        return try impl.deviceCreateBuffer(self, descriptor);
+    }
+
+    pub inline fn destroy(self: *Device) void {
+        impl.deviceDestroy(self);
     }
 };

@@ -1,5 +1,6 @@
 const std = @import("std");
 pub const impl = @import("impl.zig");
+pub const util = @import("util.zig");
 
 pub const loadBackend = impl.loadBackend;
 pub const closeBackend = impl.closeBackend;
@@ -15,16 +16,16 @@ pub const query_set_index_undefined = 0xffffffff;
 pub const whole_map_size = std.math.maxInt(u64);
 pub const whole_size = 0xffffffffffffffff;
 
-pub const Adapter = @import("adapter.zig").Adapter;
 pub const BindGroup = opaque {};
 pub const BindGroupLayout = opaque {};
-pub const Buffer = opaque {};
-pub const CommandBuffer = opaque {};
-pub const CommandEncoder = opaque {};
+pub const Buffer = @import("buffer.zig").Buffer;
+pub const CommandBuffer = @import("command_buffer.zig").CommandBuffer;
+pub const CommandEncoder = @import("command_encoder.zig").CommandEncoder;
 pub const ComputePassEncoder = opaque {};
 pub const ComputePipeline = opaque {};
 pub const Device = @import("device.zig").Device;
 pub const Instance = @import("instance.zig").Instance;
+pub const PhysicalDevice = @import("physical_device.zig").PhysicalDevice;
 pub const PipelineLayout = opaque {};
 pub const QuerySet = opaque {};
 pub const Queue = @import("queue.zig").Queue;
@@ -38,7 +39,39 @@ pub const Surface = @import("surface.zig").Surface;
 pub const Texture = opaque {};
 pub const TextureView = opaque {};
 
-pub const Error = Instance.Error || Surface.Error;
+pub const Error = blk: {
+    var err = error{};
+    inline for (.{
+        BindGroup,
+        BindGroupLayout,
+        Buffer,
+        CommandBuffer,
+        CommandEncoder,
+        ComputePassEncoder,
+        ComputePipeline,
+        Device,
+        Instance,
+        PhysicalDevice,
+        PipelineLayout,
+        QuerySet,
+        Queue,
+        RenderBundle,
+        RenderBundleEncoder,
+        RenderPassEncoder,
+        RenderPipeline,
+        Sampler,
+        ShaderModule,
+        Surface,
+        Texture,
+        TextureView,
+    }) |T| {
+        if (@hasDecl(T, "Error")) {
+            err = err || T.Error;
+        }
+    }
+
+    break :blk err;
+};
 
 pub const BackendType = enum(u32) {
     undefined,

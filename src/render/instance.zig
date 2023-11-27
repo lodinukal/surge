@@ -10,15 +10,15 @@ pub const Instance = opaque {
         debug: bool = @import("builtin").mode == .Debug,
     };
 
-    pub fn createSurface(self: *Instance, desc: *const gpu.Surface.Descriptor) gpu.Surface.Error!*gpu.Surface {
+    pub inline fn createSurface(self: *Instance, desc: *const gpu.Surface.Descriptor) gpu.Surface.Error!*gpu.Surface {
         return impl.instanceCreateSurface(self, desc);
     }
 
-    pub fn requestAdapter(self: *Instance, desc: *const gpu.Adapter.Options) gpu.Adapter.Error!*gpu.Adapter {
-        return impl.instanceRequestAdapter(self, desc);
+    pub inline fn requestPhysicalDevice(self: *Instance, desc: *const gpu.PhysicalDevice.Options) gpu.PhysicalDevice.Error!*gpu.PhysicalDevice {
+        return impl.instanceRequestPhysicalDevice(self, desc);
     }
 
-    pub fn deinit(self: *Instance) void {
-        impl.destroyInstance(self);
+    pub inline fn destroy(self: *Instance) void {
+        impl.instanceDestroy(self);
     }
 };
