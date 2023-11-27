@@ -6,6 +6,8 @@ pub const Procs = struct {
     pub var loaded_procs: ?*const Procs = null;
 
     // Adapter
+    adapterCreateDevice: *const fn (adapter: *gpu.Adapter, desc: *const gpu.Device.Descriptor) gpu.Device.Error!*gpu.Device,
+    adapterGetProperties: *const fn (adapter: *gpu.Adapter, out_props: *gpu.Adapter.Properties) bool,
     destroyAdapter: *const fn (adapter: *gpu.Adapter) void,
     // BindGroup
     // BindGroupLayout
@@ -15,8 +17,9 @@ pub const Procs = struct {
     // ComputePassEncoder
     // ComputePipeline
     // Device
+    destroyDevice: *const fn (device: *gpu.Device) void,
     // Instance
-    createInstance: *const fn (allocator: std.mem.Allocator) gpu.Instance.Error!*gpu.Instance,
+    createInstance: *const fn (allocator: std.mem.Allocator, desc: *const gpu.Instance.Descriptor) gpu.Instance.Error!*gpu.Instance,
     instanceCreateSurface: *const fn (instance: *gpu.Instance, desc: *const gpu.Surface.Descriptor) gpu.Surface.Error!*gpu.Surface,
     instanceRequestAdapter: *const fn (instance: *gpu.Instance, options: *const gpu.Adapter.Options) gpu.Adapter.Error!*gpu.Adapter,
     destroyInstance: *const fn (instance: *gpu.Instance) void,
@@ -64,13 +67,29 @@ pub fn closeBackend() void {
 }
 
 // Adapter
+pub inline fn adapterCreateDevice(adapter: *gpu.Adapter, desc: *const gpu.Device.Descriptor) gpu.Device.Error!*gpu.Device {
+    return Procs.loaded_procs.?.adapterCreateDevice(adapter, desc);
+}
+
+pub inline fn adapterGetProperties(adapter: *gpu.Adapter, out_props: *gpu.Adapter.Properties) bool {
+    return Procs.loaded_procs.?.adapterGetProperties(adapter, out_props);
+}
+
 pub inline fn destroyAdapter(adapter: *gpu.Adapter) void {
     return Procs.loaded_procs.?.destroyAdapter(adapter);
 }
 
+// Device
+pub inline fn destroyDevice(device: *gpu.Device) void {
+    return Procs.loaded_procs.?.destroyDevice(device);
+}
+
 // Instance
-pub inline fn createInstance(allocator: std.mem.Allocator) gpu.Instance.Error!*gpu.Instance {
-    return Procs.loaded_procs.?.createInstance(allocator);
+pub inline fn createInstance(
+    allocator: std.mem.Allocator,
+    desc: *const gpu.Instance.Descriptor,
+) gpu.Instance.Error!*gpu.Instance {
+    return Procs.loaded_procs.?.createInstance(allocator, desc);
 }
 
 pub inline fn instanceCreateSurface(

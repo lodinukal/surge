@@ -6,6 +6,10 @@ pub const Instance = opaque {
         InstanceFailedToCreate,
     };
 
+    pub const Descriptor = struct {
+        debug: bool = @import("builtin").mode == .Debug,
+    };
+
     pub fn createSurface(self: *Instance, desc: *const gpu.Surface.Descriptor) gpu.Surface.Error!*gpu.Surface {
         return impl.instanceCreateSurface(self, desc);
     }

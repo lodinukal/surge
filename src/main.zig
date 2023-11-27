@@ -125,7 +125,7 @@ pub fn main() !void {
     try context.spawnWindowThread();
 
     if (gpu.loadBackend(.d3d11) == false) return;
-    const instance = try gpu.createInstance(alloc);
+    const instance = try gpu.createInstance(alloc, &.{});
     defer instance.deinit();
 
     const surface = try instance.createSurface(&.{
@@ -138,6 +138,15 @@ pub fn main() !void {
         .power_preference = .high_performance,
     });
     defer adapter.deinit();
+
+    const device = try adapter.createDevice(&.{ .label = "device" });
+    defer device.deinit();
+
+    var props: gpu.Adapter.Properties = undefined;
+    if (adapter.getProperties(&props)) {
+        std.debug.print("adapter: {s}\n", .{props.name});
+        std.debug.print("vendor: {}\n", .{props.vendor});
+    }
 
     // std.debug.print("mem: {}\n", .{arena.queryCapacity()});
 
