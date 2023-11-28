@@ -4,7 +4,10 @@ const gpu = @import("gpu.zig");
 const impl = gpu.impl;
 
 pub const Buffer = opaque {
-    pub const Error = error{};
+    pub const Error = error{
+        BufferFailedToCreate,
+        BufferSizeTooLarge,
+    };
 
     pub const BindingType = enum(u32) {
         undefined = 0x00000000,
@@ -56,7 +59,13 @@ pub const Buffer = opaque {
         pub const none = UsageFlags{};
 
         pub fn eql(a: UsageFlags, b: UsageFlags) bool {
-            return @as(u10, @truncate(@as(u32, @bitCast(a)))) == @as(u10, @truncate(@as(u32, @bitCast(b))));
+            return @as(u11, @truncate(@as(u32, @bitCast(a)))) == @as(u11, @truncate(@as(u32, @bitCast(b))));
+        }
+
+        pub fn only(whole: UsageFlags, subset: UsageFlags) bool {
+            const subset_bits = @as(u11, @truncate(@as(u32, @bitCast(subset))));
+            const whole_bits = @as(u11, @truncate(@as(u32, @bitCast(whole))));
+            return (subset_bits & whole_bits) == subset_bits;
         }
     };
 

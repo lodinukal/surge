@@ -72,23 +72,83 @@ pub fn deviceCreateBuffer(
 pub const D3D11Buffer = struct {
     device: *D3D11Device,
 
-    buffer: ?*d3d11.ID3D11Resource = null,
-    staging_buffer: ?*D3D11Buffer = null,
+    size: u64,
+    allocated_size: u64 = 0,
+    usage: gpu.Buffer.UsageFlags,
+    state: gpu.Buffer.MapState = .unmapped,
+
+    buffer: ?*d3d11.ID3D11Buffer = null,
+    constant_buffer: ?*d3d11.ID3D11Buffer = null,
+    constant_buffer_updated: bool = true,
+
+    mapped: ?[]u8 = null,
 
     pub fn init(device: *D3D11Device, desc: *const gpu.Buffer.Descriptor) gpu.Buffer.Error!*D3D11Buffer {
-        _ = desc;
-
         const self = allocator.create(D3D11Buffer) catch return gpu.Buffer.Error.BufferFailedToCreate;
         errdefer self.deinit();
         self.* = .{
             .device = device,
+            .size = desc.size,
+            .usage = desc.usage,
         };
+
+        const size = @max(self.size, if (self.usage.indirect) 12 else 4);
+        const alignment = getBufferSizeAlignment(self.usage);
+        if (size > std.math.maxInt(u32) - alignment) {
+            return gpu.Buffer.Error.BufferSizeTooLarge;
+        }
+
+        self.allocated_size = gpu.util.alignUp(size, alignment);
+
+        const needs_constant_buffer = self.usage.uniform;
+        const needs_only_constant_buffer = needs_constant_buffer and self.usage.only(.{
+            .uniform = true,
+            .copy_dst = true,
+            .copy_src = true,
+        });
+
+        if (!needs_only_constant_buffer) {
+            var non_uniform_usage = self.usage;
+            non_uniform_usage.uniform = false;
+            var buffer_desc: d3d11.D3D11_BUFFER_DESC = .{
+                .ByteWidth = @intCast(self.allocated_size),
+                .Usage = getBufferUsage(non_uniform_usage),
+                .BindFlags = getBufferBindFlags(non_uniform_usage),
+                .CPUAccessFlags = getCpuAccessFlags(non_uniform_usage),
+                .MiscFlags = getBufferMiscFlags(non_uniform_usage),
+                .StructureByteStride = 0,
+            };
+            const hr = device.device.?.ID3D11Device_CreateBuffer(
+                &buffer_desc,
+                null,
+                &self.buffer,
+            );
+            if (!d3dcommon.checkHResult(hr)) return gpu.Buffer.Error.BufferFailedToCreate;
+        }
+
+        if (needs_constant_buffer) {
+            var constant_buffer_desc: d3d11.D3D11_BUFFER_DESC = .{
+                .ByteWidth = @intCast(self.allocated_size),
+                .Usage = .DEFAULT,
+                .BindFlags = @intFromEnum(d3d11.D3D11_BIND_CONSTANT_BUFFER),
+                .CPUAccessFlags = 0,
+                .MiscFlags = 0,
+                .StructureByteStride = 0,
+            };
+            const hr = device.device.?.ID3D11Device_CreateBuffer(
+                &constant_buffer_desc,
+                null,
+                &self.constant_buffer,
+            );
+            if (!d3dcommon.checkHResult(hr)) return gpu.Buffer.Error.BufferFailedToCreate;
+        }
+
         return self;
     }
 
     pub fn deinit(self: *D3D11Buffer) void {
-        d3dcommon.releaseIUnknown(d3d11.ID3D11Resource, &self.buffer);
-        allocator.destroy(self.staging_buffer);
+        d3dcommon.releaseIUnknown(d3d11.ID3D11Buffer, &self.buffer);
+        d3dcommon.releaseIUnknown(d3d11.ID3D11Buffer, &self.constant_buffer);
         allocator.destroy(self);
     }
 
