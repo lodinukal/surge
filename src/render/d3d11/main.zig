@@ -15,10 +15,17 @@ const d3dcommon = @import("../d3d/common.zig");
 const common = @import("../../core/common.zig");
 
 // Loading
-pub const procs: gpu.impl.Procs = .{
+pub const procs: gpu.procs.Procs = .{
     // BindGroup
     // BindGroupLayout
     // Buffer
+    .bufferGetSize = bufferGetSize,
+    .bufferGetUsage = bufferGetUsage,
+    .bufferMap = bufferMap,
+    .bufferUnmap = bufferUnmap,
+    .bufferGetMappedRange = bufferGetMappedRange,
+    .bufferGetMappedRangeConst = bufferGetMappedRangeConst,
+    .bufferDestroy = bufferDestroy,
     // CommandBuffer
     .commandBufferDestroy = commandBufferDestroy,
     // CommandEncoder
@@ -27,6 +34,7 @@ pub const procs: gpu.impl.Procs = .{
     // ComputePassEncoder
     // ComputePipeline
     // Device
+    .deviceCreateBuffer = deviceCreateBuffer,
     .deviceGetQueue = deviceGetQueue,
     .deviceDestroy = deviceDestroy,
     // Instance
@@ -54,36 +62,76 @@ pub const procs: gpu.impl.Procs = .{
     // TextureView
 };
 
-export fn getProcs() *const gpu.impl.Procs {
+export fn getProcs() *const gpu.procs.Procs {
     return &procs;
 }
 
 // BindGroup
 // BindGroupLayout
 // Buffer
-pub fn deviceCreateBuffer(
-    device: *gpu.Device,
-    desc: *const gpu.Buffer.Descriptor,
-) gpu.Buffer.Error!*gpu.Buffer {
-    std.debug.print("creating buffer...\n", .{});
-    return @ptrCast(try D3D11Buffer.init(@ptrCast(@alignCast(device)), desc));
+pub fn bufferGetSize(buffer: *gpu.Buffer) usize {
+    return D3D11Buffer.getSize(@ptrCast(@alignCast(buffer)));
+}
+
+pub fn bufferGetUsage(buffer: *gpu.Buffer) gpu.Buffer.UsageFlags {
+    return D3D11Buffer.getUsage(@ptrCast(@alignCast(buffer)));
+}
+
+pub fn bufferMap(buffer: *gpu.Buffer) gpu.Buffer.Error!void {
+    std.debug.print("mapping buffer...\n", .{});
+    return D3D11Buffer.map(@ptrCast(@alignCast(buffer))) catch return gpu.Buffer.Error.BufferMapFailed;
+}
+
+pub fn bufferUnmap(buffer: *gpu.Buffer) void {
+    std.debug.print("unmapping buffer...\n", .{});
+    D3D11Buffer.unmap(@ptrCast(@alignCast(buffer)));
+}
+
+pub fn bufferGetMappedRange(buffer: *gpu.Buffer, offset: usize, size: ?usize) gpu.Buffer.Error![]u8 {
+    std.debug.print("getting mapped range...\n", .{});
+    return D3D11Buffer.getMappedRange(@ptrCast(@alignCast(buffer)), offset, size, true);
+}
+
+pub fn bufferGetMappedRangeConst(buffer: *gpu.Buffer, offset: usize, size: ?usize) gpu.Buffer.Error![]const u8 {
+    std.debug.print("getting mapped range const...\n", .{});
+    return D3D11Buffer.getMappedRange(@ptrCast(@alignCast(buffer)), offset, size, false);
+}
+
+pub fn bufferDestroy(buffer: *gpu.Buffer) void {
+    std.debug.print("destroying buffer...\n", .{});
+    D3D11Buffer.deinit(@alignCast(@ptrCast(buffer)));
 }
 
 pub const D3D11Buffer = struct {
     device: *D3D11Device,
 
     size: u64,
-    allocated_size: u64 = 0,
     usage: gpu.Buffer.UsageFlags,
     state: gpu.Buffer.MapState = .unmapped,
 
+    staging_buffer: ?*D3D11Buffer = null, // used for initial mapping
     buffer: ?*d3d11.ID3D11Buffer = null,
     constant_buffer: ?*d3d11.ID3D11Buffer = null,
-    constant_buffer_updated: bool = true,
 
     mapped: ?[]u8 = null,
+    mapped_at_creation: bool = false,
 
     pub fn init(device: *D3D11Device, desc: *const gpu.Buffer.Descriptor) gpu.Buffer.Error!*D3D11Buffer {
+        const needs_constant_buffer = desc.usage.uniform;
+        const only_constant_buffer = needs_constant_buffer and desc.usage.only(.{
+            .uniform = true,
+            .copy_src = true,
+            .copy_dst = true,
+        });
+
+        const required_size = @max(desc.size, @as(u64, if (desc.usage.indirect) 12 else 4));
+        const alignment = D3D11Device.getBufferSizeAlignment(desc.usage);
+        if (required_size > std.math.maxInt(u32) - alignment) {
+            return gpu.Buffer.Error.BufferSizeTooLarge;
+        }
+
+        const buf_size = gpu.util.alignUp(required_size, alignment);
+
         const self = allocator.create(D3D11Buffer) catch return gpu.Buffer.Error.BufferFailedToCreate;
         errdefer self.deinit();
         self.* = .{
@@ -92,33 +140,19 @@ pub const D3D11Buffer = struct {
             .usage = desc.usage,
         };
 
-        const size = @max(self.size, if (self.usage.indirect) 12 else 4);
-        const alignment = getBufferSizeAlignment(self.usage);
-        if (size > std.math.maxInt(u32) - alignment) {
-            return gpu.Buffer.Error.BufferSizeTooLarge;
-        }
-
-        self.allocated_size = gpu.util.alignUp(size, alignment);
-
-        const needs_constant_buffer = self.usage.uniform;
-        const needs_only_constant_buffer = needs_constant_buffer and self.usage.only(.{
-            .uniform = true,
-            .copy_dst = true,
-            .copy_src = true,
-        });
-
-        if (!needs_only_constant_buffer) {
-            var non_uniform_usage = self.usage;
+        if (!only_constant_buffer) {
+            var non_uniform_usage = desc.usage;
             non_uniform_usage.uniform = false;
+
             var buffer_desc: d3d11.D3D11_BUFFER_DESC = .{
-                .ByteWidth = @intCast(self.allocated_size),
-                .Usage = getBufferUsage(non_uniform_usage),
-                .BindFlags = getBufferBindFlags(non_uniform_usage),
-                .CPUAccessFlags = getCpuAccessFlags(non_uniform_usage),
-                .MiscFlags = getBufferMiscFlags(non_uniform_usage),
+                .ByteWidth = @intCast(buf_size),
+                .Usage = D3D11Device.getBufferUsage(non_uniform_usage),
+                .BindFlags = @intCast(@intFromEnum(D3D11Device.getBufferBindFlags(non_uniform_usage))),
+                .CPUAccessFlags = @intCast(@intFromEnum(D3D11Device.getCpuAccessFlags(non_uniform_usage))),
+                .MiscFlags = @intCast(@intFromEnum(D3D11Device.getBufferMiscFlags(non_uniform_usage))),
                 .StructureByteStride = 0,
             };
-            const hr = device.device.?.ID3D11Device_CreateBuffer(
+            const hr = self.device.device.?.ID3D11Device_CreateBuffer(
                 &buffer_desc,
                 null,
                 &self.buffer,
@@ -127,66 +161,105 @@ pub const D3D11Buffer = struct {
         }
 
         if (needs_constant_buffer) {
-            var constant_buffer_desc: d3d11.D3D11_BUFFER_DESC = .{
-                .ByteWidth = @intCast(self.allocated_size),
+            var buffer_desc: d3d11.D3D11_BUFFER_DESC = .{
+                .ByteWidth = @intCast(buf_size),
                 .Usage = .DEFAULT,
-                .BindFlags = @intFromEnum(d3d11.D3D11_BIND_CONSTANT_BUFFER),
+                .BindFlags = @intCast(@intFromEnum(d3d11.D3D11_BIND_CONSTANT_BUFFER)),
                 .CPUAccessFlags = 0,
                 .MiscFlags = 0,
                 .StructureByteStride = 0,
             };
-            const hr = device.device.?.ID3D11Device_CreateBuffer(
-                &constant_buffer_desc,
+            const hr = self.device.device.?.ID3D11Device_CreateBuffer(
+                &buffer_desc,
                 null,
                 &self.constant_buffer,
             );
             if (!d3dcommon.checkHResult(hr)) return gpu.Buffer.Error.BufferFailedToCreate;
         }
 
+        if (desc.mapped_at_creation) {
+            self.mapped_at_creation = true;
+            if (D3D11Device.isUsageFlagsMappable(self.usage)) {
+                self.map() catch return gpu.Buffer.Error.BufferMapAtCreationFailed;
+            } else {
+                const staging_desc: gpu.Buffer.Descriptor = .{
+                    .size = self.size,
+                    .usage = .{
+                        .copy_src = true,
+                        .map_write = true,
+                    },
+                    .mapped_at_creation = true,
+                };
+                self.staging_buffer = try D3D11Buffer.init(self.device, &staging_desc);
+            }
+        }
+
         return self;
     }
 
     pub fn deinit(self: *D3D11Buffer) void {
+        if (self.staging_buffer) |sb| sb.deinit();
         d3dcommon.releaseIUnknown(d3d11.ID3D11Buffer, &self.buffer);
         d3dcommon.releaseIUnknown(d3d11.ID3D11Buffer, &self.constant_buffer);
         allocator.destroy(self);
     }
 
-    pub inline fn isUsageFlagsMappable(usage: gpu.Buffer.UsageFlags) bool {
-        return usage.uniform or usage.copy_dst or usage.copy_src;
+    pub fn getSize(self: *D3D11Buffer) u64 {
+        return self.size;
     }
 
-    pub inline fn getBufferUsage(usage: gpu.Buffer.UsageFlags) d3d11.D3D11_USAGE {
-        return if (isUsageFlagsMappable(usage)) .STAGING else .DEFAULT;
+    pub fn getUsage(self: *D3D11Buffer) gpu.Buffer.UsageFlags {
+        return self.usage;
     }
 
-    pub inline fn getBufferBindFlags(usage: gpu.Buffer.UsageFlags) d3d11.D3D11_BIND_FLAG {
-        return d3d11.D3D11_BIND_FLAG.initFlags(.{
-            .VERTEX_BUFFER = if (usage.vertex) 1 else 0,
-            .INDEX_BUFFER = if (usage.index) 1 else 0,
-            .CONSTANT_BUFFER = if (usage.uniform) 1 else 0,
-            .UNORDERED_ACCESS = if (usage.storage) 1 else 0,
-            .SHADER_RESOURCE = if (usage.readonly_storage) 1 else 0,
-        });
+    pub fn map(self: *D3D11Buffer) gpu.Buffer.Error!void {
+        if (self.state == .mapped) return;
+        if (!D3D11Device.isUsageFlagsMappable(self.usage)) return gpu.Buffer.Error.BufferNotMappable;
+
+        var mapped_subresource: d3d11.D3D11_MAPPED_SUBRESOURCE = undefined;
+        const hr_map = self.device.immediate_context.?.ID3D11DeviceContext_Map(
+            @ptrCast(self.buffer),
+            0,
+            d3d11.D3D11_MAP_READ_WRITE,
+            0,
+            &mapped_subresource,
+        );
+        if (!d3dcommon.checkHResult(hr_map)) return gpu.Buffer.Error.BufferMapFailed;
+
+        self.mapped = if (mapped_subresource.pData) |data|
+            @ptrCast(@as([*]u8, @ptrCast(data))[0..self.size])
+        else
+            null;
+        self.state = .mapped;
     }
 
-    pub inline fn getCpuAccessFlags(usage: gpu.Buffer.UsageFlags) d3d11.D3D11_CPU_ACCESS_FLAG {
-        const is_mappable = isUsageFlagsMappable(usage);
-        return d3d11.D3D11_CPU_ACCESS_FLAG.initFlags(.{
-            .WRITE = if (is_mappable) 1 else 0,
-            .READ = if (is_mappable) 1 else 0,
-        });
+    pub fn unmap(self: *D3D11Buffer) void {
+        if (self.state != .mapped) return;
+
+        self.device.immediate_context.?.ID3D11DeviceContext_Unmap(
+            @ptrCast(self.buffer),
+            0,
+        );
+
+        self.mapped = null;
+        self.state = .unmapped;
     }
 
-    pub inline fn getBufferMiscFlags(usage: gpu.Buffer.UsageFlags) d3d11.D3D11_RESOURCE_MISC_FLAG {
-        return d3d11.D3D11_RESOURCE_MISC_FLAG.initFlags(.{
-            .BUFFER_ALLOW_RAW_VIEWS = if (usage.storage) 1 else 0,
-            .DRAWINDIRECT_ARGS = if (usage.indirect) 1 else 0,
-        });
-    }
+    pub fn getMappedRange(self: *D3D11Buffer, offset: usize, size: ?usize, writing: bool) gpu.Buffer.Error![]u8 {
+        const use_size = size orelse (self.size - offset);
+        if (!self.mapped_at_creation) {
+            switch (self.state) {
+                .mapped => {
+                    if (!(!writing or self.usage.map_write)) return gpu.Buffer.Error.BufferNotMappable;
+                },
+                else => {},
+            }
+        }
 
-    pub inline fn getBufferSizeAlignment(usage: gpu.Buffer.UsageFlags) u64 {
-        return if (usage.uniform) 256 else if (usage.storage) 4 else 1;
+        if (self.staging_buffer) |sb| {
+            return sb.getMappedRange(offset, use_size, writing);
+        }
+        if (self.mapped) |m| return m[offset .. offset + use_size] else return gpu.Buffer.Error.BufferNotMapped;
     }
 };
 
@@ -278,6 +351,14 @@ pub const D3D11CommandEncoder = struct {
 // ComputePassEncoder
 // ComputePipeline
 // Device
+pub fn deviceCreateBuffer(
+    device: *gpu.Device,
+    desc: *const gpu.Buffer.Descriptor,
+) gpu.Buffer.Error!*gpu.Buffer {
+    std.debug.print("creating buffer...\n", .{});
+    return @ptrCast(try D3D11Buffer.init(@ptrCast(@alignCast(device)), desc));
+}
+
 pub fn deviceGetQueue(device: *gpu.Device) *gpu.Queue {
     std.debug.print("getting queue...\n", .{});
     return D3D11Device.getQueue(@ptrCast(@alignCast(device)));
@@ -306,6 +387,7 @@ pub const D3D11Device = struct {
     queue: *D3D11Queue,
 
     device: ?*d3d11.ID3D11Device = null, // PhysicalDevice
+    immediate_context: ?*d3d11.ID3D11DeviceContext = null,
     debug_layer: ?*d3d11.ID3D11Debug = null,
     lost_cb: ?gpu.Device.LostCallback = null,
 
@@ -334,7 +416,7 @@ pub const D3D11Device = struct {
             d3d11.D3D11_SDK_VERSION,
             @ptrCast(&self.device),
             null,
-            null,
+            @ptrCast(&self.immediate_context),
         );
         errdefer d3dcommon.releaseIUnknown(d3d11.ID3D11Device, &self.device);
         if (!d3dcommon.checkHResult(hr)) return gpu.Device.Error.DeviceFailedToCreate;
@@ -385,6 +467,44 @@ pub const D3D11Device = struct {
 
     pub fn getQueue(self: *D3D11Device) *gpu.Queue {
         return @ptrCast(@alignCast(self.queue));
+    }
+
+    // internal
+    pub inline fn isUsageFlagsMappable(usage: gpu.Buffer.UsageFlags) bool {
+        return usage.uniform or usage.copy_dst or usage.copy_src;
+    }
+
+    pub inline fn getBufferUsage(usage: gpu.Buffer.UsageFlags) d3d11.D3D11_USAGE {
+        return if (isUsageFlagsMappable(usage)) .STAGING else .DEFAULT;
+    }
+
+    pub inline fn getBufferBindFlags(usage: gpu.Buffer.UsageFlags) d3d11.D3D11_BIND_FLAG {
+        return d3d11.D3D11_BIND_FLAG.initFlags(.{
+            .VERTEX_BUFFER = if (usage.vertex) 1 else 0,
+            .INDEX_BUFFER = if (usage.index) 1 else 0,
+            .CONSTANT_BUFFER = if (usage.uniform) 1 else 0,
+            .UNORDERED_ACCESS = if (usage.storage) 1 else 0,
+            .SHADER_RESOURCE = if (usage.readonly_storage) 1 else 0,
+        });
+    }
+
+    pub inline fn getCpuAccessFlags(usage: gpu.Buffer.UsageFlags) d3d11.D3D11_CPU_ACCESS_FLAG {
+        const is_mappable = isUsageFlagsMappable(usage);
+        return d3d11.D3D11_CPU_ACCESS_FLAG.initFlags(.{
+            .WRITE = if (is_mappable) 1 else 0,
+            .READ = if (is_mappable) 1 else 0,
+        });
+    }
+
+    pub inline fn getBufferMiscFlags(usage: gpu.Buffer.UsageFlags) d3d11.D3D11_RESOURCE_MISC_FLAG {
+        return d3d11.D3D11_RESOURCE_MISC_FLAG.initFlags(.{
+            .BUFFER_ALLOW_RAW_VIEWS = if (usage.storage) 1 else 0,
+            .DRAWINDIRECT_ARGS = if (usage.indirect) 1 else 0,
+        });
+    }
+
+    pub inline fn getBufferSizeAlignment(usage: gpu.Buffer.UsageFlags) u64 {
+        return if (usage.uniform) 256 else if (usage.storage) 4 else 1;
     }
 };
 
@@ -541,12 +661,11 @@ pub const D3D11Queue = struct {
 
     // Assigned to a pointer, so it doesn't need to allocate
     pub fn init(device: *D3D11Device) gpu.Queue.Error!D3D11Queue {
-        var self = D3D11Queue{
+        const self = D3D11Queue{
             .device = device,
-            .context = null,
+            .context = device.immediate_context,
             .fence = D3D11Fence.init(device) catch return gpu.Queue.Error.QueueFailedToCreate,
         };
-        device.device.?.ID3D11Device_GetImmediateContext(@ptrCast(&self.context));
         return self;
     }
 

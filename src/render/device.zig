@@ -25,6 +25,7 @@ pub const Device = opaque {
         return impl.deviceGetQueue(self);
     }
 
+    /// for d3d11, uniform, copy_dst, copy_src, cannot be put on a buffer with vertex or index usages
     pub inline fn createBuffer(self: *Device, descriptor: *const gpu.Buffer.Descriptor) !*gpu.Buffer {
         return try impl.deviceCreateBuffer(self, descriptor);
     }

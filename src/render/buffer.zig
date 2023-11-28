@@ -7,6 +7,10 @@ pub const Buffer = opaque {
     pub const Error = error{
         BufferFailedToCreate,
         BufferSizeTooLarge,
+        BufferMapAtCreationFailed,
+        BufferNotMappable,
+        BufferMapFailed,
+        BufferNotMapped,
     };
 
     pub const BindingType = enum(u32) {
@@ -69,21 +73,44 @@ pub const Buffer = opaque {
         }
     };
 
-    pub const BindingLayout = extern struct {
+    pub const BindingLayout = struct {
         type: BindingType = .undefined,
         has_dynamic_offset: bool = false,
         min_binding_size: u64 = 0,
     };
 
-    pub const Descriptor = extern struct {
+    pub const Descriptor = struct {
         label: ?[]const u8 = null,
         usage: UsageFlags,
         size: u64,
         mapped_at_creation: bool = false,
     };
 
+    pub inline fn getSize(self: *Buffer) u64 {
+        return impl.bufferGetSize(self);
+    }
+
+    pub inline fn getUsage(self: *Buffer) UsageFlags {
+        return impl.bufferGetUsage(self);
+    }
+
+    pub inline fn map(self: *Buffer) Error!void {
+        return impl.bufferMap(self);
+    }
+
+    pub inline fn unmap(self: *Buffer) void {
+        impl.bufferUnmap(self);
+    }
+
+    pub inline fn getMappedRange(self: *Buffer, offset: usize, size: ?usize) Error![]u8 {
+        return impl.bufferGetMappedRange(self, offset, size);
+    }
+
+    pub inline fn getMappedRangeConst(self: *Buffer, offset: usize, size: ?usize) Error![]const u8 {
+        return impl.bufferGetMappedRangeConst(self, offset, size);
+    }
+
     pub inline fn destroy(self: *Buffer) void {
-        _ = self;
-        impl.bufferDestroy();
+        impl.bufferDestroy(self);
     }
 };

@@ -11,7 +11,7 @@ Based around the wrbgpu api but cutting out a lot of the C compatibility. Curren
 - [X] PhysicalDevice
 - [ ] BindGroup
 - [ ] BindGroupLayout
-- [ ] Buffer
+- [X] Buffer
 - [ ] CommandBuffer
 - [ ] CommandEncoder
 - [ ] ComputePassEncoder

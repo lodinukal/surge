@@ -1,9 +1,18 @@
 const std = @import("std");
 pub const impl = @import("impl.zig");
+// pub const impl = @import("d3d11/main.zig");
+pub const procs = @import("procs.zig");
 pub const util = @import("util.zig");
 
-pub const loadBackend = impl.loadBackend;
-pub const closeBackend = impl.closeBackend;
+pub const loadBackend = if (@hasDecl(impl, "loadBackend")) impl.loadBackend else struct {
+    pub fn load(backend: BackendType) bool {
+        _ = backend;
+        return true;
+    }
+}.load;
+pub const closeBackend = if (@hasDecl(impl, "closeBackend")) impl.closeBackend else struct {
+    pub fn close() void {}
+}.close;
 
 pub const createInstance = impl.createInstance;
 

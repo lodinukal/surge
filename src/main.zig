@@ -151,6 +151,21 @@ pub fn main() !void {
     const queue = device.getQueue();
     _ = queue;
 
+    const buffer = try device.createBuffer(&.{
+        .size = 1024,
+        .usage = .{
+            .uniform = true,
+            .copy_dst = true,
+        },
+        .mapped_at_creation = true,
+    });
+    defer buffer.destroy();
+
+    const range = try buffer.getMappedRange(0, null);
+    range[0] = 100;
+    range[1] = 200;
+    buffer.unmap();
+
     // std.debug.print("mem: {}\n", .{arena.queryCapacity()});
 
     var start = std.time.timestamp();
