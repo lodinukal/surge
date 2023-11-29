@@ -154,7 +154,7 @@ pub fn main() !void {
     const buffer = try device.createBuffer(&.{
         .size = 1024,
         .usage = .{
-            .uniform = true,
+            .vertex = true,
             .copy_dst = true,
         },
         .mapped_at_creation = true,

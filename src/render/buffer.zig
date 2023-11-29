@@ -8,7 +8,9 @@ pub const Buffer = opaque {
         BufferFailedToCreate,
         BufferSizeTooLarge,
         BufferMapAtCreationFailed,
+        BufferAlreadyMapped,
         BufferNotMappable,
+        BufferInvalidMapAccess,
         BufferMapFailed,
         BufferNotMapped,
     };
@@ -49,9 +51,8 @@ pub const Buffer = opaque {
         storage: bool = false,
         indirect: bool = false,
         query_resolve: bool = false,
-        readonly_storage: bool = false,
 
-        _padding: u21 = 0,
+        _padding: u22 = 0,
 
         comptime {
             std.debug.assert(
