@@ -769,5 +769,17 @@ pub const D3D11Surface = struct {
         allocator.destroy(self);
     }
 };
+
 // Texture
+pub const D3D11Texture = struct {};
+
 // TextureView
+pub const D3D11TextureView = struct {
+    texture: *D3D11Texture,
+    format: gpu.Texture.Format,
+    dimension: gpu.TextureView.Dimension,
+
+    pub const SubresourceRange = struct {
+        // aspect
+    };
+};

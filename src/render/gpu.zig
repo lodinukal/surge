@@ -45,8 +45,8 @@ pub const RenderPipeline = opaque {};
 pub const Sampler = opaque {};
 pub const ShaderModule = opaque {};
 pub const Surface = @import("surface.zig").Surface;
-pub const Texture = opaque {};
-pub const TextureView = opaque {};
+pub const Texture = @import("texture.zig").Texture;
+pub const TextureView = @import("texture_view.zig").TextureView;
 
 pub const Error = blk: {
     var err = error{};
@@ -106,4 +106,10 @@ pub const BackendType = enum(u32) {
             .opengles => "OpenGLES",
         };
     }
+};
+
+pub const Extent3D = struct {
+    width: u32,
+    height: u32,
+    depth_or_array_layers: u32,
 };
