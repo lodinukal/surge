@@ -39,3 +39,32 @@ pub fn xorEnum(comptime E: type, other: anytype) E {
     }
     return @enumFromInt(result);
 }
+
+pub fn ErrorEnum(comptime E: type) type {
+    const ti = @typeInfo(E);
+    const error_set = ti.ErrorSet.?;
+    comptime var enum_fields: [error_set.len]std.builtin.Type.EnumField = undefined;
+    inline for (error_set, 0..) |e, index| {
+        enum_fields[index] = .{
+            .name = e.name,
+            .value = index,
+        };
+    }
+
+    return @Type(std.builtin.Type{
+        .Enum = .{
+            .tag_type = u16,
+            .fields = &enum_fields,
+            .decls = &.{},
+            .is_exhaustive = true,
+        },
+    });
+}
+
+pub fn errorEnumFromError(comptime E: type, err: E) ErrorEnum(E) {
+    return @field(ErrorEnum(E), @errorName(err));
+}
+
+pub fn errorFromErrorEnum(comptime E: type, err: E) E {
+    return @field(E, @tagName(err));
+}

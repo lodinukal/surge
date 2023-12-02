@@ -12,3 +12,12 @@ vertex // vertex buffer
 uniform // constant buffer
 storage // uav
 indirect // drawindrect_args
+
+// Texture usages
+
+copy_src // can copy from here
+copy_dst // can copy to here
+texture_binding // srv
+storage_binding // uav
+render_attachment // rtv
+transient_attachment // only lives for the render pass

@@ -4,6 +4,10 @@ const gpu = @import("gpu.zig");
 const impl = gpu.impl;
 
 pub const Texture = opaque {
+    pub const Error = error{
+        TextureFailedToCreate,
+    };
+
     pub const Aspect = enum(u32) {
         all = 0x00000000,
         stencil_only = 0x00000001,
@@ -115,6 +119,37 @@ pub const Texture = opaque {
         astc12x12_unorm = 0x0000005d,
         astc12x12_unorm_srgb = 0x0000005e,
         r8_bg8_biplanar420_unorm = 0x0000005f,
+
+        pub const Kind = enum {
+            integer,
+            normalised,
+            float,
+            depth_stencil,
+        };
+
+        pub const Info = struct {
+            format: Format,
+            name: []const u8,
+            bytes_per_block: u8,
+            block_size: u8,
+            kind: Kind,
+            has_red: bool = false,
+            has_green: bool = false,
+            has_blue: bool = false,
+            has_alpha: bool = false,
+            has_depth: bool = false,
+            has_stencil: bool = false,
+            signed: bool = false,
+            rgb: bool = false,
+        };
+
+        const format_map = [_]Info{.{
+            .format = .undefined,
+            .name = "undefined",
+            .bytes_per_block = 0,
+            .block_size = 0,
+            .kind = .integer,
+        }};
     };
 
     pub const SampleType = enum(u32) {

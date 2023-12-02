@@ -1,4 +1,7 @@
 const std = @import("std");
+
+const commonutil = @import("../util.zig");
+
 pub const impl = @import("impl.zig");
 // pub const impl = @import("d3d11/main.zig");
 pub const procs = @import("procs.zig");
@@ -81,6 +84,8 @@ pub const Error = blk: {
 
     break :blk err;
 };
+
+pub const ErrorEnum = commonutil.ErrorEnum(Error);
 
 pub const BackendType = enum(u32) {
     undefined,

@@ -737,7 +737,41 @@ pub const D3D11Surface = struct {
 };
 
 // Texture
-pub const D3D11Texture = struct {};
+pub const D3D11Texture = struct {
+    pub const Kind = enum {
+        normal,
+        staging,
+        interim,
+    };
+
+    device: *D3D11Device,
+    desc: gpu.Texture.Descriptor,
+    kind: Kind = .normal,
+    resource: ?*d3d11.ID3D11Resource = null,
+
+    pub fn init(
+        device: *D3D11Device,
+        desc: *const gpu.Texture.Descriptor,
+    ) gpu.Texture.Error!*D3D11Texture {
+        const self = allocator.create(D3D11Surface) catch return gpu.Texture.Error.TextureFailedToCreate;
+        errdefer self.deinit();
+        self.* = .{
+            .device = device,
+            .desc = desc.*,
+        };
+
+        const usage = if (desc.usage.copy_src or desc.usage.copy_dst)
+            d3d11.D3D11_USAGE_DEFAULT
+        else
+            d3d11.D3D11_USAGE_STAGING;
+        _ = usage;
+        return self;
+    }
+
+    pub fn deinit(self: *D3D11Texture) void {
+        d3dcommon.releaseIUnknown(d3d11.ID3D11Resource, &self.resource);
+    }
+};
 
 // TextureView
 pub const D3D11TextureView = struct {
