@@ -4,15 +4,15 @@ Soon to be a simple framework for making games on the various platforms, with sh
   
 ## gpu
 
-Based around the wrbgpu api but cutting out a lot of the C compatibility. Currently only planned for d3d11, vulkan and maybe metal backends.
+Based around the wrbgpu api but cutting out a lot of the C compatibility. Currently only planned for d3d12 and maybe vk and metal backends.
 
-### D3D11
+### D3D12
 
 - [X] PhysicalDevice
 - [ ] BindGroup
 - [ ] BindGroupLayout
 - [X] Buffer
-- [ ] CommandBuffer
+- [X] CommandBuffer
 - [ ] CommandEncoder
 - [ ] ComputePassEncoder
 - [ ] ComputePipeline
@@ -20,13 +20,13 @@ Based around the wrbgpu api but cutting out a lot of the C compatibility. Curren
 - [X] Instance
 - [ ] PipelineLayout
 - [ ] QuerySet
-- [ ] Queue
+- [X] Queue
 - [ ] RenderBundle
 - [ ] RenderBundleEncoder
 - [ ] RenderPassEncoder
 - [ ] RenderPipeline
-- [ ] Sampler
+- [X] Sampler
 - [ ] ShaderModule
 - [X] Surface
-- [ ] Texture
-- [ ] TextureView
+- [X] Texture
+- [X] TextureView
