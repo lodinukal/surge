@@ -94,7 +94,8 @@ pub fn build(b: *std.Build) void {
             // t.c_std = .C11;
         }
 
-        buildD3d11(b, target, optimize);
+        // buildD3d11(b, target, optimize);
+        buildD3d12(b, target, optimize);
     }
 }
 
@@ -163,6 +164,21 @@ fn buildD3d11(
 ) void {
     const src = "src/render/d3d11/main.zig";
     const name = "render_d3d11";
+    const d3d11 = buildBackend(b, name, src, target, optimize);
+
+    const win32_dep = b.dependency("win32", .{});
+    const win32_module = win32_dep.module("zigwin32");
+    d3d11.addModule("win32", win32_module);
+    // b.linkSystemLibraryName("Imm32");
+}
+
+fn buildD3d12(
+    b: *std.Build,
+    target: std.zig.CrossTarget,
+    optimize: std.builtin.OptimizeMode,
+) void {
+    const src = "src/render/d3d12/main.zig";
+    const name = "render_d3d12";
     const d3d11 = buildBackend(b, name, src, target, optimize);
 
     const win32_dep = b.dependency("win32", .{});

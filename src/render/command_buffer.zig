@@ -4,6 +4,7 @@ const impl = gpu.impl;
 pub const CommandBuffer = opaque {
     pub const Error = error{
         CommandBufferFailedToCreate,
+        CommandBufferMapForUploadFailed,
     };
 
     pub const Descriptor = struct {

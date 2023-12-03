@@ -5,6 +5,60 @@ const math = @import("math.zig");
 
 const gpu = @import("render/gpu.zig");
 
+const RenderContext = struct {
+    instance: *gpu.Instance = undefined,
+    surface: *gpu.Surface = undefined,
+    physical_device: *gpu.PhysicalDevice = undefined,
+    device: *gpu.Device = undefined,
+
+    swapchain: *gpu.SwapChain = undefined,
+
+    pub fn load(self: *RenderContext, context: *Context) !void {
+        if (gpu.loadBackend(.d3d12) == false) return;
+        const instance = try gpu.createInstance(context.allocator, &.{});
+        errdefer instance.destroy();
+
+        const surface = try instance.createSurface(&.{
+            .native_handle = context.window.getNativeHandle().wnd,
+            .native_handle_size = 8,
+        });
+        errdefer surface.destroy();
+
+        const physicalDevice = try instance.requestPhysicalDevice(&.{
+            .power_preference = .high_performance,
+        });
+        errdefer physicalDevice.destroy();
+
+        const device = try physicalDevice.createDevice(&.{ .label = "device" });
+        errdefer device.destroy();
+
+        const swapchain = try device.createSwapChain(surface, &.{
+            .height = 600,
+            .width = 800,
+            .present_mode = .mailbox,
+            .format = .bgra8_unorm,
+            .usage = .{
+                .render_attachment = true,
+            },
+        });
+        errdefer swapchain.destroy();
+
+        self.instance = instance;
+        self.surface = surface;
+        self.physical_device = physicalDevice;
+        self.device = device;
+        self.swapchain = swapchain;
+    }
+
+    pub fn deinit(self: *RenderContext) void {
+        self.swapchain.destroy();
+        self.device.destroy();
+        self.physical_device.destroy();
+        self.surface.destroy();
+        self.instance.destroy();
+    }
+};
+
 const Context = struct {
     allocator: std.mem.Allocator,
     application: *app.Application,
@@ -15,6 +69,9 @@ const Context = struct {
 
     ready_condition: std.Thread.Condition = .{},
     ready_mutex: std.Thread.Mutex = .{},
+
+    render: RenderContext = .{},
+    resized: ?[2]u32 = null,
 
     pub fn init(allocator: std.mem.Allocator) !Context {
         var application = try app.Application.create(allocator);
@@ -31,8 +88,8 @@ const Context = struct {
             .application = application,
             .window = try application.createWindow(.{
                 .title = "helloo!",
-                .width = 800,
-                .height = 600,
+                .size = .{ 800, 600 },
+                .visible = true,
             }),
         };
     }
@@ -68,45 +125,48 @@ const Context = struct {
     fn windowLoop(self: *Context) !void {
         try self.window.build();
 
+        self.window.storeContext(Context, self);
+
         self.ready_mutex.lock();
         self.ready_condition.broadcast();
         self.ready_mutex.unlock();
 
+        try self.render.load(self);
+
         while (self.running()) {
             try self.pumpEvents();
             self.window.setTitle(if (self.window.isFocused()) "focused" else "not focused");
+
+            if (self.resized) |size| {
+                try self.render.swapchain.resize(size);
+            }
+            try self.render.swapchain.present();
             std.time.sleep(if (self.window.isFocused()) focused_sleep else unfocused_sleep);
         }
+
+        self.render.deinit();
     }
 
     fn frameUpdate(wnd: *app.window.Window) void {
         _ = wnd;
-        std.debug.print("update: {}\n", .{1});
     }
 
     fn inputBeganCallback(ipo: app.input.InputObject) void {
-        if (ipo.type == .mousebutton) {
-            std.debug.print("mousebutton {} down\n", .{ipo.data.mousebutton});
-        }
-        if (ipo.type == .textinput) {
-            if (ipo.data.textinput == .short) {
-                std.debug.print("{c}\n", .{ipo.data.textinput.short});
-            }
-        }
+        _ = ipo;
     }
 
     fn inputChangedCallback(ipo: app.input.InputObject) void {
-        // std.debug.print("input changed: {}\n", .{ipo});
         if (ipo.type == .resize) {
-            std.debug.print("resize: {}x{}\n", .{ ipo.data.resize[0], ipo.data.resize[1] });
+            var ctx = ipo.window.?.getContext(Context).?;
+            ctx.resized = .{
+                @intCast(ipo.data.resize[0]),
+                @intCast(ipo.data.resize[1]),
+            };
         }
     }
 
     fn inputEndedCallback(ipo: app.input.InputObject) void {
-        // std.debug.print("input ended: {}\n", .{ipo});
-        if (ipo.type == .mousebutton) {
-            std.debug.print("mousebutton {} up\n", .{ipo.data.mousebutton});
-        }
+        _ = ipo;
     }
 };
 
@@ -123,48 +183,6 @@ pub fn main() !void {
     defer context.deinit();
 
     try context.spawnWindowThread();
-
-    if (gpu.loadBackend(.d3d11) == false) return;
-    const instance = try gpu.createInstance(alloc, &.{});
-    defer instance.destroy();
-
-    const surface = try instance.createSurface(&.{
-        .native_handle = context.window.getNativeHandle().wnd,
-        .native_handle_size = 8,
-    });
-    defer surface.destroy();
-
-    const physicalDevice = try instance.requestPhysicalDevice(&.{
-        .power_preference = .high_performance,
-    });
-    defer physicalDevice.destroy();
-
-    const device = try physicalDevice.createDevice(&.{ .label = "device" });
-    defer device.destroy();
-
-    var props: gpu.PhysicalDevice.Properties = undefined;
-    if (physicalDevice.getProperties(&props)) {
-        std.debug.print("physicalDevice: {s}\n", .{props.name});
-        std.debug.print("vendor: {}\n", .{props.vendor});
-    }
-
-    const queue = device.getQueue();
-    _ = queue;
-
-    const buffer = try device.createBuffer(&.{
-        .size = 1024,
-        .usage = .{
-            .vertex = true,
-            .copy_dst = true,
-        },
-        .mapped_at_creation = true,
-    });
-    defer buffer.destroy();
-
-    const range = try buffer.getMappedRange(0, null);
-    range[0] = 100;
-    range[1] = 200;
-    buffer.unmap();
 
     // std.debug.print("mem: {}\n", .{arena.queryCapacity()});
 

@@ -3,6 +3,7 @@ const impl = gpu.impl;
 
 pub const CommandEncoder = opaque {
     pub const Error = error{
+        CommandEncoderFailedToCreate,
         CommandEncoderFailedToFinish,
     };
 

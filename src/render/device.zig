@@ -29,6 +29,10 @@ pub const Device = opaque {
         return try impl.deviceCreateBuffer(self, descriptor);
     }
 
+    pub inline fn createSwapChain(self: *Device, surface: ?*gpu.Surface, descriptor: *const gpu.SwapChain.Descriptor) !*gpu.SwapChain {
+        return try impl.deviceCreateSwapChain(self, surface, descriptor);
+    }
+
     pub inline fn destroy(self: *Device) void {
         impl.deviceDestroy(self);
     }

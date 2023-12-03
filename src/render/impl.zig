@@ -15,7 +15,13 @@ pub fn loadBackend(backend: gpu.BackendType) bool {
             procs.Procs.loaded_procs = getter() orelse return false;
             return true;
         },
-        .d3d12 => return false,
+        .d3d12 => {
+            dynamic_lib = std.DynLib.open("render_d3d12") catch return false;
+            if (dynamic_lib == null) return false;
+            const getter = dynamic_lib.?.lookup(procs.ProcFn, "getProcs") orelse return false;
+            procs.Procs.loaded_procs = getter() orelse return false;
+            return true;
+        },
         .metal => return false,
         .vulkan => return false,
         .opengl => return false,
@@ -72,6 +78,14 @@ pub inline fn commandEncoderDestroy(command_encoder: *gpu.CommandEncoder) void {
 // Device
 pub inline fn deviceCreateBuffer(device: *gpu.Device, desc: *const gpu.Buffer.Descriptor) gpu.Buffer.Error!*gpu.Buffer {
     return procs.Procs.loaded_procs.?.deviceCreateBuffer(device, desc);
+}
+
+pub inline fn deviceCreateSwapChain(
+    device: *gpu.Device,
+    surface: ?*gpu.Surface,
+    desc: *const gpu.SwapChain.Descriptor,
+) gpu.SwapChain.Error!*gpu.SwapChain {
+    return procs.Procs.loaded_procs.?.deviceCreateSwapChain(device, surface, desc);
 }
 
 pub inline fn deviceGetQueue(device: *gpu.Device) *gpu.Queue {
@@ -132,4 +146,25 @@ pub inline fn queueSubmit(
 // Surface
 pub inline fn surfaceDestroy(surface: *gpu.Surface) void {
     return procs.Procs.loaded_procs.?.surfaceDestroy(surface);
+}
+
+// SwapChain
+pub inline fn swapChainGetCurrentTexture(swap_chain: *gpu.SwapChain) ?*gpu.Texture {
+    return procs.Procs.loaded_procs.?.swapChainGetCurrentTexture(swap_chain);
+}
+
+pub inline fn swapChainGetCurrentTextureView(swap_chain: *gpu.SwapChain) ?*gpu.TextureView {
+    return procs.Procs.loaded_procs.?.swapChainGetCurrentTextureView(swap_chain);
+}
+
+pub inline fn swapChainPresent(swap_chain: *gpu.SwapChain) gpu.SwapChain.Error!void {
+    return procs.Procs.loaded_procs.?.swapChainPresent(swap_chain);
+}
+
+pub inline fn swapChainResize(swap_chain: *gpu.SwapChain, size: [2]u32) gpu.SwapChain.Error!void {
+    return procs.Procs.loaded_procs.?.swapChainResize(swap_chain, size);
+}
+
+pub inline fn swapChainDestroy(swap_chain: *gpu.SwapChain) void {
+    return procs.Procs.loaded_procs.?.swapChainDestroy(swap_chain);
 }

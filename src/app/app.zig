@@ -1,5 +1,6 @@
 const std = @import("std");
 
+pub const display = @import("display.zig");
 pub const input = @import("input.zig");
 pub const window = @import("window.zig");
 pub const platform = @import("platform.zig");

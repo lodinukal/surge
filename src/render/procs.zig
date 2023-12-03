@@ -27,6 +27,11 @@ pub const Procs = struct {
     // ComputePipeline
     // Device
     deviceCreateBuffer: *const fn (device: *gpu.Device, desc: *const gpu.Buffer.Descriptor) gpu.Buffer.Error!*gpu.Buffer,
+    deviceCreateSwapChain: *const fn (
+        device: *gpu.Device,
+        surface: ?*gpu.Surface,
+        desc: *const gpu.SwapChain.Descriptor,
+    ) gpu.SwapChain.Error!*gpu.SwapChain,
     deviceGetQueue: *const fn (device: *gpu.Device) *gpu.Queue,
     deviceDestroy: *const fn (device: *gpu.Device) void,
     // Instance
@@ -53,6 +58,12 @@ pub const Procs = struct {
     // ShaderModule
     // Surface
     surfaceDestroy: *const fn (surface: *gpu.Surface) void,
+    // SwapChain
+    swapChainGetCurrentTexture: *const fn (swapchain: *gpu.SwapChain) ?*gpu.Texture,
+    swapChainGetCurrentTextureView: *const fn (swapchain: *gpu.SwapChain) ?*gpu.TextureView,
+    swapChainPresent: *const fn (swapchain: *gpu.SwapChain) gpu.SwapChain.Error!void,
+    swapChainResize: *const fn (swapchain: *gpu.SwapChain, size: [2]u32) gpu.SwapChain.Error!void,
+    swapChainDestroy: *const fn (swapchain: *gpu.SwapChain) void,
     // Texture
     // TextureView
 };

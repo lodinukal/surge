@@ -182,7 +182,7 @@ pub const Input = struct {
         }
     }
 
-    fn updateLastInputType(self: *Input, input_object: *InputObject) void {
+    fn updateLastInputType(self: *Input, input_object: InputObject) void {
         if (self.last_input_type != input_object.type) {
             // we only update gamepad input type if it is of a minimum magnitude
             if (input_object.type == .gamepad and math.all(math.length3(input_object.position) < math.splat(math.Vec, 0.2), 0)) {
@@ -193,7 +193,7 @@ pub const Input = struct {
         }
     }
 
-    fn updateCurrentMousePosition(self: *Input, input_object: *InputObject) void {
+    fn updateCurrentMousePosition(self: *Input, input_object: InputObject) void {
         if (input_object.type == .mousemove) {
             const rounded = @round(input_object.position);
             self.mouse_state.position[0] = @intFromFloat(rounded[0]);
@@ -201,14 +201,14 @@ pub const Input = struct {
         }
     }
 
-    fn processInput(self: *Input, input_object: *InputObject, native_input_object: ?*void, input_state: InputState) void {
+    fn processInput(self: *Input, input_object: InputObject, native_input_object: ?*void, input_state: InputState) void {
         _ = native_input_object;
         self.updateLastInputType(input_object);
         self.updateCurrentMousePosition(input_object);
 
         if (input_object.type == .focus) {
             if (self.focused_changed_callback) |cb| {
-                cb(input_object.data.focus, input_object.input_state == .begin);
+                cb(input_object.window.?, input_object.input_state == .begin);
             }
             self.has_focus = input_object.input_state == .begin;
             return;
@@ -217,31 +217,31 @@ pub const Input = struct {
         switch (input_state) {
             .begin => {
                 if (self.input_began_callback) |cb| {
-                    cb(input_object.*);
+                    cb(input_object);
                 }
                 if (input_object.isTouch()) {
                     if (self.touch_began_callback) |cb| {
-                        cb(input_object.*);
+                        cb(input_object);
                     }
                 }
             },
             .change => {
                 if (self.input_changed_callback) |cb| {
-                    cb(input_object.*);
+                    cb(input_object);
                 }
                 if (input_object.isTouch()) {
                     if (self.touch_changed_callback) |cb| {
-                        cb(input_object.*);
+                        cb(input_object);
                     }
                 }
             },
             .end => {
                 if (self.input_ended_callback) |cb| {
-                    cb(input_object.*);
+                    cb(input_object);
                 }
                 if (input_object.isTouch()) {
                     if (self.touch_ended_callback) |cb| {
-                        cb(input_object.*);
+                        cb(input_object);
                     }
                 }
             },
@@ -254,13 +254,14 @@ pub const Input = struct {
         events.swapBuffers();
 
         for (buffer.items) |*event| {
-            self.processInput(&event.@"0", event.@"1", input_state);
+            self.processInput(event.@"0", event.@"1", input_state);
+            event.@"0".deinit();
         }
         buffer.shrinkRetainingCapacity(0);
     }
 
     pub fn process(self: *Input) void {
-        self.mutex.lock();
+        if (!self.mutex.tryLock()) return;
         defer self.mutex.unlock();
 
         self.platform_input.process();
@@ -271,7 +272,7 @@ pub const Input = struct {
     }
 
     pub fn addEvent(self: *Input, input_object: InputObject, native_input_object: ?*void) !void {
-        self.mutex.lock();
+        if (!self.mutex.tryLock()) return;
         defer self.mutex.unlock();
 
         switch (input_object.input_state) {
@@ -297,6 +298,7 @@ pub const Input = struct {
 
 pub const InputObject = struct {
     type: InputType,
+    window: ?*app.window.Window = null,
     input_state: InputState = .begin,
     position: math.Vec = math.f32x4s(0),
     delta: math.Vec = math.f32x4s(0),
@@ -307,7 +309,7 @@ pub const InputObject = struct {
         mousemove: void,
         touch: u8, // touch id
         keyboard: KeyboardData,
-        focus: *app.window.Window,
+        focus: void,
         accelerometer: void,
         gyro: void,
         gamepad: GamepadButton,
@@ -324,25 +326,27 @@ pub const InputObject = struct {
     pub fn deinit(self: *InputObject) void {
         switch (self.data) {
             .textinput => |ti| {
-                ti.allocator.free(ti.text);
+                if (ti == .long) {
+                    ti.long.allocator.free(ti.long.text);
+                }
             },
             else => {},
         }
     }
 
-    pub fn isTouch(self: *InputObject) bool {
+    pub fn isTouch(self: InputObject) bool {
         return self.type == .touch;
     }
 
-    pub fn isMouse(self: *InputObject) bool {
+    pub fn isMouse(self: InputObject) bool {
         return self.type == .mousebutton or self.type == .mousewheel or self.type == .mousemove;
     }
 
-    pub fn isKeyboard(self: *InputObject) bool {
+    pub fn isKeyboard(self: InputObject) bool {
         return self.type == .keyboard;
     }
 
-    pub fn isGamepad(self: *InputObject) bool {
+    pub fn isGamepad(self: InputObject) bool {
         return self.type == .gamepad;
     }
 };
