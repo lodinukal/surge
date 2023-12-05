@@ -36,6 +36,11 @@ pub fn closeBackend() void {
     }
 }
 
+// BindGroupLayout
+pub inline fn bindGroupLayoutDestroy(bind_group_layout: *gpu.BindGroupLayout) void {
+    return procs.Procs.loaded_procs.?.bindGroupLayoutDestroy(bind_group_layout);
+}
+
 // Buffer
 pub inline fn bufferGetSize(buffer: *gpu.Buffer) u64 {
     return procs.Procs.loaded_procs.?.bufferGetSize(buffer);
@@ -80,12 +85,23 @@ pub inline fn deviceCreateBuffer(device: *gpu.Device, desc: *const gpu.Buffer.De
     return procs.Procs.loaded_procs.?.deviceCreateBuffer(device, desc);
 }
 
+pub inline fn deviceCreateSampler(device: *gpu.Device, desc: *const gpu.Sampler.Descriptor) gpu.Sampler.Error!*gpu.Sampler {
+    return procs.Procs.loaded_procs.?.deviceCreateSampler(device, desc);
+}
+
 pub inline fn deviceCreateSwapChain(
     device: *gpu.Device,
     surface: ?*gpu.Surface,
     desc: *const gpu.SwapChain.Descriptor,
 ) gpu.SwapChain.Error!*gpu.SwapChain {
     return procs.Procs.loaded_procs.?.deviceCreateSwapChain(device, surface, desc);
+}
+
+pub inline fn deviceCreateTexture(
+    device: *gpu.Device,
+    desc: *const gpu.Texture.Descriptor,
+) gpu.Texture.Error!*gpu.Texture {
+    return procs.Procs.loaded_procs.?.deviceCreateTexture(device, desc);
 }
 
 pub inline fn deviceGetQueue(device: *gpu.Device) *gpu.Queue {
@@ -143,6 +159,11 @@ pub inline fn queueSubmit(
     return procs.Procs.loaded_procs.?.queueSubmit(queue, command_buffers);
 }
 
+// Sampler
+pub inline fn samplerDestroy(sampler: *gpu.Sampler) void {
+    return procs.Procs.loaded_procs.?.samplerDestroy(sampler);
+}
+
 // Surface
 pub inline fn surfaceDestroy(surface: *gpu.Surface) void {
     return procs.Procs.loaded_procs.?.surfaceDestroy(surface);
@@ -167,4 +188,50 @@ pub inline fn swapChainResize(swap_chain: *gpu.SwapChain, size: [2]u32) gpu.Swap
 
 pub inline fn swapChainDestroy(swap_chain: *gpu.SwapChain) void {
     return procs.Procs.loaded_procs.?.swapChainDestroy(swap_chain);
+}
+
+// Texture
+pub inline fn textureCreateView(texture: *gpu.Texture, descriptor: ?*const gpu.TextureView.Descriptor) *gpu.TextureView {
+    return procs.Procs.loaded_procs.?.textureCreateView(texture, descriptor);
+}
+
+pub inline fn textureDestroy(texture: *gpu.Texture) void {
+    procs.Procs.loaded_procs.?.textureDestroy(texture);
+}
+
+pub inline fn textureGetFormat(texture: *gpu.Texture) gpu.Texture.Format {
+    return procs.Procs.loaded_procs.?.textureGetFormat(texture);
+}
+
+pub inline fn textureGetDepthOrArrayLayers(texture: *gpu.Texture) u32 {
+    return procs.Procs.loaded_procs.?.textureGetDepthOrArrayLayers(texture);
+}
+
+pub inline fn textureGetDimension(texture: *gpu.Texture) gpu.Texture.Dimension {
+    return procs.Procs.loaded_procs.?.textureGetDimension(texture);
+}
+
+pub inline fn textureGetHeight(texture: *gpu.Texture) u32 {
+    return procs.Procs.loaded_procs.?.textureGetHeight(texture);
+}
+
+pub inline fn textureGetWidth(texture: *gpu.Texture) u32 {
+    return procs.Procs.loaded_procs.?.textureGetWidth(texture);
+}
+
+pub inline fn textureGetMipLevelCount(texture: *gpu.Texture) u32 {
+    return procs.Procs.loaded_procs.?.textureGetMipLevelCount(texture);
+}
+
+pub inline fn textureGetSampleCount(texture: *gpu.Texture) u32 {
+    return procs.Procs.loaded_procs.?.textureGetSampleCount(texture);
+}
+
+pub inline fn textureGetUsage(texture: *gpu.Texture) gpu.Texture.UsageFlags {
+    return procs.Procs.loaded_procs.?.textureGetUsage(texture);
+}
+
+// TextureView
+pub inline fn textureViewDestroy(texture_view: *gpu.TextureView) void {
+    return procs.Procs.loaded_procs.?.textureViewDestroy(texture_view);
 }

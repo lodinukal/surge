@@ -29,8 +29,16 @@ pub const Device = opaque {
         return try impl.deviceCreateBuffer(self, descriptor);
     }
 
+    pub inline fn createSampler(self: *Device, descriptor: *const gpu.Sampler.Descriptor) !*gpu.Sampler {
+        return try impl.deviceCreateSampler(self, descriptor);
+    }
+
     pub inline fn createSwapChain(self: *Device, surface: ?*gpu.Surface, descriptor: *const gpu.SwapChain.Descriptor) !*gpu.SwapChain {
         return try impl.deviceCreateSwapChain(self, surface, descriptor);
+    }
+
+    pub inline fn createTexture(self: *Device, descriptor: *const gpu.Texture.Descriptor) !*gpu.Texture {
+        return try impl.deviceCreateTexture(self, descriptor);
     }
 
     pub inline fn destroy(self: *Device) void {

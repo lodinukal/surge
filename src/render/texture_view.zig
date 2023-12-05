@@ -4,6 +4,10 @@ const gpu = @import("gpu.zig");
 const impl = gpu.impl;
 
 pub const TextureView = opaque {
+    pub const Error = error{
+        TextureViewFailedToCreate,
+    };
+
     pub const Dimension = enum(u32) {
         dimension_undefined = 0x00000000,
         dimension_1d = 0x00000001,
@@ -23,4 +27,8 @@ pub const TextureView = opaque {
         array_layer_count: ?u32 = null,
         aspect: gpu.Texture.Aspect = .all,
     };
+
+    pub inline fn destroy(self: *TextureView) void {
+        impl.textureViewDestroy(self);
+    }
 };

@@ -30,6 +30,7 @@ const common = @import("../../core/common.zig");
 pub const procs: gpu.procs.Procs = .{
     // BindGroup
     // BindGroupLayout
+    .bindGroupLayoutDestroy = bindGroupLayoutDestroy,
     // Buffer
     .bufferGetSize = bufferGetSize,
     .bufferGetUsage = bufferGetUsage,
@@ -47,7 +48,9 @@ pub const procs: gpu.procs.Procs = .{
     // ComputePipeline
     // Device
     .deviceCreateBuffer = deviceCreateBuffer,
+    .deviceCreateSampler = deviceCreateSampler,
     .deviceCreateSwapChain = deviceCreateSwapChain,
+    .deviceCreateTexture = deviceCreateTexture,
     .deviceGetQueue = deviceGetQueue,
     .deviceDestroy = deviceDestroy,
     // Instance
@@ -68,6 +71,7 @@ pub const procs: gpu.procs.Procs = .{
     // RenderPassEncoder
     // RenderPipeline
     // Sampler
+    .samplerDestroy = samplerDestroy,
     // ShaderModule
     // Surface
     .surfaceDestroy = surfaceDestroy,
@@ -78,7 +82,18 @@ pub const procs: gpu.procs.Procs = .{
     .swapChainResize = swapChainResize,
     .swapChainDestroy = swapChainDestroy,
     // Texture
+    .textureCreateView = textureCreateView,
+    .textureDestroy = textureDestroy,
+    .textureGetFormat = textureGetFormat,
+    .textureGetDepthOrArrayLayers = textureGetDepthOrArrayLayers,
+    .textureGetDimension = textureGetDimension,
+    .textureGetHeight = textureGetHeight,
+    .textureGetWidth = textureGetWidth,
+    .textureGetMipLevelCount = textureGetMipLevelCount,
+    .textureGetSampleCount = textureGetSampleCount,
+    .textureGetUsage = textureGetUsage,
     // TextureView
+    .textureViewDestroy = textureViewDestroy,
 };
 
 export fn getProcs() *const gpu.procs.Procs {
@@ -87,6 +102,17 @@ export fn getProcs() *const gpu.procs.Procs {
 
 // BindGroup
 // BindGroupLayout
+pub fn bindGroupLayoutDestroy(bind_group_layout: *gpu.BindGroupLayout) void {
+    std.debug.print("destroying bind group layout...\n", .{});
+    D3D12BindGroupLayout.deinit(@alignCast(@ptrCast(bind_group_layout)));
+}
+
+pub const D3D12BindGroupLayout = struct {
+    pub fn deinit(self: *D3D12BindGroupLayout) void {
+        allocator.destroy(self);
+    }
+};
+
 // Buffer
 pub fn bufferGetSize(buffer: *gpu.Buffer) usize {
     return D3D12Buffer.getSize(@ptrCast(@alignCast(buffer)));
@@ -717,6 +743,14 @@ pub fn deviceCreateBuffer(
     return @ptrCast(try D3D12Buffer.init(@ptrCast(@alignCast(device)), desc));
 }
 
+pub fn deviceCreateSampler(
+    device: *gpu.Device,
+    desc: *const gpu.Sampler.Descriptor,
+) gpu.Sampler.Error!*gpu.Sampler {
+    std.debug.print("creating sampler...\n", .{});
+    return @ptrCast(try D3D12Sampler.init(@ptrCast(@alignCast(device)), desc));
+}
+
 pub fn deviceCreateSwapChain(
     device: *gpu.Device,
     surface: ?*gpu.Surface,
@@ -724,6 +758,14 @@ pub fn deviceCreateSwapChain(
 ) gpu.SwapChain.Error!*gpu.SwapChain {
     std.debug.print("creating swap chain...\n", .{});
     return @ptrCast(try D3D12SwapChain.init(@ptrCast(@alignCast(device)), @ptrCast(@alignCast(surface.?)), desc));
+}
+
+pub fn deviceCreateTexture(
+    device: *gpu.Device,
+    desc: *const gpu.Texture.Descriptor,
+) gpu.Texture.Error!*gpu.Texture {
+    std.debug.print("creating texture...\n", .{});
+    return @ptrCast(try D3D12Texture.init(@ptrCast(@alignCast(device)), desc));
 }
 
 pub fn deviceGetQueue(device: *gpu.Device) *gpu.Queue {
@@ -1545,7 +1587,102 @@ pub const D3D12ResourcePool = struct {
 // RenderBundleEncoder
 // RenderPassEncoder
 // RenderPipeline
+
 // Sampler
+pub fn samplerDestroy(sampler: *gpu.Sampler) void {
+    std.debug.print("destroying sampler...\n", .{});
+    D3D12Sampler.deinit(@alignCast(@ptrCast(sampler)));
+}
+
+pub const D3D12Sampler = struct {
+    desc: d3d12.D3D12_SAMPLER_DESC,
+
+    fn d3d12TextureAddressMode(address_mode: gpu.Sampler.AddressMode) d3d12.D3D12_TEXTURE_ADDRESS_MODE {
+        return switch (address_mode) {
+            .repeat => .WRAP,
+            .mirror_repeat => .MIRROR,
+            .clamp_to_edge => .CLAMP,
+        };
+    }
+
+    fn d3d12FilterType(filter: gpu.FilterMode) d3d12.D3D12_FILTER_TYPE {
+        return switch (filter) {
+            .nearest => .POINT,
+            .linear => .LINEAR,
+        };
+    }
+
+    fn d3d12FilterTypeForMipmap(filter: gpu.MipmapFilterMode) d3d12.D3D12_FILTER_TYPE {
+        return switch (filter) {
+            .nearest => .POINT,
+            .linear => .LINEAR,
+        };
+    }
+
+    fn d3d12Filter(
+        mag_filter: gpu.FilterMode,
+        min_filter: gpu.FilterMode,
+        mipmap_filter: gpu.MipmapFilterMode,
+        max_anisotropy: u16,
+    ) d3d12.D3D12_FILTER {
+        var filter: i32 = 0;
+        filter |= d3d12FilterType(min_filter) << d3d12.D3D12_MIN_FILTER_SHIFT;
+        filter |= d3d12FilterType(mag_filter) << d3d12.D3D12_MAG_FILTER_SHIFT;
+        filter |= d3d12FilterTypeForMipmap(mipmap_filter) << d3d12.D3D12_MIP_FILTER_SHIFT;
+        filter |= @intFromEnum(
+            d3d12.D3D12_FILTER_REDUCTION_TYPE_STANDARD,
+        ) << d3d12.D3D12_FILTER_REDUCTION_TYPE_SHIFT;
+        if (max_anisotropy > 1)
+            filter |= d3d12.D3D12_ANISOTROPIC_FILTERING_BIT;
+        return @enumFromInt(filter);
+    }
+
+    pub fn init(device: *D3D12Device, desc: *const gpu.Sampler.Descriptor) gpu.Sampler.Error!*D3D12Sampler {
+        _ = device;
+        const d3d_desc = d3d12.D3D12_SAMPLER_DESC{
+            .Filter = d3d12Filter(
+                desc.mag_filter,
+                desc.min_filter,
+                desc.mipmap_filter,
+                desc.max_anisotropy,
+            ),
+            .AddressU = d3d12TextureAddressMode(desc.address_mode_u),
+            .AddressV = d3d12TextureAddressMode(desc.address_mode_v),
+            .AddressW = d3d12TextureAddressMode(desc.address_mode_w),
+            .MipLODBias = 0.0,
+            .MaxAnisotropy = desc.max_anisotropy,
+            .ComparisonFunc = if (desc.compare != .undefined) d3d12ComparisonFunc(desc.compare) else .NEVER,
+            .BorderColor = .{ 0.0, 0.0, 0.0, 0.0 },
+            .MinLOD = desc.lod_min_clamp,
+            .MaxLOD = desc.lod_max_clamp,
+        };
+
+        const self = allocator.create(D3D12Sampler) catch return gpu.Sampler.Error.SamplerFailedToCreate;
+        self.* = .{
+            .desc = d3d_desc,
+        };
+        return self;
+    }
+
+    pub fn deinit(self: *D3D12Sampler) void {
+        allocator.destroy(self);
+    }
+};
+
+pub fn d3d12ComparisonFunc(func: gpu.CompareFunction) d3d12.D3D12_COMPARISON_FUNC {
+    return switch (func) {
+        .undefined => unreachable,
+        .never => .NEVER,
+        .less => .LESS,
+        .less_equal => .LESS_EQUAL,
+        .greater => .GREATER,
+        .greater_equal => .GREATER_EQUAL,
+        .equal => .EQUAL,
+        .not_equal => .NOT_EQUAL,
+        .always => .ALWAYS,
+    };
+}
+
 // ShaderModule
 // Surface
 pub fn surfaceDestroy(surface: *gpu.Surface) void {
@@ -1770,6 +1907,58 @@ pub const D3D12SwapChain = struct {
 };
 
 // Texture
+pub fn textureCreateView(
+    texture: *gpu.Texture,
+    desc: *const gpu.TextureView.Descriptor,
+) gpu.TextureView.Error!*gpu.TextureView {
+    return @ptrCast(@alignCast(try D3D12Texture.createView(@ptrCast(@alignCast(texture)), desc)));
+}
+
+pub fn textureDestroy(texture: *gpu.Texture) void {
+    std.debug.print("destroying texture...\n", .{});
+    D3D12Texture.deinit(@alignCast(@ptrCast(texture)));
+}
+
+pub fn textureGetFormat(texture: *gpu.Texture) gpu.Texture.Format {
+    const self: *D3D12Texture = @ptrCast(@alignCast(texture));
+    return self.format;
+}
+
+pub fn textureGetDepthOrArrayLayers(texture: *gpu.Texture) u32 {
+    const self: *D3D12Texture = @ptrCast(@alignCast(texture));
+    return self.size.depth_or_array_layers;
+}
+
+pub fn textureGetDimension(texture: *gpu.Texture) gpu.Texture.Dimension {
+    const self: *D3D12Texture = @ptrCast(@alignCast(texture));
+    return self.dimension;
+}
+
+pub fn textureGetHeight(texture: *gpu.Texture) u32 {
+    const self: *D3D12Texture = @ptrCast(@alignCast(texture));
+    return self.size.height;
+}
+
+pub fn textureGetWidth(texture: *gpu.Texture) u32 {
+    const self: *D3D12Texture = @ptrCast(@alignCast(texture));
+    return self.size.width;
+}
+
+pub fn textureGetMipLevelCount(texture: *gpu.Texture) u32 {
+    const self: *D3D12Texture = @ptrCast(@alignCast(texture));
+    return self.mip_level_count;
+}
+
+pub fn textureGetSampleCount(texture: *gpu.Texture) u32 {
+    const self: *D3D12Texture = @ptrCast(@alignCast(texture));
+    return self.sample_count;
+}
+
+pub fn textureGetUsage(texture: *gpu.Texture) gpu.Texture.UsageFlags {
+    const self: *D3D12Texture = @ptrCast(@alignCast(texture));
+    return self.usage;
+}
+
 pub const D3D12Texture = struct {
     device: *D3D12Device,
     resource: ?D3D12Resource = null,
@@ -1899,6 +2088,11 @@ pub const D3D12Texture = struct {
 };
 
 // TextureView
+pub fn textureViewDestroy(texture_view: *gpu.TextureView) void {
+    std.debug.print("destroying texture view...\n", .{});
+    D3D12TextureView.deinit(@alignCast(@ptrCast(texture_view)));
+}
+
 pub const D3D12TextureView = struct {
     texture: *D3D12Texture,
     format: gpu.Texture.Format,
@@ -1911,7 +2105,7 @@ pub const D3D12TextureView = struct {
     base_subresource: u32,
 
     pub fn init(texture: *D3D12Texture, desc: *const gpu.TextureView.Descriptor) !*D3D12TextureView {
-        const self = try allocator.create(D3D12TextureView);
+        const self = allocator.create(D3D12TextureView) catch return gpu.TextureView.Error.TextureViewFailedToCreate;
         self.* = .{
             .texture = texture,
             .format = if (desc.format != .undefined) desc.format else texture.format,

@@ -7,6 +7,7 @@ pub const Procs = struct {
 
     // BindGroup
     // BindGroupLayout
+    bindGroupLayoutDestroy: *const fn (bindGroupLayout: *gpu.BindGroupLayout) void,
     // Buffer
     bufferGetSize: *const fn (buffer: *gpu.Buffer) u64,
     bufferGetUsage: *const fn (buffer: *gpu.Buffer) gpu.Buffer.UsageFlags,
@@ -27,11 +28,13 @@ pub const Procs = struct {
     // ComputePipeline
     // Device
     deviceCreateBuffer: *const fn (device: *gpu.Device, desc: *const gpu.Buffer.Descriptor) gpu.Buffer.Error!*gpu.Buffer,
+    deviceCreateSampler: *const fn (device: *gpu.Device, desc: *const gpu.Sampler.Descriptor) gpu.Sampler.Error!*gpu.Sampler,
     deviceCreateSwapChain: *const fn (
         device: *gpu.Device,
         surface: ?*gpu.Surface,
         desc: *const gpu.SwapChain.Descriptor,
     ) gpu.SwapChain.Error!*gpu.SwapChain,
+    deviceCreateTexture: *const fn (device: *gpu.Device, desc: *const gpu.Texture.Descriptor) gpu.Texture.Error!*gpu.Texture,
     deviceGetQueue: *const fn (device: *gpu.Device) *gpu.Queue,
     deviceDestroy: *const fn (device: *gpu.Device) void,
     // Instance
@@ -55,6 +58,7 @@ pub const Procs = struct {
     // RenderPassEncoder
     // RenderPipeline
     // Sampler
+    samplerDestroy: *const fn (sampler: *gpu.Sampler) void,
     // ShaderModule
     // Surface
     surfaceDestroy: *const fn (surface: *gpu.Surface) void,
@@ -65,5 +69,16 @@ pub const Procs = struct {
     swapChainResize: *const fn (swapchain: *gpu.SwapChain, size: [2]u32) gpu.SwapChain.Error!void,
     swapChainDestroy: *const fn (swapchain: *gpu.SwapChain) void,
     // Texture
+    textureCreateView: *const fn (texture: *gpu.Texture, descriptor: ?*const gpu.TextureView.Descriptor) *gpu.TextureView,
+    textureDestroy: *const fn (texture: *gpu.Texture) void,
+    textureGetFormat: *const fn (texture: *gpu.Texture) gpu.Texture.Format,
+    textureGetDepthOrArrayLayers: *const fn (texture: *gpu.Texture) u32,
+    textureGetDimension: *const fn (texture: *gpu.Texture) gpu.Texture.Dimension,
+    textureGetHeight: *const fn (texture: *gpu.Texture) u32,
+    textureGetWidth: *const fn (texture: *gpu.Texture) u32,
+    textureGetMipLevelCount: *const fn (texture: *gpu.Texture) u32,
+    textureGetSampleCount: *const fn (texture: *gpu.Texture) u32,
+    textureGetUsage: *const fn (texture: *gpu.Texture) gpu.Texture.UsageFlags,
     // TextureView
+    textureViewDestroy: *const fn (textureView: *gpu.TextureView) void,
 };
