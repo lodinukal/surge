@@ -36,76 +36,194 @@ pub fn closeBackend() void {
     }
 }
 
-// BindGroupLayout
-pub inline fn bindGroupLayoutDestroy(bind_group_layout: *gpu.BindGroupLayout) void {
-    return procs.Procs.loaded_procs.?.bindGroupLayoutDestroy(bind_group_layout);
+// Heap
+pub inline fn heapGetDescriptor(heap: *gpu.Heap) *const gpu.Heap.Descriptor {
+    return procs.Procs.loaded_procs.?.heapGetDescriptor(heap);
+}
+
+pub inline fn heapDestroy(heap: *gpu.Heap) void {
+    return procs.Procs.loaded_procs.?.heapDestroy(heap);
+}
+
+// Texture
+pub inline fn textureGetDescriptor(texture: *gpu.Texture) *const gpu.Texture.Descriptor {
+    return procs.Procs.loaded_procs.?.textureGetDescriptor(texture);
+}
+
+pub inline fn textureDestroy(texture: *gpu.Texture) void {
+    return procs.Procs.loaded_procs.?.textureDestroy(texture);
+}
+
+// StagingTexture
+pub inline fn stagingTextureGetDescriptor(stagingTexture: *gpu.StagingTexture) *const gpu.Texture.Descriptor {
+    return procs.Procs.loaded_procs.?.stagingTextureGetDescriptor(stagingTexture);
+}
+
+pub inline fn stagingTextureDestroy(stagingTexture: *gpu.StagingTexture) void {
+    return procs.Procs.loaded_procs.?.stagingTextureDestroy(stagingTexture);
+}
+
+// InputLayout
+pub inline fn inputLayoutGetAttributes(inputLayout: *gpu.InputLayout) []const gpu.VertexAttributeDescriptor {
+    return procs.Procs.loaded_procs.?.inputLayoutGetAttributes(inputLayout);
+}
+
+pub inline fn inputLayoutDestroy(inputLayout: *gpu.InputLayout) void {
+    return procs.Procs.loaded_procs.?.inputLayoutDestroy(inputLayout);
 }
 
 // Buffer
-pub inline fn bufferGetSize(buffer: *gpu.Buffer) u64 {
-    return procs.Procs.loaded_procs.?.bufferGetSize(buffer);
-}
-
-pub inline fn bufferGetUsage(buffer: *gpu.Buffer) gpu.Buffer.Usage {
-    return procs.Procs.loaded_procs.?.bufferGetUsage(buffer);
-}
-
-pub inline fn bufferMap(buffer: *gpu.Buffer) gpu.Buffer.Error!void {
-    return procs.Procs.loaded_procs.?.bufferMap(buffer);
-}
-
-pub inline fn bufferUnmap(buffer: *gpu.Buffer) void {
-    return procs.Procs.loaded_procs.?.bufferUnmap(buffer);
-}
-
-pub inline fn bufferGetMappedRange(buffer: *gpu.Buffer, offset: usize, size: ?usize) gpu.Buffer.Error![]u8 {
-    return procs.Procs.loaded_procs.?.bufferGetMappedRange(buffer, offset, size);
-}
-
-pub inline fn bufferGetMappedRangeConst(buffer: *gpu.Buffer, offset: usize, size: ?usize) gpu.Buffer.Error![]u8 {
-    return procs.Procs.loaded_procs.?.bufferGetMappedRangeConst(buffer, offset, size);
+pub inline fn bufferGetDescriptor(buffer: *gpu.Buffer) *const gpu.Buffer.Descriptor {
+    return procs.Procs.loaded_procs.?.bufferGetDescriptor(buffer);
 }
 
 pub inline fn bufferDestroy(buffer: *gpu.Buffer) void {
     return procs.Procs.loaded_procs.?.bufferDestroy(buffer);
 }
 
-// CommandBuffer
-pub inline fn commandBufferDestroy(command_buffer: *gpu.CommandBuffer) void {
-    return procs.Procs.loaded_procs.?.commandBufferDestroy(command_buffer);
+// Shader
+pub inline fn shaderGetDescriptor(shader: *const gpu.Shader) *const gpu.Shader.Descriptor {
+    return procs.Procs.loaded_procs.?.shaderGetDescriptor(shader);
 }
 
-// CommandEncoder
-pub inline fn commandEncoderDestroy(command_encoder: *gpu.CommandEncoder) void {
-    return procs.Procs.loaded_procs.?.commandEncoderDestroy(command_encoder);
+pub inline fn shaderGetBytecode(shader: *const gpu.Shader) *[]const u8 {
+    return procs.Procs.loaded_procs.?.shaderGetBytecode(shader);
+}
+
+pub inline fn shaderDestroy(shader: *gpu.Shader) void {
+    return procs.Procs.loaded_procs.?.shaderDestroy(shader);
+}
+
+// ShaderLibrary
+pub inline fn shaderLibraryGetBytecode(shaderLibrary: *const gpu.ShaderLibrary) *[]const u8 {
+    return procs.Procs.loaded_procs.?.shaderLibraryGetBytecode(shaderLibrary);
+}
+
+pub inline fn shaderLibraryGetShader(shaderLibrary: *const gpu.ShaderLibrary, name: []const u8, ty: gpu.Shader.Type) ?*gpu.Shader {
+    return procs.Procs.loaded_procs.?.shaderLibraryGetShader(shaderLibrary, name, ty);
+}
+
+pub inline fn shaderLibraryDestroy(shaderLibrary: *gpu.ShaderLibrary) void {
+    return procs.Procs.loaded_procs.?.shaderLibraryDestroy(shaderLibrary);
+}
+
+// Sampler
+pub inline fn samplerGetDescriptor(sampler: *const gpu.Sampler) *const gpu.Sampler.Descriptor {
+    return procs.Procs.loaded_procs.?.samplerGetDescriptor(sampler);
+}
+
+pub inline fn samplerDestroy(sampler: *gpu.Sampler) void {
+    return procs.Procs.loaded_procs.?.samplerDestroy(sampler);
+}
+
+// Framebuffer
+pub inline fn framebufferGetDescriptor(framebuffer: *const gpu.Framebuffer) *const gpu.Framebuffer.Descriptor {
+    return procs.Procs.loaded_procs.?.framebufferGetDescriptor(framebuffer);
+}
+
+pub inline fn framebufferGetFramebufferInfo(framebuffer: *const gpu.Framebuffer) *const gpu.Framebuffer.Info {
+    return procs.Procs.loaded_procs.?.framebufferGetFramebufferInfo(framebuffer);
+}
+
+pub inline fn framebufferDestroy(framebuffer: *gpu.Framebuffer) void {
+    return procs.Procs.loaded_procs.?.framebufferDestroy(framebuffer);
+}
+
+// BindingLayout
+pub inline fn bindingLayoutGetDescriptor(bindingLayout: *const gpu.BindingLayout) ?*const gpu.BindingLayout.Descriptor {
+    return procs.Procs.loaded_procs.?.bindingLayoutGetDescriptor(bindingLayout);
+}
+
+pub inline fn bindingLayoutGetBindlessDescriptor(bindingLayout: *const gpu.BindingLayout) ?*const gpu.BindingLayout.BindlessDescriptor {
+    return procs.Procs.loaded_procs.?.bindingLayoutGetBindlessDescriptor(bindingLayout);
+}
+
+pub inline fn bindingLayoutDestroy(bindingLayout: *gpu.BindingLayout) void {
+    return procs.Procs.loaded_procs.?.bindingLayoutDestroy(bindingLayout);
+}
+
+// BindingSet
+pub inline fn bindingSetGetDescriptor(bindingSet: *const gpu.BindingSet) *const gpu.BindingSet.Descriptor {
+    return procs.Procs.loaded_procs.?.bindingSetGetDescriptor(bindingSet);
+}
+
+pub inline fn bindingSetGetLayout(bindingSet: *const gpu.BindingSet) *gpu.BindingLayout {
+    return procs.Procs.loaded_procs.?.bindingSetGetLayout(bindingSet);
+}
+
+pub inline fn bindingSetDestroy(bindingSet: *gpu.BindingSet) void {
+    return procs.Procs.loaded_procs.?.bindingSetDestroy(bindingSet);
+}
+
+// DescriptorTable
+pub inline fn descriptorTableGetDescriptor(descriptorTable: *const gpu.DescriptorTable) *const gpu.BindingSet.Descriptor {
+    return procs.Procs.loaded_procs.?.descriptorTableGetDescriptor(descriptorTable);
+}
+
+pub inline fn descriptorTableGetLayout(descriptorTable: *const gpu.DescriptorTable) *gpu.BindingLayout {
+    return procs.Procs.loaded_procs.?.descriptorTableGetLayout(descriptorTable);
+}
+
+pub inline fn descriptorTableGetCapacity(descriptorTable: *const gpu.DescriptorTable) u32 {
+    return procs.Procs.loaded_procs.?.descriptorTableGetCapacity(descriptorTable);
+}
+
+pub inline fn descriptorTableDestroy(descriptorTable: *gpu.DescriptorTable) void {
+    return procs.Procs.loaded_procs.?.descriptorTableDestroy(descriptorTable);
+}
+
+// GraphicsPipeline
+pub inline fn graphicsPipelineGetDescriptor(graphicsPipeline: *const gpu.GraphicsPipeline) *const gpu.GraphicsPipeline.Descriptor {
+    return procs.Procs.loaded_procs.?.graphicsPipelineGetDescriptor(graphicsPipeline);
+}
+
+pub inline fn graphicsPipelineGetFramebufferInfo(graphicsPipeline: *const gpu.GraphicsPipeline) *const gpu.Framebuffer.Info {
+    return procs.Procs.loaded_procs.?.graphicsPipelineGetFramebufferInfo(graphicsPipeline);
+}
+
+pub inline fn graphicsPipelineDestroy(graphicsPipeline: *gpu.GraphicsPipeline) void {
+    return procs.Procs.loaded_procs.?.graphicsPipelineDestroy(graphicsPipeline);
+}
+
+// MeshletPipeline
+pub inline fn meshletPipelineGetDescriptor(meshletPipeline: *const gpu.MeshletPipeline) *const gpu.MeshletPipeline.Descriptor {
+    return procs.Procs.loaded_procs.?.meshletPipelineGetDescriptor(meshletPipeline);
+}
+
+pub inline fn meshletPipelineGetFramebufferInfo(meshletPipeline: *const gpu.MeshletPipeline) *const gpu.Framebuffer.Info {
+    return procs.Procs.loaded_procs.?.meshletPipelineGetFramebufferInfo(meshletPipeline);
+}
+
+pub inline fn meshletPipelineDestroy(meshletPipeline: *gpu.MeshletPipeline) void {
+    return procs.Procs.loaded_procs.?.meshletPipelineDestroy(meshletPipeline);
+}
+
+// EventQuery
+pub inline fn eventQueryDestroy(eventQuery: *gpu.EventQuery) void {
+    return procs.Procs.loaded_procs.?.eventQueryDestroy(eventQuery);
+}
+
+// TimerQuery
+pub inline fn timerQueryDestroy(timerQuery: *gpu.TimerQuery) void {
+    return procs.Procs.loaded_procs.?.timerQueryDestroy(timerQuery);
+}
+
+// ComputePipeline
+pub inline fn computePipelineGetDescriptor(computePipeline: *const gpu.ComputePipeline) *const gpu.ComputePipeline.Descriptor {
+    return procs.Procs.loaded_procs.?.computePipelineGetDescriptor(computePipeline);
+}
+
+pub inline fn computePipelineDestroy(computePipeline: *gpu.ComputePipeline) void {
+    return procs.Procs.loaded_procs.?.computePipelineDestroy(computePipeline);
 }
 
 // Device
-pub inline fn deviceCreateBuffer(device: *gpu.Device, desc: *const gpu.Buffer.Descriptor) gpu.Buffer.Error!*gpu.Buffer {
-    return procs.Procs.loaded_procs.?.deviceCreateBuffer(device, desc);
-}
-
-pub inline fn deviceCreateSampler(device: *gpu.Device, desc: *const gpu.Sampler.Descriptor) gpu.Sampler.Error!*gpu.Sampler {
-    return procs.Procs.loaded_procs.?.deviceCreateSampler(device, desc);
-}
-
 pub inline fn deviceCreateSwapChain(
     device: *gpu.Device,
     surface: ?*gpu.Surface,
     desc: *const gpu.SwapChain.Descriptor,
 ) gpu.SwapChain.Error!*gpu.SwapChain {
     return procs.Procs.loaded_procs.?.deviceCreateSwapChain(device, surface, desc);
-}
-
-pub inline fn deviceCreateTexture(
-    device: *gpu.Device,
-    desc: *const gpu.Texture.Descriptor,
-) gpu.Texture.Error!*gpu.Texture {
-    return procs.Procs.loaded_procs.?.deviceCreateTexture(device, desc);
-}
-
-pub inline fn deviceGetQueue(device: *gpu.Device) *gpu.Queue {
-    return procs.Procs.loaded_procs.?.deviceGetQueue(device);
 }
 
 pub inline fn deviceDestroy(device: *gpu.Device) void {
@@ -151,33 +269,12 @@ pub inline fn physicalDeviceDestroy(physicalDevice: *gpu.PhysicalDevice) void {
     return procs.Procs.loaded_procs.?.physicalDeviceDestroy(physicalDevice);
 }
 
-// Queue
-pub inline fn queueSubmit(
-    queue: *gpu.Queue,
-    command_buffers: []const *gpu.CommandBuffer,
-) gpu.Queue.Error!void {
-    return procs.Procs.loaded_procs.?.queueSubmit(queue, command_buffers);
-}
-
-// Sampler
-pub inline fn samplerDestroy(sampler: *gpu.Sampler) void {
-    return procs.Procs.loaded_procs.?.samplerDestroy(sampler);
-}
-
 // Surface
 pub inline fn surfaceDestroy(surface: *gpu.Surface) void {
     return procs.Procs.loaded_procs.?.surfaceDestroy(surface);
 }
 
 // SwapChain
-pub inline fn swapChainGetCurrentTexture(swap_chain: *gpu.SwapChain) ?*gpu.Texture {
-    return procs.Procs.loaded_procs.?.swapChainGetCurrentTexture(swap_chain);
-}
-
-pub inline fn swapChainGetCurrentTextureView(swap_chain: *gpu.SwapChain) ?*gpu.TextureView {
-    return procs.Procs.loaded_procs.?.swapChainGetCurrentTextureView(swap_chain);
-}
-
 pub inline fn swapChainPresent(swap_chain: *gpu.SwapChain) gpu.SwapChain.Error!void {
     return procs.Procs.loaded_procs.?.swapChainPresent(swap_chain);
 }
@@ -188,50 +285,4 @@ pub inline fn swapChainResize(swap_chain: *gpu.SwapChain, size: [2]u32) gpu.Swap
 
 pub inline fn swapChainDestroy(swap_chain: *gpu.SwapChain) void {
     return procs.Procs.loaded_procs.?.swapChainDestroy(swap_chain);
-}
-
-// Texture
-pub inline fn textureCreateView(texture: *gpu.Texture, descriptor: ?*const gpu.TextureView.Descriptor) *gpu.TextureView {
-    return procs.Procs.loaded_procs.?.textureCreateView(texture, descriptor);
-}
-
-pub inline fn textureDestroy(texture: *gpu.Texture) void {
-    procs.Procs.loaded_procs.?.textureDestroy(texture);
-}
-
-pub inline fn textureGetFormat(texture: *gpu.Texture) gpu.Texture.Format {
-    return procs.Procs.loaded_procs.?.textureGetFormat(texture);
-}
-
-pub inline fn textureGetDepthOrArrayLayers(texture: *gpu.Texture) u32 {
-    return procs.Procs.loaded_procs.?.textureGetDepthOrArrayLayers(texture);
-}
-
-pub inline fn textureGetDimension(texture: *gpu.Texture) gpu.Texture.Dimension {
-    return procs.Procs.loaded_procs.?.textureGetDimension(texture);
-}
-
-pub inline fn textureGetHeight(texture: *gpu.Texture) u32 {
-    return procs.Procs.loaded_procs.?.textureGetHeight(texture);
-}
-
-pub inline fn textureGetWidth(texture: *gpu.Texture) u32 {
-    return procs.Procs.loaded_procs.?.textureGetWidth(texture);
-}
-
-pub inline fn textureGetMipLevelCount(texture: *gpu.Texture) u32 {
-    return procs.Procs.loaded_procs.?.textureGetMipLevelCount(texture);
-}
-
-pub inline fn textureGetSampleCount(texture: *gpu.Texture) u32 {
-    return procs.Procs.loaded_procs.?.textureGetSampleCount(texture);
-}
-
-pub inline fn textureGetUsage(texture: *gpu.Texture) gpu.Texture.UsageFlags {
-    return procs.Procs.loaded_procs.?.textureGetUsage(texture);
-}
-
-// TextureView
-pub inline fn textureViewDestroy(texture_view: *gpu.TextureView) void {
-    return procs.Procs.loaded_procs.?.textureViewDestroy(texture_view);
 }

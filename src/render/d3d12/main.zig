@@ -81,19 +81,6 @@ pub const procs: gpu.procs.Procs = .{
     .swapChainPresent = swapChainPresent,
     .swapChainResize = swapChainResize,
     .swapChainDestroy = swapChainDestroy,
-    // Texture
-    .textureCreateView = textureCreateView,
-    .textureDestroy = textureDestroy,
-    .textureGetFormat = textureGetFormat,
-    .textureGetDepthOrArrayLayers = textureGetDepthOrArrayLayers,
-    .textureGetDimension = textureGetDimension,
-    .textureGetHeight = textureGetHeight,
-    .textureGetWidth = textureGetWidth,
-    .textureGetMipLevelCount = textureGetMipLevelCount,
-    .textureGetSampleCount = textureGetSampleCount,
-    .textureGetUsage = textureGetUsage,
-    // TextureView
-    .textureViewDestroy = textureViewDestroy,
 };
 
 export fn getProcs() *const gpu.procs.Procs {
@@ -1865,15 +1852,6 @@ pub const D3D12SwapChain = struct {
                 texture.* = null;
             }
         }
-    }
-
-    pub fn getCurrentTextureView(self: *D3D12SwapChain) !*D3D12TextureView {
-        const fence_value = self.fences[self.current_index];
-        _ = self.device.queue.waitUntil(fence_value);
-
-        const index = self.swapchain.?.IDXGISwapChain3_GetCurrentBackBufferIndex();
-        self.current_index = index;
-        return self.views[index].?;
     }
 
     pub fn present(self: *D3D12SwapChain) !void {

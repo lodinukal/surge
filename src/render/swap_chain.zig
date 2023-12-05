@@ -25,13 +25,13 @@ pub const SwapChain = opaque {
         present_mode: PresentMode,
     };
 
-    pub inline fn getCurrentTexture(self: *SwapChain) ?*gpu.Texture {
-        return try impl.swapChainGetCurrentTexture(self);
-    }
+    // pub inline fn getCurrentTexture(self: *SwapChain) ?*gpu.Texture {
+    //     return try impl.swapChainGetCurrentTexture(self);
+    // }
 
-    pub inline fn getCurrentTextureView(self: *SwapChain) ?*gpu.TextureView {
-        return try impl.swapChainGetCurrentTextureView(self);
-    }
+    // pub inline fn getCurrentTextureView(self: *SwapChain) ?*gpu.TextureView {
+    //     return try impl.swapChainGetCurrentTextureView(self);
+    // }
 
     pub inline fn present(self: *SwapChain) !void {
         return try impl.swapChainPresent(self);
