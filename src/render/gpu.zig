@@ -841,8 +841,10 @@ pub const DepthStencilState = struct {
 
 // ViewportState
 pub const ViewportState = struct {
-    viewports: std.BoundedArray(Viewport, max_viewports),
-    scissors: std.BoundedArray(Rect, max_viewports),
+    viewports: std.BoundedArray(Viewport, max_viewports) =
+        std.BoundedArray(Viewport, max_viewports).init(max_viewports),
+    scissors: std.BoundedArray(Rect, max_viewports) =
+        std.BoundedArray(Rect, max_viewports).init(max_viewports),
 
     pub fn addViewport(self: *ViewportState, v: Viewport) *ViewportState {
         self.viewports.appendAssumeCapacity(v);
@@ -1434,6 +1436,8 @@ pub const BindingSet = opaque {
     }
 };
 
+pub const BindingSetArray = std.BoundedArray(*BindingSet, max_binding_layouts);
+
 /// basically BindingSet
 pub const DescriptorTable = opaque {
     pub inline fn getDescriptor(self: *const DescriptorTable) *const BindingSet.Descriptor {
@@ -1601,4 +1605,130 @@ pub const TimerQuery = opaque {
     pub inline fn destroy(self: *TimerQuery) void {
         return impl.timerQueryDestroy(self);
     }
+};
+
+pub const VertexBufferBinding = struct {
+    buffer: ?*Buffer = null,
+    slot: u32 = 0,
+    offset: u64 = 0,
+
+    pub inline fn equal(a: VertexBufferBinding, b: VertexBufferBinding) bool {
+        return std.simd.countTrues(@Vector(3, bool){
+            a.buffer == b.buffer,
+            a.slot == b.slot,
+            a.offset == b.offset,
+        }) == 3;
+    }
+};
+
+pub const IndexBufferBindings = struct {
+    buffer: ?*Buffer = null,
+    format: Format = .unknown,
+    offset: u64 = 0,
+
+    pub inline fn equal(a: IndexBufferBindings, b: IndexBufferBindings) bool {
+        return std.simd.countTrues(@Vector(3, bool){
+            a.buffer == b.buffer,
+            a.format == b.format,
+            a.offset == b.offset,
+        }) == 3;
+    }
+};
+
+pub const GraphicsState = struct {
+    pipeline: ?*GraphicsPipeline = null,
+    framebuffer: ?*Framebuffer = null,
+    viewport: ViewportState = .{},
+    blend_constant_colour: Colour = .{ 0.0, 0.0, 0.0, 0.0 },
+    shading_rate_state: VariableRateShadingState = .{},
+
+    bindings: BindingSetArray = BindingSetArray.init(max_binding_layouts),
+
+    vertex_buffers: std.BoundedArray(VertexBufferBinding, max_vertex_attributes) =
+        std.BoundedArray(VertexBufferBinding, max_vertex_attributes).init(max_vertex_attributes),
+    index_buffer: IndexBufferBindings = .{},
+
+    indirect_params: ?*Buffer = null,
+};
+
+pub const DrawArguments = struct {
+    vertex_count: u32 = 0,
+    instance_count: u32 = 1,
+    start_index_location: u32 = 0,
+    start_vertex_location: u32 = 0,
+    start_instance_location: u32 = 0,
+};
+
+pub const DrawIndirectArguments = struct {
+    vertex_count: u32 = 0,
+    instance_count: u32 = 1,
+    start_vertex_location: u32 = 0,
+    start_instance_location: u32 = 0,
+};
+
+pub const DrawIndexedIndirectArguments = struct {
+    index_count: u32 = 0,
+    instance_count: u32 = 1,
+    start_index_location: u32 = 0,
+    base_vertex_location: i32 = 0,
+    start_instance_location: u32 = 0,
+};
+
+pub const ComputeState = struct {
+    pipeline: ?*ComputePipeline = null,
+    bindings: BindingSetArray = BindingSetArray.init(max_binding_layouts),
+    indirect_params: ?*Buffer = null,
+};
+
+pub const MeshletState = struct {
+    pipeline: ?*MeshletPipeline = null,
+    framebuffer: ?*Framebuffer = null,
+    viewport: ViewportState = .{},
+    blend_constant_colour: Colour = .{ 0.0, 0.0, 0.0, 0.0 },
+
+    bindings: BindingSetArray = BindingSetArray.init(max_binding_layouts),
+
+    indirect_params: ?*Buffer = null,
+};
+
+pub const Feature = enum(u8) {
+    deferred_command_lists,
+    single_pass_stereo,
+    ray_tracing_accel_struct,
+    ray_tracing_pipeline,
+    ray_tracing_opacity_micromap,
+    ray_query,
+    shader_execution_reordering,
+    fast_geometry_shader,
+    meshlets,
+    conservative_rasterization,
+    variable_rate_shading,
+    shader_specializations,
+    virtual_resources,
+    compute_queue,
+    copy_queue,
+    constant_buffer_ranges,
+};
+
+pub const MessageSeverity = enum(u8) {
+    info,
+    warning,
+    err,
+    fatal,
+};
+
+pub const CommandQueue = enum(u8) {
+    graphics,
+    computer,
+    copy,
+};
+
+pub const CommandList = opaque {
+    pub const Parameters = struct {
+        enable_immediate_execution: bool = true,
+        upload_chunk_size: usize = 64 * 1024,
+        scratch_chunk_size: usize = 64 * 1024,
+        scratch_max_memory: usize = 1024 * 1024 * 1024,
+        queue: CommandQueue = .graphics,
+    };
 };
