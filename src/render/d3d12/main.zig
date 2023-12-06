@@ -8,17 +8,6 @@ const d3d12 = win32.graphics.direct3d12;
 const dxgi = win32.graphics.dxgi;
 const hlsl = win32.graphics.hlsl;
 
-const general_heap_size = 1024;
-const general_block_size = 16;
-const sampler_heap_size = 1024;
-const sampler_block_size = 16;
-const rtv_heap_size = 1024;
-const rtv_block_size = 16;
-const dsv_heap_size = 1024;
-const dsv_block_size = 1;
-const upload_page_size = 64 * 1024 * 1024; // TODO - split writes and/or support large uploads
-const max_back_buffer_count = 3;
-
 const TRUE = win32.foundation.TRUE;
 const FALSE = win32.foundation.FALSE;
 
@@ -27,9 +16,170 @@ const d3dcommon = @import("../d3d/common.zig");
 const common = @import("../../core/common.zig");
 
 // Loading
-pub const procs: gpu.procs.Procs = .{
+pub const procs: gpu.procs.Procs = .{ // Heap
+    .heapGetDescriptor = heapGetDescriptor,
+    .heapDestroy = heapDestroy,
+
+    // Texture
+    .textureGetDescriptor = textureGetDescriptor,
+    .textureDestroy = textureDestroy,
+
+    // StagingTexture
+    .stagingTextureGetDescriptor = stagingTextureGetDescriptor,
+    .stagingTextureDestroy = stagingTextureDestroy,
+
+    // InputLayout
+    .inputLayoutGetAttributes = inputLayoutGetAttributes,
+    .inputLayoutDestroy = inputLayoutDestroy,
+
+    // Buffer
+    .bufferGetDescriptor = bufferGetDescriptor,
+    .bufferDestroy = bufferDestroy,
+
+    // Shader
+    .shaderGetDescriptor = shaderGetDescriptor,
+    .shaderGetBytecode = shaderGetBytecode,
+    .shaderDestroy = shaderDestroy,
+
+    // ShaderLibrary
+    .shaderLibraryGetBytecode = shaderLibraryGetBytecode,
+    .shaderLibraryGetShader = shaderLibraryGetShader,
+    .shaderLibraryDestroy = shaderLibraryDestroy,
+
+    // Sampler
+    .samplerGetDescriptor = samplerGetDescriptor,
+    .samplerDestroy = samplerDestroy,
+
+    // Framebuffer
+    .framebufferGetDescriptor = framebufferGetDescriptor,
+    .framebufferGetFramebufferInfo = framebufferGetFramebufferInfo,
+    .framebufferDestroy = framebufferDestroy,
+
+    // BindingLayout
+    .bindingLayoutGetDescriptor = bindingLayoutGetDescriptor,
+    .bindingLayoutGetBindlessDescriptor = bindingLayoutGetBindlessDescriptor,
+    .bindingLayoutDestroy = bindingLayoutDestroy,
+
+    // BindingSet
+    .bindingSetGetDescriptor = bindingSetGetDescriptor,
+    .bindingSetGetLayout = bindingSetGetLayout,
+    .bindingSetDestroy = bindingSetDestroy,
+
+    // DescriptorTable
+    .descriptorTableGetDescriptor = descriptorTableGetDescriptor,
+    .descriptorTableGetLayout = descriptorTableGetLayout,
+    .descriptorTableGetCapacity = descriptorTableGetCapacity,
+    .descriptorTableDestroy = descriptorTableDestroy,
+
+    // GraphicsPipeline
+    .graphicsPipelineGetDescriptor = graphicsPipelineGetDescriptor,
+    .graphicsPipelineGetFramebufferInfo = graphicsPipelineGetFramebufferInfo,
+    .graphicsPipelineDestroy = graphicsPipelineDestroy,
+
+    // ComputePipeline
+    .computePipelineGetDescriptor = computePipelineGetDescriptor,
+    .computePipelineDestroy = computePipelineDestroy,
+
+    // MeshletPipeline
+    .meshletPipelineGetDescriptor = meshletPipelineGetDescriptor,
+    .meshletPipelineGetFramebufferInfo = meshletPipelineGetFramebufferInfo,
+    .meshletPipelineDestroy = meshletPipelineDestroy,
+
+    // EventQuery
+    .eventQueryDestroy = eventQueryDestroy,
+
+    // TimerQuery
+    .timerQueryDestroy = timerQueryDestroy,
+
+    // CommandList
+    .commandListOpen = commandListOpen,
+    .commandListClose = commandListClose,
+    .commandListClearState = commandListClearState,
+    .commandListClearTextureFloat = commandListClearTextureFloat,
+    .commandListClearDepthStencilTexture = commandListClearDepthStencilTexture,
+    .commandListClearTextureUint = commandListClearTextureUint,
+    .commandListCopyTextureToTexture = commandListCopyTextureToTexture,
+    .commandListCopyToStagingTexture = commandListCopyToStagingTexture,
+    .commandListCopyStagingTextureToTexture = commandListCopyStagingTextureToTexture,
+    .commandListWriteTexture = commandListWriteTexture,
+    .commandListResolveTexture = commandListResolveTexture,
+    .commandListWriteBuffer = commandListWriteBuffer,
+    .commandListClearBufferUint = commandListClearBufferUint,
+    .commandListCopyBufferToBuffer = commandListCopyBufferToBuffer,
+    .commandListSetPushConstants = commandListSetPushConstants,
+    .commandListSetGraphicsState = commandListSetGraphicsState,
+    .commandListDraw = commandListDraw,
+    .commandListDrawIndexed = commandListDrawIndexed,
+    .commandListDrawIndirect = commandListDrawIndirect,
+    .commandListDrawIndexedIndirect = commandListDrawIndexedIndirect,
+    .commandListSetComputeState = commandListSetComputeState,
+    .commandListDispatch = commandListDispatch,
+    .commandListDispatchIndirect = commandListDispatchIndirect,
+    .commandListSetMeshletState = commandListSetMeshletState,
+    .commandListDispatchMesh = commandListDispatchMesh,
+    .commandListBeginTimerQuery = commandListBeginTimerQuery,
+    .commandListEndTimerQuery = commandListEndTimerQuery,
+    .commandListBeginMarker = commandListBeginMarker,
+    .commandListEndMarker = commandListEndMarker,
+    .commandListSetEnableAutomaticBarriers = commandListSetEnableAutomaticBarriers,
+    .commandListSetEnableUAVBarriersForTexture = commandListSetEnableUAVBarriersForTexture,
+    .commandListSetEnableUAVBarriersForBuffer = commandListSetEnableUAVBarriersForBuffer,
+    .commandListBeginTrackingTextureState = commandListBeginTrackingTextureState,
+    .commandListBeginTrackingBufferState = commandListBeginTrackingBufferState,
+    .commandListSetTextureState = commandListSetTextureState,
+    .commandListSetBufferState = commandListSetBufferState,
+    .commandListSetPermanentTextureState = commandListSetPermanentTextureState,
+    .commandListSetPermanentBufferState = commandListSetPermanentBufferState,
+    .commandListCommitBarriers = commandListCommitBarriers,
+    .commandListGetTextureSubresourceState = commandListGetTextureSubresourceState,
+    .commandListGetBufferState = commandListGetBufferState,
+    .commandListGetDescriptor = commandListGetDescriptor,
+
     // Device
     .deviceCreateSwapChain = deviceCreateSwapChain,
+    .deviceCreateHeap = deviceCreateHeap,
+    .deviceCreateTexture = deviceCreateTexture,
+    .deviceGetTextureMemoryRequirements = deviceGetTextureMemoryRequirements,
+    .deviceBindTextureMemory = deviceBindTextureMemory,
+    .deviceCreateStagingTexture = deviceCreateStagingTexture,
+    .deviceMapStagingTexture = deviceMapStagingTexture,
+    .deviceMapStagingTextureConst = deviceMapStagingTextureConst,
+    .deviceUnmapStagingTexture = deviceUnmapStagingTexture,
+    .deviceCreateBuffer = deviceCreateBuffer,
+    .deviceMapBuffer = deviceMapBuffer,
+    .deviceMapBufferConst = deviceMapBufferConst,
+    .deviceUnmapBuffer = deviceUnmapBuffer,
+    .deviceGetBufferMemoryRequirements = deviceGetBufferMemoryRequirements,
+    .deviceBindBufferMemory = deviceBindBufferMemory,
+    .deviceCreateShader = deviceCreateShader,
+    .deviceCreateShaderSpecialisation = deviceCreateShaderSpecialisation,
+    .deviceCreateShaderLibrary = deviceCreateShaderLibrary,
+    .deviceCreateSampler = deviceCreateSampler,
+    .deviceCreateInputLayout = deviceCreateInputLayout,
+    .deviceCreateEventQuery = deviceCreateEventQuery,
+    .deviceSetEventQuery = deviceSetEventQuery,
+    .devicePollEventQuery = devicePollEventQuery,
+    .deviceWaitEventQuery = deviceWaitEventQuery,
+    .deviceResetEventQuery = deviceResetEventQuery,
+    .deviceCreateTimerQuery = deviceCreateTimerQuery,
+    .devicePollTimerQuery = devicePollTimerQuery,
+    .deviceGetTimerQueryTime = deviceGetTimerQueryTime,
+    .deviceResetTimerQuery = deviceResetTimerQuery,
+    .deviceCreateFramebuffer = deviceCreateFramebuffer,
+    .deviceCreateGraphicsPipeline = deviceCreateGraphicsPipeline,
+    .deviceCreateComputePipeline = deviceCreateComputePipeline,
+    .deviceCreateMeshletPipeline = deviceCreateMeshletPipeline,
+    .deviceCreateBindingLayout = deviceCreateBindingLayout,
+    .deviceCreateBindlessBindingLayout = deviceCreateBindlessBindingLayout,
+    .deviceCreateBindingSet = deviceCreateBindingSet,
+    .deviceCreateDescriptorTable = deviceCreateDescriptorTable,
+    .deviceResizeDescriptorTable = deviceResizeDescriptorTable,
+    .deviceWriteDescriptorTable = deviceWriteDescriptorTable,
+    .deviceCreateCommandList = deviceCreateCommandList,
+    .deviceExecuteCommandLists = deviceExecuteCommandLists,
+    .deviceQueueWaitForCommandList = deviceQueueWaitForCommandList,
+    .deviceWaitForIdle = deviceWaitForIdle,
+    .deviceCleanGarbage = deviceCleanGarbage,
     .deviceDestroy = deviceDestroy,
     // Instance
     .createInstance = createInstance,
