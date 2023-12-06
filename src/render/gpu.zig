@@ -28,12 +28,6 @@ pub const query_set_index_undefined = 0xffffffff;
 pub const whole_map_size = std.math.maxInt(u64);
 pub const whole_size = 0xffffffffffffffff;
 
-pub const Device = @import("device.zig").Device;
-pub const Instance = @import("instance.zig").Instance;
-pub const PhysicalDevice = @import("physical_device.zig").PhysicalDevice;
-pub const Surface = @import("surface.zig").Surface;
-pub const SwapChain = @import("swap_chain.zig").SwapChain;
-
 pub const Error = blk: {
     var err = error{};
     inline for (.{
@@ -267,6 +261,10 @@ pub const FormatSupport = packed struct {
 // Heap
 
 pub const Heap = opaque {
+    pub const Error = error{
+        HeapFailedToCreate,
+    };
+
     pub const Type = enum(u8) {
         unknown,
         buffer,
@@ -346,6 +344,10 @@ pub const MipLevel = u32;
 pub const ArraySlice = u32;
 
 pub const Texture = opaque {
+    pub const Error = error{
+        TextureFailedToCreate,
+    };
+
     pub const Descriptor = struct {
         width: u32 = 1,
         height: u32 = 1,
@@ -469,6 +471,10 @@ pub const Texture = opaque {
 };
 
 pub const StagingTexture = opaque {
+    pub const Error = error{
+        StagingTextureFailedToCreate,
+    };
+
     pub inline fn getDescriptor(self: *StagingTexture) *const Texture.Descriptor {
         return impl.stagingTextureGetDescriptor(self);
     }
@@ -490,6 +496,10 @@ pub const VertexAttributeDescriptor = struct {
 };
 
 pub const InputLayout = opaque {
+    pub const Error = error{
+        InputLayoutFailedToCreate,
+    };
+
     pub inline fn getAttributes(self: *const InputLayout) []const VertexAttributeDescriptor {
         return impl.inputLayoutGetAttributes(self);
     }
@@ -501,6 +511,10 @@ pub const InputLayout = opaque {
 
 // Buffer
 pub const Buffer = opaque {
+    pub const Error = error{
+        BufferFailedToCreate,
+    };
+
     pub const Descriptor = struct {
         byte_size: u64 = 0,
         struct_stride: u32 = 0,
@@ -559,6 +573,10 @@ pub const Buffer = opaque {
 
 // Shader
 pub const Shader = opaque {
+    pub const Error = error{
+        ShaderFailedToCreate,
+    };
+
     pub const Type = packed struct(u16) {
         compute: bool = false,
 
@@ -657,6 +675,10 @@ pub const Shader = opaque {
 
 // ShaderLibrary
 pub const ShaderLibrary = struct {
+    pub const Error = error{
+        ShaderLibraryFailedToCreate,
+    };
+
     pub inline fn getBytecode(self: *const ShaderLibrary) *[]const u8 {
         return impl.shaderLibraryGetBytecode(self);
     }
@@ -863,6 +885,10 @@ pub const ViewportState = struct {
 
 // Sampler
 pub const Sampler = opaque {
+    pub const Error = error{
+        SamplerFailedToCreate,
+    };
+
     pub const AddressMode = enum {
         clamp,
         wrap,
@@ -903,6 +929,10 @@ pub const Sampler = opaque {
 
 // Framebuffer
 pub const Framebuffer = opaque {
+    pub const Error = error{
+        FramebufferFailedToCreate,
+    };
+
     pub const Attachment = struct {
         texture: ?*Texture = null,
         subresources: Texture.SubresourceSet = .{
@@ -1014,6 +1044,10 @@ pub const ResourceType = enum(u8) {
 };
 
 pub const BindingLayout = opaque {
+    pub const Error = error{
+        BindingLayoutFailedToCreate,
+    };
+
     pub const BindingLayoutItem = struct {
         slot: u32,
         type: ResourceType,
@@ -1173,6 +1207,10 @@ pub const BindingLayoutArray = std.BoundedArray(*BindingLayout, max_binding_layo
 // BindingSet
 
 pub const BindingSet = opaque {
+    pub const Error = error{
+        BindingSetFailedToCreate,
+    };
+
     pub const Resource = union {
         texture: *Texture,
         buffer: *Buffer,
@@ -1180,7 +1218,7 @@ pub const BindingSet = opaque {
         op: *anyopaque,
     };
 
-    pub const BindingSetItem = struct {
+    pub const Item = struct {
         resource: ?Resource = null,
         slot: u32 = 0,
         type: ResourceType = .none,
@@ -1193,7 +1231,7 @@ pub const BindingSet = opaque {
             raw_data: [2]u64,
         } = .{ .raw_data = .{ 0, 0 } },
 
-        pub inline fn equal(a: BindingSetItem, b: BindingSetItem) bool {
+        pub inline fn equal(a: Item, b: Item) bool {
             return std.simd.countTrues(@Vector(8, bool){
                 a.resource == b.resource,
                 a.slot == b.slot,
@@ -1205,7 +1243,7 @@ pub const BindingSet = opaque {
             }) == 9;
         }
 
-        pub inline fn none(slot: u32) BindingSetItem {
+        pub inline fn none(slot: u32) Item {
             return .{
                 .slot = slot,
             };
@@ -1217,7 +1255,7 @@ pub const BindingSet = opaque {
             format: ?Format,
             subresources: ?Texture.SubresourceSet,
             dimension: ?TextureDimension,
-        ) BindingSetItem {
+        ) Item {
             const use_format = format orelse .unknown;
             const use_subresource = subresources orelse Texture.SubresourceSet.all;
             const use_dimension = dimension orelse .unknown;
@@ -1240,7 +1278,7 @@ pub const BindingSet = opaque {
             format: ?Format,
             subresources: ?Texture.SubresourceSet,
             dimension: ?TextureDimension,
-        ) BindingSetItem {
+        ) Item {
             const use_format = format orelse .unknown;
             const use_subresource = subresources orelse Texture.SubresourceSet{
                 .num_array_slices = array_layer_count_undefined,
@@ -1264,7 +1302,7 @@ pub const BindingSet = opaque {
             buffer: ?*Buffer,
             format: ?Format,
             range: ?Buffer.Range,
-        ) BindingSetItem {
+        ) Item {
             const use_format = format orelse .unknown;
             const use_range = range orelse Buffer.Range.entire;
 
@@ -1284,7 +1322,7 @@ pub const BindingSet = opaque {
             buffer: ?*Buffer,
             format: ?Format,
             range: ?Buffer.Range,
-        ) BindingSetItem {
+        ) Item {
             const use_format = format orelse .unknown;
             const use_range = range orelse Buffer.Range.entire;
 
@@ -1299,7 +1337,7 @@ pub const BindingSet = opaque {
             };
         }
 
-        pub inline fn fromConstantBuffer(slot: u32, buffer: ?*Buffer, range: ?Buffer.Range) BindingSetItem {
+        pub inline fn fromConstantBuffer(slot: u32, buffer: ?*Buffer, range: ?Buffer.Range) Item {
             const is_volatile = if (buffer) |b| b.getDescriptor().is_volatile else false;
             const use_range = range orelse Buffer.Range.entire;
 
@@ -1313,7 +1351,7 @@ pub const BindingSet = opaque {
             };
         }
 
-        pub inline fn fromSampler(slot: u32, sampler: ?*Sampler) BindingSetItem {
+        pub inline fn fromSampler(slot: u32, sampler: ?*Sampler) Item {
             return .{
                 .slot = slot,
                 .type = .sampler,
@@ -1326,7 +1364,7 @@ pub const BindingSet = opaque {
             buffer: ?*Buffer,
             format: ?Format,
             range: ?Buffer.Range,
-        ) BindingSetItem {
+        ) Item {
             const use_format = format orelse .unknown;
             const use_range = range orelse Buffer.Range.entire;
 
@@ -1346,7 +1384,7 @@ pub const BindingSet = opaque {
             buffer: ?*Buffer,
             format: ?Format,
             range: ?Buffer.Range,
-        ) BindingSetItem {
+        ) Item {
             const use_format = format orelse .unknown;
             const use_range = range orelse Buffer.Range.entire;
 
@@ -1365,7 +1403,7 @@ pub const BindingSet = opaque {
             slot: u32,
             buffer: ?*Buffer,
             range: ?Buffer.Range,
-        ) BindingSetItem {
+        ) Item {
             const use_range = range orelse Buffer.Range.entire;
 
             return .{
@@ -1382,7 +1420,7 @@ pub const BindingSet = opaque {
             slot: u32,
             buffer: ?*Buffer,
             range: ?Buffer.Range,
-        ) BindingSetItem {
+        ) Item {
             const use_range = range orelse Buffer.Range.entire;
 
             return .{
@@ -1395,7 +1433,7 @@ pub const BindingSet = opaque {
             };
         }
 
-        pub inline fn fromPushConstants(slot: u32, byte_size: u32) BindingSetItem {
+        pub inline fn fromPushConstants(slot: u32, byte_size: u32) Item {
             return .{
                 .slot = slot,
                 .type = .push_constants,
@@ -1408,16 +1446,16 @@ pub const BindingSet = opaque {
         }
     };
 
-    pub const BindingSetItemArray = std.BoundedArray(BindingSetItem, max_bindings_per_layout);
+    pub const ItemArray = std.BoundedArray(Item, max_bindings_per_layout);
 
     pub const Descriptor = struct {
-        bindings: BindingSetItemArray = BindingSetItemArray.init(max_bindings_per_layout),
+        bindings: ItemArray = ItemArray.init(max_bindings_per_layout),
         clear_items: bool = false,
 
         pub inline fn equal(a: Descriptor, b: Descriptor) bool {
             if (a.bindings.len != b.bindings.len) return false;
             inline for (0..a.bindings.len) |index| {
-                if (!BindingSetItem.equal(a.bindings.buffer[index], b.bindings.buffer[index])) return false;
+                if (!Item.equal(a.bindings.buffer[index], b.bindings.buffer[index])) return false;
             }
             return true;
         }
@@ -1440,6 +1478,10 @@ pub const BindingSetArray = std.BoundedArray(*BindingSet, max_binding_layouts);
 
 /// basically BindingSet
 pub const DescriptorTable = opaque {
+    pub const Error = error{
+        DescriptorTableFailedToCreate,
+    };
+
     pub inline fn getDescriptor(self: *const DescriptorTable) *const BindingSet.Descriptor {
         return impl.descriptorTableGetDescriptor(self);
     }
@@ -1524,6 +1566,10 @@ pub const VariableRateShadingState = struct {
 };
 
 pub const GraphicsPipeline = opaque {
+    pub const Error = error{
+        GraphicsPipelineFailedToCreate,
+    };
+
     pub const Descriptor = struct {
         primitive_type: PrimitiveType = .triangle_list,
         patch_control_points: u32 = 0,
@@ -1555,6 +1601,10 @@ pub const GraphicsPipeline = opaque {
 };
 
 pub const ComputePipeline = opaque {
+    pub const Error = error{
+        ComputePipelineFailedToCreate,
+    };
+
     pub const Descriptor = struct {
         cs: ?*Shader = null,
         binding_layouts: BindingLayoutArray = BindingLayoutArray.init(max_binding_layouts),
@@ -1570,6 +1620,10 @@ pub const ComputePipeline = opaque {
 };
 
 pub const MeshletPipeline = opaque {
+    pub const Error = error{
+        MeshletPipelineFailedToCreate,
+    };
+
     pub const Descriptor = struct {
         primitive_type: PrimitiveType = .triangle_list,
 
@@ -1596,12 +1650,20 @@ pub const MeshletPipeline = opaque {
 
 // Draw and dispatch
 pub const EventQuery = opaque {
+    pub const Error = error{
+        EventQueryFailedToCreate,
+    };
+
     pub inline fn destroy(self: *EventQuery) void {
         return impl.eventQueryDestroy(self);
     }
 };
 
 pub const TimerQuery = opaque {
+    pub const Error = error{
+        TimerQueryFailedToCreate,
+    };
+
     pub inline fn destroy(self: *TimerQuery) void {
         return impl.timerQueryDestroy(self);
     }
@@ -1724,11 +1786,856 @@ pub const CommandQueue = enum(u8) {
 };
 
 pub const CommandList = opaque {
-    pub const Parameters = struct {
+    pub const Error = error{
+        CommandListFailedToCreate,
+    };
+
+    pub const Descriptor = struct {
         enable_immediate_execution: bool = true,
         upload_chunk_size: usize = 64 * 1024,
         scratch_chunk_size: usize = 64 * 1024,
         scratch_max_memory: usize = 1024 * 1024 * 1024,
         queue: CommandQueue = .graphics,
     };
+
+    pub inline fn open(self: *CommandList) void {
+        impl.commandListOpen(self);
+    }
+
+    pub inline fn close(self: *CommandList) void {
+        impl.commandListClose(self);
+    }
+
+    pub inline fn clearState(self: *CommandList) void {
+        impl.commandListClearState(self);
+    }
+
+    pub inline fn clearTextureFloat(
+        self: *CommandList,
+        texture: *Texture,
+        subresources: Texture.SubresourceSet,
+        clear_value: [4]f32,
+    ) void {
+        impl.commandListClearTextureFloat(self, texture, subresources, clear_value);
+    }
+
+    pub inline fn clearDepthStencilTexture(
+        self: *CommandList,
+        texture: *Texture,
+        subresources: Texture.SubresourceSet,
+        clear_depth: bool,
+        depth: f32,
+        clear_stencil: bool,
+        stencil: u8,
+    ) void {
+        impl.commandListClearDepthStencilTexture(
+            self,
+            texture,
+            subresources,
+            clear_depth,
+            depth,
+            clear_stencil,
+            stencil,
+        );
+    }
+
+    pub inline fn clearTextureUint(
+        self: *Texture,
+        texture: *Texture,
+        subresources: Texture.SubresourceSet,
+        clear_value: u32,
+    ) void {
+        impl.commandListClearTextureUint(self, texture, subresources, clear_value);
+    }
+
+    pub inline fn copyTextureToTexture(
+        self: *CommandList,
+        dst: *Texture,
+        dst_slice: Texture.Slice,
+        src: *Texture,
+        src_slice: Texture.Slice,
+    ) void {
+        impl.commandListCopyTextureToTexture(self, dst, dst_slice, src, src_slice);
+    }
+
+    pub inline fn copyTextureToStagingTexture(
+        self: *CommandList,
+        dst: *StagingTexture,
+        dst_slice: Texture.Slice,
+        src: *Texture,
+        src_slice: Texture.Slice,
+    ) void {
+        impl.commandListCopyToStagingTexture(self, dst, dst_slice, src, src_slice);
+    }
+
+    pub inline fn copyStagingTextureToTexture(
+        self: *CommandList,
+        dst: *Texture,
+        dst_slice: Texture.Slice,
+        src: *StagingTexture,
+        src_slice: Texture.Slice,
+    ) void {
+        impl.commandListCopyStagingTextureToTexture(self, dst, dst_slice, src, src_slice);
+    }
+
+    pub inline fn writeTexture(
+        self: *CommandList,
+        dst: *Texture,
+        array_slice: u32,
+        mip_level: u32,
+        data: []const u8,
+        row_pitch: usize,
+        depth_pitch: usize,
+    ) void {
+        impl.commandListWriteTexture(
+            self,
+            dst,
+            array_slice,
+            mip_level,
+            data,
+            row_pitch,
+            depth_pitch,
+        );
+    }
+
+    pub inline fn resolveTexture(
+        self: *CommandList,
+        dst: *Texture,
+        dst_subresources: Texture.SubresourceSet,
+        src: *Texture,
+        src_subresources: Texture.SubresourceSet,
+    ) void {
+        impl.commandListResolveTexture(
+            self,
+            dst,
+            dst_subresources,
+            src,
+            src_subresources,
+        );
+    }
+
+    pub inline fn writeBuffer(
+        self: *CommandList,
+        dst: *Buffer,
+        data: []const u8,
+        offset: ?u64,
+    ) void {
+        impl.commandListWriteBuffer(self, dst, data, offset orelse 0);
+    }
+
+    pub inline fn clearBufferUint(
+        self: *CommandList,
+        buffer: *Buffer,
+        value: u32,
+    ) void {
+        impl.commandListClearBufferUint(self, buffer, value);
+    }
+
+    pub inline fn copyBufferToBuffer(
+        self: *CommandList,
+        dst: *Buffer,
+        dst_offset: u64,
+        src: *Buffer,
+        src_offset: u64,
+        byte_size: u64,
+    ) void {
+        impl.commandListCopyBufferToBuffer(
+            self,
+            dst,
+            dst_offset,
+            src,
+            src_offset,
+            byte_size,
+        );
+    }
+
+    pub inline fn setPushConstants(
+        self: *CommandList,
+        data: []const u8,
+    ) void {
+        impl.commandListSetPushConstants(self, data);
+    }
+
+    pub inline fn setGraphicsState(
+        self: *CommandList,
+        state: *const GraphicsState,
+    ) void {
+        impl.commandListSetGraphicsState(self, state);
+    }
+
+    pub inline fn draw(
+        self: *CommandList,
+        args: DrawArguments,
+    ) void {
+        impl.commandListDraw(self, args);
+    }
+
+    pub inline fn drawIndexed(
+        self: *CommandList,
+        args: DrawArguments,
+    ) void {
+        impl.commandListDrawIndexed(self, args);
+    }
+
+    pub inline fn drawIndirect(
+        self: *CommandList,
+        offset_bytes: u32,
+        draw_count: ?u32,
+    ) void {
+        impl.commandListDrawIndirect(self, offset_bytes, draw_count orelse 1);
+    }
+
+    pub inline fn drawIndexedIndirect(
+        self: *CommandList,
+        offset_bytes: u32,
+        draw_count: ?u32,
+    ) void {
+        impl.commandListDrawIndexedIndirect(self, offset_bytes, draw_count orelse 1);
+    }
+
+    pub inline fn setComputeState(
+        self: *CommandList,
+        state: *const ComputeState,
+    ) void {
+        impl.commandListSetComputeState(self, state);
+    }
+
+    pub inline fn dispatch(
+        self: *CommandList,
+        thread_group_count_x: u32,
+        thread_group_count_y: ?u32,
+        thread_group_count_z: ?u32,
+    ) void {
+        impl.commandListDispatch(
+            self,
+            thread_group_count_x,
+            thread_group_count_y orelse 1,
+            thread_group_count_z orelse 1,
+        );
+    }
+
+    pub inline fn dispatchIndirect(
+        self: *CommandList,
+        offset_bytes: u32,
+    ) void {
+        impl.commandListDispatchIndirect(self, offset_bytes);
+    }
+
+    pub inline fn setMeshletState(
+        self: *CommandList,
+        state: *const MeshletState,
+    ) void {
+        impl.commandListSetMeshletState(self, state);
+    }
+
+    pub inline fn dispatchMesh(
+        self: *CommandList,
+        thread_group_count_x: u32,
+        thread_group_count_y: ?u32,
+        thread_group_count_z: ?u32,
+    ) void {
+        impl.commandListDispatchMesh(
+            self,
+            thread_group_count_x,
+            thread_group_count_y orelse 1,
+            thread_group_count_z orelse 1,
+        );
+    }
+
+    // rt
+
+    pub inline fn beginTimerQuery(
+        self: *CommandList,
+        query: *TimerQuery,
+    ) void {
+        impl.commandListBeginTimerQuery(self, query);
+    }
+
+    pub inline fn endTimerQuery(
+        self: *CommandList,
+        query: *TimerQuery,
+    ) void {
+        impl.commandListEndTimerQuery(self, query);
+    }
+
+    pub inline fn beginMarker(
+        self: *CommandList,
+        message: []const u8,
+    ) void {
+        impl.commandListBeginMarker(self, message);
+    }
+
+    pub inline fn endMarker(
+        self: *CommandList,
+    ) void {
+        impl.commandListEndMarker(self);
+    }
+
+    pub inline fn setEnableAutomaticBarriers(
+        self: *CommandList,
+        enable: bool,
+    ) void {
+        impl.commandListSetEnableAutomaticBarriers(self, enable);
+    }
+
+    pub fn setResourceStatesForFramebuffer(
+        self: *CommandList,
+        framebuffer: *Framebuffer,
+    ) void {
+        const desc = framebuffer.getDescriptor();
+        for (desc.colour_attachments.buffer[0..desc.colour_attachments.len]) |attachment| {
+            self.setTextureState(attachment.texture, attachment.subresources, .{
+                .render_target = true,
+            });
+        }
+
+        if (desc.depth_attachment.valid()) {
+            self.setTextureState(desc.depth_attachment.texture, desc.depth_attachment.subresources, .{
+                .depth_write = !desc.depth_attachment.read_only,
+                .depth_read = desc.depth_attachment.read_only,
+            });
+        }
+    }
+
+    pub inline fn setEnableUAVBarriersForTexture(
+        self: *CommandList,
+        texture: *Texture,
+        enable: bool,
+    ) void {
+        impl.commandListSetEnableUAVBarriersForTexture(self, texture, enable);
+    }
+
+    pub inline fn setEnableUAVBarriersForBuffer(
+        self: *CommandList,
+        buffer: *Buffer,
+        enable: bool,
+    ) void {
+        impl.commandListSetEnableUAVBarriersForBuffer(self, buffer, enable);
+    }
+
+    pub inline fn beginTrackingTextureState(
+        self: *CommandList,
+        texture: *Texture,
+        subresources: Texture.SubresourceSet,
+        state: ResourceStates,
+    ) void {
+        impl.commandListBeginTrackingTextureState(self, texture, subresources, state);
+    }
+
+    pub inline fn beginTrackingBufferState(
+        self: *CommandList,
+        buffer: *Buffer,
+        state: ResourceStates,
+    ) void {
+        impl.commandListBeginTrackingBufferState(self, buffer, state);
+    }
+
+    pub inline fn setTextureState(
+        self: *CommandList,
+        texture: *Texture,
+        subresources: Texture.SubresourceSet,
+        state: ResourceStates,
+    ) void {
+        impl.commandListSetTextureState(self, texture, subresources, state);
+    }
+
+    pub inline fn setBufferState(
+        self: *CommandList,
+        buffer: *Buffer,
+        state: ResourceStates,
+    ) void {
+        impl.commandListSetBufferState(self, buffer, state);
+    }
+
+    pub inline fn setPermanentTextureState(
+        self: *CommandList,
+        texture: *Texture,
+        state: ResourceStates,
+    ) void {
+        impl.commandListSetPermanentTextureState(self, texture, state);
+    }
+
+    pub inline fn setPermanentBufferState(
+        self: *CommandList,
+        buffer: *Buffer,
+        state: ResourceStates,
+    ) void {
+        impl.commandListSetPermanentBufferState(self, buffer, state);
+    }
+
+    pub inline fn commitBarriers(
+        self: *CommandList,
+    ) void {
+        impl.commandListCommitBarriers(self);
+    }
+
+    pub inline fn getTextureSubresourceState(
+        self: *CommandList,
+        texture: *Texture,
+        array_slice: ArraySlice,
+        mip_level: MipLevel,
+    ) ResourceStates {
+        return impl.commandListGetTextureSubresourceState(
+            self,
+            texture,
+            array_slice,
+            mip_level,
+        );
+    }
+
+    pub inline fn getBufferState(
+        self: *CommandList,
+        buffer: *Buffer,
+    ) ResourceStates {
+        return impl.commandListGetBufferState(self, buffer);
+    }
+
+    pub inline fn getDescriptor(
+        self: *CommandList,
+    ) *const Descriptor {
+        return impl.commandListGetDescriptor(self);
+    }
+};
+
+pub const Device = opaque {
+    pub const Error = error{
+        DeviceFailedToCreate,
+    };
+
+    pub const LostReason = enum {
+        undefined,
+        destroyed,
+    };
+
+    pub const LostCallback = *const fn (
+        reason: LostReason,
+        message: []const u8,
+    ) void;
+
+    pub const Descriptor = struct {
+        label: []const u8,
+        lost_callback: ?LostCallback = null,
+    };
+
+    pub inline fn createSwapChain(self: *Device, surface: ?*Surface, descriptor: *const SwapChain.Descriptor) !*SwapChain {
+        return try impl.deviceCreateSwapChain(self, surface, descriptor);
+    }
+
+    pub inline fn createHeap(self: *Device, desc: *const Heap.Descriptor) !*Heap {
+        return try impl.deviceCreateHeap(self, desc);
+    }
+
+    pub inline fn createTexture(self: *Device, desc: *const Texture.Descriptor) !*Texture {
+        return try impl.deviceCreateTexture(self, desc);
+    }
+    pub inline fn getTextureMemoryRequirements(self: *Device, texture: *Texture) MemoryRequirements {
+        return impl.deviceGetTextureMemoryRequirements(self, texture);
+    }
+    pub inline fn bindTextureMemory(
+        self: *Device,
+        texure: *Texture,
+        heap: *Heap,
+        offset: u64,
+    ) bool {
+        return impl.deviceBindTextureMemory(self, texure, heap, offset);
+    }
+
+    pub inline fn createStagingTexture(
+        self: *Device,
+        desc: *const StagingTexture.Descriptor,
+        access: CpuAccessMode,
+    ) !*StagingTexture {
+        return try impl.deviceCreateStagingTexture(self, desc, access);
+    }
+    pub inline fn mapStagingTexture(
+        self: *Device,
+        slice: Texture.Slice,
+        access: CpuAccessMode,
+        out_row_pitch: *usize,
+    ) ![]u8 {
+        return try impl.deviceMapStagingTexture(self, slice, access, out_row_pitch);
+    }
+    pub inline fn mapStagingTextureConst(
+        self: *Device,
+        slice: Texture.Slice,
+        access: CpuAccessMode,
+        out_row_pitch: *usize,
+    ) ![]const u8 {
+        return try impl.deviceMapStagingTextureConst(self, slice, access, out_row_pitch);
+    }
+    pub inline fn unmapStagingTexture(
+        self: *Device,
+        slice: Texture.Slice,
+    ) void {
+        impl.deviceUnmapStagingTexture(self, slice);
+    }
+
+    pub inline fn createBuffer(self: *Device, desc: *const Buffer.Descriptor) !*Buffer {
+        return try impl.deviceCreateBuffer(self, desc);
+    }
+    pub inline fn mapBuffer(
+        self: *Device,
+        buffer: *Buffer,
+        access: CpuAccessMode,
+    ) ![]u8 {
+        return try impl.deviceMapBuffer(self, buffer, access);
+    }
+    pub inline fn mapBufferConst(
+        self: *Device,
+        buffer: *Buffer,
+        access: CpuAccessMode,
+    ) ![]const u8 {
+        return try impl.deviceMapBufferConst(self, buffer, access);
+    }
+    pub inline fn unmapBuffer(
+        self: *Device,
+        buffer: *Buffer,
+    ) void {
+        impl.deviceUnmapBuffer(self, buffer);
+    }
+    pub inline fn getBufferMemoryRequirements(
+        self: *Device,
+        buffer: *Buffer,
+    ) MemoryRequirements {
+        return impl.deviceGetBufferMemoryRequirements(self, buffer);
+    }
+    pub inline fn bindBufferMemory(
+        self: *Device,
+        buffer: *Buffer,
+        heap: *Heap,
+        offset: u64,
+    ) bool {
+        return impl.deviceBindBufferMemory(self, buffer, heap, offset);
+    }
+
+    pub inline fn createShader(
+        self: *Device,
+        desc: *const Shader.Descriptor,
+        binary: []const u8,
+    ) !*Shader {
+        return try impl.deviceCreateShader(self, desc, binary);
+    }
+    pub inline fn createShaderSpecialisation(
+        self: *Device,
+        shader: *Shader,
+        constants: []const Shader.Specialisation,
+    ) !*Shader {
+        return try impl.deviceCreateShaderSpecialisation(self, shader, constants);
+    }
+    pub inline fn createShaderLibrary(
+        self: *Device,
+        binary: []const u8,
+    ) !*ShaderLibrary {
+        return try impl.deviceCreateShaderLibrary(self, binary);
+    }
+
+    pub inline fn createSampler(
+        self: *Device,
+        desc: *const Sampler.Descriptor,
+    ) !*Sampler {
+        return try impl.deviceCreateSampler(self, desc);
+    }
+
+    pub inline fn createInputLayout(
+        self: *Device,
+        attributes: []const VertexAttributeDescriptor,
+        vertex_shader: ?*Shader,
+    ) !*InputLayout {
+        return try impl.deviceCreateInputLayout(self, attributes, vertex_shader);
+    }
+
+    pub inline fn createEventQuery(
+        self: *Device,
+    ) !*EventQuery {
+        return try impl.deviceCreateEventQuery(self);
+    }
+    pub inline fn setEventQuery(
+        self: *Device,
+        query: *EventQuery,
+        queue: CommandQueue,
+    ) void {
+        impl.deviceSetEventQuery(self, query, queue);
+    }
+    pub inline fn pollEventQuery(
+        self: *Device,
+        query: *EventQuery,
+    ) bool {
+        return impl.devicePollEventQuery(self, query);
+    }
+    pub inline fn waitEventQuery(
+        self: *Device,
+        query: *EventQuery,
+    ) void {
+        impl.deviceWaitEventQuery(self, query);
+    }
+    pub inline fn resetEventQuery(
+        self: *Device,
+        query: *EventQuery,
+    ) void {
+        impl.deviceResetEventQuery(self, query);
+    }
+
+    pub inline fn createTimerQuery(
+        self: *Device,
+    ) !*TimerQuery {
+        return try impl.deviceCreateTimerQuery(self);
+    }
+    pub inline fn pollTimerQuery(
+        self: *Device,
+        query: *TimerQuery,
+    ) bool {
+        return impl.devicePollTimerQuery(self, query);
+    }
+    pub inline fn getTimerQueryTime(
+        self: *Device,
+        query: *TimerQuery,
+    ) f32 {
+        return impl.deviceGetTimerQueryTime(self, query);
+    }
+    pub inline fn resetTimerQuery(
+        self: *Device,
+        query: *TimerQuery,
+    ) void {
+        impl.deviceResetTimerQuery(self, query);
+    }
+
+    pub inline fn createFramebuffer(
+        self: *Device,
+        desc: *const Framebuffer.Descriptor,
+    ) !*Framebuffer {
+        return try impl.deviceCreateFramebuffer(self, desc);
+    }
+
+    pub inline fn createGraphicsPipeline(
+        self: *Device,
+        desc: *const GraphicsPipeline.Descriptor,
+        framebuffer: *Framebuffer,
+    ) !*GraphicsPipeline {
+        return try impl.deviceCreateGraphicsPipeline(self, desc, framebuffer);
+    }
+
+    pub inline fn createComputePipeline(
+        self: *Device,
+        desc: *const ComputePipeline.Descriptor,
+    ) !*ComputePipeline {
+        return try impl.deviceCreateComputePipeline(self, desc);
+    }
+
+    pub inline fn createMeshletPipeline(
+        self: *Device,
+        desc: *const MeshletPipeline.Descriptor,
+        framebuffer: *Framebuffer,
+    ) !*MeshletPipeline {
+        return try impl.deviceCreateMeshletPipeline(self, desc, framebuffer);
+    }
+
+    pub inline fn createBindingLayout(
+        self: *Device,
+        desc: *const BindingLayout.Descriptor,
+    ) !*BindingLayout {
+        return try impl.deviceCreateBindingLayout(self, desc);
+    }
+    pub inline fn createBindlessLayout(
+        self: *Device,
+        desc: *const BindingLayout.BindlessDescriptor,
+    ) !*BindingLayout {
+        return try impl.deviceCreateBindlessLayout(self, desc);
+    }
+
+    pub inline fn createBindingSet(
+        self: *Device,
+        desc: *const BindingSet.Descriptor,
+        layout: *BindingLayout,
+    ) !*BindingSet {
+        return try impl.deviceCreateBindingSet(self, desc, layout);
+    }
+    pub inline fn createDescriptorTable(
+        self: *Device,
+        layout: *BindingLayout,
+    ) !*DescriptorTable {
+        return try impl.deviceCreateDescriptorTable(self, layout);
+    }
+
+    pub inline fn resizeDescriptorTable(
+        self: *Device,
+        descriptor_table: *DescriptorTable,
+        new_size: u32,
+        keep_contents: ?bool,
+    ) void {
+        impl.deviceResizeDescriptorTable(
+            self,
+            descriptor_table,
+            new_size,
+            keep_contents orelse true,
+        );
+    }
+    pub inline fn writeDescriptorTable(
+        self: *Device,
+        descriptor_table: *DescriptorTable,
+        item: *const BindingSet.Item,
+    ) bool {
+        return impl.deviceWriteDescriptorTable(self, descriptor_table, item);
+    }
+
+    pub inline fn createCommandList(
+        self: *Device,
+        desc: ?*const CommandList.Descriptor,
+    ) !*CommandList {
+        return try impl.deviceCreateCommandList(self, desc orelse &.{});
+    }
+    pub inline fn executeCommandLists(
+        self: *Device,
+        lists: []const *CommandList,
+        execution: ?CommandQueue,
+    ) u64 {
+        return impl.deviceExecuteCommandLists(self, lists, execution orelse .graphics);
+    }
+    pub inline fn queueWaitForCommandList(
+        self: *Device,
+        wait: CommandQueue,
+        execution: CommandQueue,
+        instance: u64,
+    ) void {
+        impl.deviceQueueWaitForCommandList(self, wait, execution, instance);
+    }
+    pub inline fn waitForIdle(self: *Device) void {
+        impl.deviceWaitForIdle(self);
+    }
+
+    pub inline fn cleanGarbage(self: *Device) void {
+        impl.deviceCleanGarbage(self);
+    }
+
+    pub inline fn destroy(self: *Device) void {
+        impl.deviceDestroy(self);
+    }
+};
+
+pub const Surface = opaque {
+    pub const Error = error{
+        SurfaceFailedToCreate,
+    };
+
+    pub const Descriptor = struct {
+        native_handle: *anyopaque,
+        native_handle_size: usize,
+    };
+
+    pub inline fn destroy(self: *Surface) void {
+        impl.surfaceDestroy(self);
+    }
+};
+
+pub const PhysicalDevice = opaque {
+    pub const Error = error{
+        PhysicalDeviceFailedToCreate,
+    };
+
+    pub const PowerPreference = enum(u8) {
+        undefined = 0,
+        low_power = 1,
+        high_performance = 2,
+    };
+
+    pub const Options = struct {
+        compatible_surface: ?*Surface = null,
+        power_preference: PowerPreference = .undefined,
+    };
+
+    pub const Vendor = enum(u32) {
+        amd = 0x1002,
+        apple = 0x106b,
+        arm = 0x13B5,
+        google = 0x1AE0,
+        img_tec = 0x1010,
+        intel = 0x8086,
+        mesa = 0x10005,
+        microsoft = 0x1414,
+        nvidia = 0x10DE,
+        qualcomm = 0x5143,
+        samsung = 0x144d,
+        _,
+    };
+
+    pub const Properties = struct {
+        name: []const u8,
+        vendor: Vendor,
+    };
+
+    pub inline fn createDevice(self: *PhysicalDevice, desc: *const Device.Descriptor) Device.Error!*Device {
+        return impl.physicalDeviceCreateDevice(self, desc);
+    }
+
+    pub inline fn getProperties(self: *PhysicalDevice, out_props: *Properties) bool {
+        return impl.physicalDeviceGetProperties(self, out_props);
+    }
+
+    pub inline fn destroy(self: *PhysicalDevice) void {
+        impl.physicalDeviceDestroy(self);
+    }
+};
+
+pub const SwapChain = opaque {
+    pub const Error = error{
+        SwapChainFailedToCreate,
+        SwapChainFailedToPresent,
+        SwapChainFailedToResize,
+    };
+
+    pub const PresentMode = enum(u32) {
+        immediate = 0x00000000,
+        mailbox = 0x00000001,
+        fifo = 0x00000002,
+    };
+
+    pub const Descriptor = struct {
+        label: ?[]const u8 = null,
+        // usage: Texture.UsageFlags,
+        format: Format,
+        width: u32,
+        height: u32,
+        present_mode: PresentMode,
+    };
+
+    // pub inline fn getCurrentTexture(self: *SwapChain) ?*Texture {
+    //     return try impl.swapChainGetCurrentTexture(self);
+    // }
+
+    // pub inline fn getCurrentTextureView(self: *SwapChain) ?*TextureView {
+    //     return try impl.swapChainGetCurrentTextureView(self);
+    // }
+
+    pub inline fn present(self: *SwapChain) !void {
+        return try impl.swapChainPresent(self);
+    }
+
+    pub inline fn resize(self: *SwapChain, size: [2]u32) !void {
+        return try impl.swapChainResize(self, size);
+    }
+
+    pub inline fn destroy(self: *SwapChain) void {
+        return impl.swapChainDestroy(self);
+    }
+};
+
+pub const Instance = opaque {
+    pub const Error = error{
+        InstanceFailedToCreate,
+    };
+
+    pub const Descriptor = struct {
+        debug: bool = @import("builtin").mode == .Debug,
+    };
+
+    pub inline fn createSurface(self: *Instance, desc: *const Surface.Descriptor) Surface.Error!*Surface {
+        return impl.instanceCreateSurface(self, desc);
+    }
+
+    pub inline fn requestPhysicalDevice(self: *Instance, desc: *const PhysicalDevice.Options) PhysicalDevice.Error!*PhysicalDevice {
+        return impl.instanceRequestPhysicalDevice(self, desc);
+    }
+
+    pub inline fn destroy(self: *Instance) void {
+        impl.instanceDestroy(self);
+    }
 };
