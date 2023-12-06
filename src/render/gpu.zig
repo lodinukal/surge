@@ -2,6 +2,7 @@ const std = @import("std");
 
 const commonutil = @import("../util.zig");
 
+pub const state_tracker = @import("state.zig");
 pub const impl = @import("impl.zig");
 // pub const impl = @import("d3d11/main.zig");
 pub const procs = @import("procs.zig");
@@ -313,7 +314,6 @@ pub const CpuAccessMode = enum(u8) {
 };
 
 pub const ResourceStates = packed struct {
-    common: bool,
     constant_buffer: bool,
     vertex_buffer: bool,
     index_buffer: bool,
@@ -337,7 +337,7 @@ pub const ResourceStates = packed struct {
     opacity_micromap_write: bool,
     opacity_micromap_build_input: bool,
 
-    _padding: u9 = 0,
+    _padding: u10 = 0,
 };
 
 pub const MipLevel = u32;
@@ -465,8 +465,34 @@ pub const Texture = opaque {
         return impl.textureGetDescriptor(self);
     }
 
+    pub inline fn getView(self: *Texture, desc: *const TextureView.Descriptor) !*TextureView {
+        return impl.textureGetView(self, desc);
+    }
+
     pub inline fn destroy(self: *Texture) void {
         return impl.textureDestroy(self);
+    }
+};
+
+pub const TextureView = opaque {
+    pub const Error = error{
+        TextureViewFailedToCreate,
+    };
+
+    pub const Descriptor = struct {
+        state: ResourceStates = .{
+            // .unordered_access, uav
+            // .shader_resource, srv
+            // .render_target, rtv
+            // .depth_read or .depth_write, readonly and writable dsv
+        },
+        format: Format = .unknown,
+        subresources: Texture.SubresourceSet = Texture.SubresourceSet.all,
+        dimension: TextureDimension = .unknown,
+    };
+
+    pub inline fn destroy(self: *TextureView) void {
+        return impl.textureViewDestroy(self);
     }
 };
 
@@ -664,31 +690,12 @@ pub const Shader = opaque {
         return impl.shaderGetDescriptor(self);
     }
 
-    pub inline fn getBytecode(self: *const Shader) *[]const u8 {
+    pub inline fn getBytecode(self: *const Shader) []const u8 {
         return impl.shaderGetBytecode(self);
     }
 
     pub inline fn destroy(self: *Shader) void {
         return impl.shaderDestroy(self);
-    }
-};
-
-// ShaderLibrary
-pub const ShaderLibrary = struct {
-    pub const Error = error{
-        ShaderLibraryFailedToCreate,
-    };
-
-    pub inline fn getBytecode(self: *const ShaderLibrary) *[]const u8 {
-        return impl.shaderLibraryGetBytecode(self);
-    }
-
-    pub inline fn getShader(self: *ShaderLibrary, entry_point: []const u8, ty: Shader.Type) ?*Shader {
-        return impl.shaderLibraryGetShader(self, entry_point, ty);
-    }
-
-    pub inline fn destroy(self: *ShaderLibrary) void {
-        return impl.shaderLibraryDestroy(self);
     }
 };
 
@@ -824,7 +831,7 @@ pub const DepthStencilState = struct {
     pub const Op = enum {
         keep,
         zero,
-        rpelace,
+        replace,
         increment_and_clamp,
         decrement_and_clamp,
         invert,
@@ -2321,12 +2328,6 @@ pub const Device = opaque {
         constants: []const Shader.Specialisation,
     ) !*Shader {
         return try impl.deviceCreateShaderSpecialisation(self, shader, constants);
-    }
-    pub inline fn createShaderLibrary(
-        self: *Device,
-        binary: []const u8,
-    ) !*ShaderLibrary {
-        return try impl.deviceCreateShaderLibrary(self, binary);
     }
 
     pub inline fn createSampler(

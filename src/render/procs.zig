@@ -11,7 +11,11 @@ pub const Procs = struct {
 
     // Texture
     textureGetDescriptor: *const fn (texture: *gpu.Texture) *const gpu.Texture.Descriptor,
+    textureGetView: *const fn (texture: *gpu.Texture, desc: *const gpu.TextureView.Descriptor) gpu.TextureView.Error!*gpu.TextureView,
     textureDestroy: *const fn (texture: *gpu.Texture) void,
+
+    // TextureView
+    textureViewDestroy: *const fn (texture_view: *gpu.TextureView) void,
 
     // StagingTexture
     stagingTextureGetDescriptor: *const fn (stagingTexture: *gpu.StagingTexture) *const gpu.Texture.Descriptor,
@@ -27,13 +31,8 @@ pub const Procs = struct {
 
     // Shader
     shaderGetDescriptor: *const fn (shader: *const gpu.Shader) *const gpu.Shader.Descriptor,
-    shaderGetBytecode: *const fn (shader: *const gpu.Shader) *[]const u8,
+    shaderGetBytecode: *const fn (shader: *const gpu.Shader) []const u8,
     shaderDestroy: *const fn (shader: *gpu.Shader) void,
-
-    // ShaderLibrary
-    shaderLibraryGetBytecode: *const fn (shaderLibrary: *const gpu.ShaderLibrary) *[]const u8,
-    shaderLibraryGetShader: *const fn (shaderLibrary: *const gpu.ShaderLibrary, name: []const u8, ty: gpu.Shader.Type) ?*gpu.Shader,
-    shaderLibraryDestroy: *const fn (shaderLibrary: *gpu.ShaderLibrary) void,
 
     // Sampler
     samplerGetDescriptor: *const fn (sampler: *const gpu.Sampler) *const gpu.Sampler.Descriptor,
@@ -367,10 +366,6 @@ pub const Procs = struct {
         shader: *gpu.Shader,
         constants: []const gpu.Shader.Specialisation,
     ) gpu.Shader.Error!*gpu.Shader,
-    deviceCreateShaderLibrary: *const fn (
-        device: *gpu.Device,
-        binary: []const u8,
-    ) gpu.ShaderLibrary.Error!*gpu.ShaderLibrary,
     deviceCreateSampler: *const fn (
         device: *gpu.Device,
         desc: *const gpu.Sampler.Descriptor,

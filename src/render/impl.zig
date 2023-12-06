@@ -50,8 +50,17 @@ pub inline fn textureGetDescriptor(texture: *gpu.Texture) *const gpu.Texture.Des
     return procs.Procs.loaded_procs.?.textureGetDescriptor(texture);
 }
 
+pub inline fn textureGetView(texture: *gpu.Texture, desc: *const gpu.TextureView.Descriptor) !*gpu.TextureView {
+    return procs.Procs.loaded_procs.?.textureGetView(texture, desc);
+}
+
 pub inline fn textureDestroy(texture: *gpu.Texture) void {
     return procs.Procs.loaded_procs.?.textureDestroy(texture);
+}
+
+// TextureView
+pub inline fn textureViewDestroy(textureView: *gpu.TextureView) void {
+    return procs.Procs.loaded_procs.?.textureViewDestroy(textureView);
 }
 
 // StagingTexture
@@ -86,25 +95,12 @@ pub inline fn shaderGetDescriptor(shader: *const gpu.Shader) *const gpu.Shader.D
     return procs.Procs.loaded_procs.?.shaderGetDescriptor(shader);
 }
 
-pub inline fn shaderGetBytecode(shader: *const gpu.Shader) *[]const u8 {
+pub inline fn shaderGetBytecode(shader: *const gpu.Shader) []const u8 {
     return procs.Procs.loaded_procs.?.shaderGetBytecode(shader);
 }
 
 pub inline fn shaderDestroy(shader: *gpu.Shader) void {
     return procs.Procs.loaded_procs.?.shaderDestroy(shader);
-}
-
-// ShaderLibrary
-pub inline fn shaderLibraryGetBytecode(shaderLibrary: *const gpu.ShaderLibrary) *[]const u8 {
-    return procs.Procs.loaded_procs.?.shaderLibraryGetBytecode(shaderLibrary);
-}
-
-pub inline fn shaderLibraryGetShader(shaderLibrary: *const gpu.ShaderLibrary, name: []const u8, ty: gpu.Shader.Type) ?*gpu.Shader {
-    return procs.Procs.loaded_procs.?.shaderLibraryGetShader(shaderLibrary, name, ty);
-}
-
-pub inline fn shaderLibraryDestroy(shaderLibrary: *gpu.ShaderLibrary) void {
-    return procs.Procs.loaded_procs.?.shaderLibraryDestroy(shaderLibrary);
 }
 
 // Sampler
@@ -822,13 +818,6 @@ pub inline fn deviceCreateShaderSpecialisation(
     constants: []const gpu.Shader.Specialisation,
 ) gpu.Shader.Error!*gpu.Shader {
     return procs.Procs.loaded_procs.?.deviceCreateShaderSpecialisation(device, shader, constants);
-}
-
-pub inline fn deviceCreateShaderLibrary(
-    device: *gpu.Device,
-    binary: []const u8,
-) gpu.ShaderLibrary.Error!*gpu.ShaderLibrary {
-    return procs.Procs.loaded_procs.?.deviceCreateShaderLibrary(device, binary);
 }
 
 pub inline fn deviceCreateSampler(
