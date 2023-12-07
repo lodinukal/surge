@@ -477,6 +477,8 @@ pub const Texture = opaque {
 pub const TextureView = opaque {
     pub const Error = error{
         TextureViewFailedToCreate,
+        TextureViewUnsupportedDimensionForUAV,
+        TextureViewUnsupportedDimensionForDSV,
     };
 
     pub const Descriptor = struct {

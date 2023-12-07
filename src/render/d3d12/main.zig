@@ -13,6 +13,8 @@ const FALSE = win32.foundation.FALSE;
 
 const conv = @import("conv.zig");
 
+const winappimpl = @import("../../app/platform/windows.zig");
+
 const d3dcommon = @import("../d3d/common.zig");
 
 const common = @import("../../core/common.zig");
@@ -24,6 +26,7 @@ pub const procs: gpu.procs.Procs = .{ // Heap
 
     // Texture
     .textureGetDescriptor = textureGetDescriptor,
+    .textureGetView = textureGetView,
     .textureDestroy = textureDestroy,
 
     // TextureView
@@ -577,6 +580,21 @@ pub const Heap = struct {
     }
 };
 
+pub fn textureGetDescriptor(texture: *const gpu.Texture) *const gpu.Texture.Descriptor {
+    return Texture.getDescriptor(@ptrCast(@alignCast(texture)));
+}
+
+pub fn textureGetView(
+    texture: *const gpu.Texture,
+    desc: *const gpu.TextureView.Descriptor,
+) !*gpu.TextureView {
+    return @ptrCast(@alignCast(Texture.getView(texture, desc)));
+}
+
+pub fn textureDestroy(texture: *gpu.Texture) void {
+    Texture.deinit(@alignCast(@ptrCast(texture)));
+}
+
 pub const Texture = struct {
     context: *const Context,
     resources: *DeviceResources,
@@ -616,6 +634,32 @@ pub const Texture = struct {
         d3dcommon.releaseIUnknown(d3d12.ID3D12Resource, &self.resource);
     }
 
+    fn afterInit(self: *Texture) void {
+        if (self.descriptor.debug_label) |dbgl| {
+            var scratch = common.ScratchSpace(256){};
+            const temp_allocator = scratch.init().allocator();
+
+            self.resource.?.ID3D12Object_SetName(winappimpl.convertToUtf16WithAllocator(
+                temp_allocator,
+                dbgl,
+            ) orelse
+                "<dbgname>");
+        }
+
+        if (self.descriptor.is_uav) {
+            // TODO: clear mip level uavs
+            // resize the buffer
+            // also make sure its destroyed
+            // and fill it with the invalid descriptor index
+        }
+
+        self.plane_count = self.resources.getFormatPlaneCount(self.resource_desc.Format);
+    }
+
+    pub fn getDescriptor(self: *const Texture) *const gpu.Texture.Descriptor {
+        return &self.descriptor;
+    }
+
     pub fn getView(
         self: *const Texture,
         desc: *const gpu.TextureView.Descriptor,
@@ -630,6 +674,7 @@ pub fn textureViewDestroy(texture_view: *gpu.TextureView) void {
 
 pub const TextureView = struct {
     pub const HeapSource = enum {
+        undefined,
         rtv,
         dsv,
         srv,
@@ -639,28 +684,54 @@ pub const TextureView = struct {
     d3d_descriptor: DescriptorIndex,
     descriptor: gpu.TextureView.Descriptor,
     parent: *Texture,
+    source_heap: HeapSource = .undefined,
 
     pub fn init(
         parent_texture: *Texture,
         desc: *const gpu.TextureView.Descriptor,
     ) !*TextureView {
         const resources = parent_texture.resources;
-        const d3d_descriptor = resources.srv_heap.allocateOneDescriptor() catch
-            return gpu.TextureView.Error.TextureViewFailedToCreate;
-        errdefer resources.srv_heap.releaseDescriptor(d3d_descriptor);
 
         const self = allocator.create(TextureView) catch
             return gpu.TextureView.Error.TextureViewFailedToCreate;
         errdefer allocator.destroy(self);
         self.* = .{
             .resources = resources,
-            .d3d_descriptor = d3d_descriptor,
+            .d3d_descriptor = undefined,
             .descriptor = desc.*,
             .parent = parent_texture,
         };
 
-        if (self.desc.state.shader_resource) {
+        if (self.descriptor.state.shader_resource) {
+            self.d3d_descriptor = resources.srv_heap.allocateOneDescriptor() catch
+                return gpu.TextureView.Error.TextureViewFailedToCreate;
+            errdefer resources.srv_heap.releaseDescriptor(self.d3d_descriptor);
+
             try self.createSRV();
+            self.resources.srv_heap.copyToShaderVisibleHeap(self.d3d_descriptor, null);
+            self.source_heap = .srv;
+        } else if (self.descriptor.state.unordered_access) {
+            self.d3d_descriptor = resources.srv_heap.allocateOneDescriptor() catch
+                return gpu.TextureView.Error.TextureViewFailedToCreate;
+            errdefer resources.srv_heap.releaseDescriptor(self.d3d_descriptor);
+
+            try self.createUAV();
+            self.resources.srv_heap.copyToShaderVisibleHeap(self.d3d_descriptor, null);
+            self.source_heap = .srv;
+        } else if (self.descriptor.state.render_target) {
+            self.d3d_descriptor = resources.dsv_heap.allocateOneDescriptor() catch
+                return gpu.TextureView.Error.TextureViewFailedToCreate;
+            errdefer resources.dsv_heap.releaseDescriptor(self.d3d_descriptor);
+
+            try self.createRTV();
+            self.source_heap = .rtv;
+        } else if (self.descriptor.state.depth_read or self.descriptor.state.depth_write) {
+            self.d3d_descriptor = resources.dsv_heap.allocateOneDescriptor() catch
+                return gpu.TextureView.Error.TextureViewFailedToCreate;
+            errdefer resources.dsv_heap.releaseDescriptor(self.d3d_descriptor);
+
+            try self.createDSV();
+            self.source_heap = .dsv;
         }
 
         return self;
@@ -671,11 +742,12 @@ pub const TextureView = struct {
             .rtv => self.resources.rtv_heap.releaseDescriptor(self.descriptor),
             .dsv => self.resources.dsv_heap.releaseDescriptor(self.descriptor),
             .srv => self.resources.srv_heap.releaseDescriptor(self.descriptor),
+            else => {},
         }
     }
 
     fn createSRV(
-        self: *const TextureView,
+        self: *TextureView,
     ) !void {
         const subresources = self.descriptor.subresources.resolve(
             &self.parent.descriptor,
@@ -686,10 +758,10 @@ pub const TextureView = struct {
             self.descriptor.dimension = self.parent.descriptor.dimension;
 
         var srv_desc: d3d12.D3D12_SHADER_RESOURCE_VIEW_DESC = undefined;
-        srv_desc.Format = conv.convertFormat(if (self.descriptor.format == .unknown)
+        srv_desc.Format = conv.getFormatMapping(if (self.descriptor.format == .unknown)
             self.parent.descriptor.format
         else
-            self.descriptor.format);
+            self.descriptor.format).srv;
         srv_desc.Shader4ComponentMapping = d3d12.D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 
         const plane_slice: u32 = if (srv_desc.Format == .X24_TYPELESS_G8_UINT) 1 else 0;
@@ -770,11 +842,234 @@ pub const TextureView = struct {
                     .ResourceMinLODClamp = 0.0,
                 };
             },
+            else => unreachable,
         }
 
         self.parent.context.device.?.ID3D12Device_CreateShaderResourceView(self.parent.resource, &srv_desc, .{
             .ptr = self.descriptor,
         });
+    }
+
+    fn createUAV(
+        self: *TextureView,
+    ) !void {
+        const subresources = self.descriptor.subresources.resolve(
+            &self.parent.descriptor,
+            true,
+        );
+
+        if (self.descriptor.dimension == .unknown)
+            self.descriptor.dimension = self.parent.descriptor.dimension;
+
+        var uav_desc: d3d12.D3D12_UNORDERED_ACCESS_VIEW_DESC = undefined;
+        uav_desc.Format = conv.getFormatMapping(if (self.descriptor.format == .unknown)
+            self.parent.descriptor.format
+        else
+            self.descriptor.format).srv;
+
+        switch (self.parent.descriptor.dimension) {
+            .texture_1d => {
+                uav_desc.ViewDimension = .TEXTURE1D;
+                uav_desc.Anonymous.Texture1D = .{
+                    .MipSlice = subresources.base_mip_level,
+                };
+            },
+            .texture_1d_array => {
+                uav_desc.ViewDimension = .TEXTURE1DARRAY;
+                uav_desc.Anonymous.Texture1DArray = .{
+                    .MipSlice = subresources.base_mip_level,
+                    .FirstArraySlice = subresources.base_array_slice,
+                    .ArraySize = subresources.num_array_slices,
+                };
+            },
+            .texture_2d => {
+                uav_desc.ViewDimension = .TEXTURE2D;
+                uav_desc.Anonymous.Texture2D = .{
+                    .MipSlice = subresources.base_mip_level,
+                    .PlaneSlice = 0,
+                };
+            },
+            .texture_2d_array, .texture_cube, .texture_cube_array => {
+                uav_desc.ViewDimension = .TEXTURE2DARRAY;
+                uav_desc.Anonymous.Texture2DArray = .{
+                    .MipSlice = subresources.base_mip_level,
+                    .FirstArraySlice = subresources.base_array_slice,
+                    .ArraySize = subresources.num_array_slices,
+                    .PlaneSlice = 0,
+                };
+            },
+            .texture_3d => {
+                uav_desc.ViewDimension = .TEXTURE3D;
+                uav_desc.Anonymous.Texture3D = .{
+                    .MipSlice = subresources.base_mip_level,
+                    .FirstWSlice = 0,
+                    .WSize = self.parent.descriptor.depth,
+                };
+            },
+            .texture_2d_ms, .texture_2d_ms_array => {
+                return gpu.TextureView.Error.TextureViewUnsupportedDimensionForUAV;
+            },
+            else => unreachable,
+        }
+
+        self.parent.context.device.?.ID3D12Device_CreateUnorderedAccessView(
+            self.parent.resource,
+            null,
+            &uav_desc,
+            .{
+                .ptr = self.d3d_descriptor,
+            },
+        );
+    }
+
+    fn createRTV(
+        self: *TextureView,
+    ) !void {
+        const subresources = self.descriptor.subresources.resolve(
+            &self.parent.descriptor,
+            true,
+        );
+
+        var rtv_desc: d3d12.D3D12_RENDER_TARGET_VIEW_DESC = undefined;
+        rtv_desc.Format = conv.getFormatMapping(if (self.descriptor.format == .unknown)
+            self.parent.descriptor.format
+        else
+            self.descriptor.format).rtv;
+
+        switch (self.parent.descriptor.dimension) {
+            .texture_1d => {
+                rtv_desc.ViewDimension = .TEXTURE1D;
+                rtv_desc.Anonymous.Texture1D = .{
+                    .MipSlice = subresources.base_mip_level,
+                };
+            },
+            .texture_1d_array => {
+                rtv_desc.ViewDimension = .TEXTURE1DARRAY;
+                rtv_desc.Anonymous.Texture1DArray = .{
+                    .MipSlice = subresources.base_mip_level,
+                    .FirstArraySlice = subresources.base_array_slice,
+                    .ArraySize = subresources.num_array_slices,
+                };
+            },
+            .texture_2d => {
+                rtv_desc.ViewDimension = .TEXTURE2D;
+                rtv_desc.Anonymous.Texture2D = .{
+                    .MipSlice = subresources.base_mip_level,
+                    .PlaneSlice = 0,
+                };
+            },
+            .texture_2d_array, .texture_cube, .texture_cube_array => {
+                rtv_desc.ViewDimension = .TEXTURE2DARRAY;
+                rtv_desc.Anonymous.Texture2DArray = .{
+                    .MipSlice = subresources.base_mip_level,
+                    .FirstArraySlice = subresources.base_array_slice,
+                    .ArraySize = subresources.num_array_slices,
+                    .PlaneSlice = 0,
+                };
+            },
+            .texture_2d_ms => {
+                rtv_desc.ViewDimension = .TEXTURE2DMS;
+                rtv_desc.Anonymous.Texture2DMS = undefined;
+            },
+            .texture_2d_ms_array => {
+                rtv_desc.ViewDimension = .TEXTURE2DMSARRAY;
+                rtv_desc.Anonymous.Texture2DMSArray = .{
+                    .FirstArraySlice = subresources.base_array_slice,
+                    .ArraySize = subresources.num_array_slices,
+                };
+            },
+            .texture_3d => {
+                rtv_desc.ViewDimension = .TEXTURE3D;
+                rtv_desc.Anonymous.Texture3D = .{
+                    .MipSlice = subresources.base_mip_level,
+                    .FirstWSlice = subresources.base_array_slice,
+                    .WSize = subresources.num_array_slices,
+                };
+            },
+            else => unreachable,
+        }
+
+        self.parent.context.device.?.ID3D12Device_CreateRenderTargetView(
+            self.parent.resource,
+            &rtv_desc,
+            .{
+                .ptr = self.d3d_descriptor,
+            },
+        );
+    }
+
+    fn createDSV(
+        self: *TextureView,
+    ) !void {
+        const is_readonly = !self.descriptor.state.depth_write;
+
+        const subresources = self.descriptor.subresources.resolve(
+            &self.parent.descriptor,
+            true,
+        );
+
+        var dsv_desc: d3d12.D3D12_DEPTH_STENCIL_VIEW_DESC = undefined;
+        dsv_desc.Format = conv.getFormatMapping(self.descriptor.format).rtv;
+
+        if (is_readonly) {
+            dsv_desc.Flags = d3d12.D3D12_DSV_FLAGS.initFlags(.{
+                .READ_ONLY_DEPTH = true,
+                .READ_ONLY_STENCIL = (dsv_desc.Format == .D32_FLOAT_S8X24_UINT or
+                    dsv_desc.Format == .D24_UNORM_S8_UINT),
+            });
+        }
+
+        switch (self.parent.descriptor.dimension) {
+            .texture_1d => {
+                dsv_desc.ViewDimension = .TEXTURE1D;
+                dsv_desc.Anonymous.Texture1D = .{
+                    .MipSlice = subresources.base_mip_level,
+                };
+            },
+            .texture_1d_array => {
+                dsv_desc.ViewDimension = .TEXTURE1DARRAY;
+                dsv_desc.Anonymous.Texture1DArray = .{
+                    .MipSlice = subresources.base_mip_level,
+                    .FirstArraySlice = subresources.base_array_slice,
+                    .ArraySize = subresources.num_array_slices,
+                };
+            },
+            .texture_2d => {
+                dsv_desc.ViewDimension = .TEXTURE2D;
+                dsv_desc.Anonymous.Texture2D = .{
+                    .MipSlice = subresources.base_mip_level,
+                };
+            },
+            .texture_2d_array, .texture_cube, .texture_cube_array => {
+                dsv_desc.ViewDimension = .TEXTURE2DARRAY;
+                dsv_desc.Anonymous.Texture2DArray = .{
+                    .MipSlice = subresources.base_mip_level,
+                    .FirstArraySlice = subresources.base_array_slice,
+                    .ArraySize = subresources.num_array_slices,
+                };
+            },
+            .texture_2d_ms => {
+                dsv_desc.ViewDimension = .TEXTURE2DMS;
+            },
+            .texture_2d_ms_array => {
+                dsv_desc.ViewDimension = .TEXTURE2DMSARRAY;
+                dsv_desc.Anonymous.Texture2DMSArray = .{
+                    .FirstArraySlice = subresources.base_array_slice,
+                    .ArraySize = subresources.num_array_slices,
+                };
+            },
+            else => {
+                return gpu.TextureView.Error.TextureViewUnsupportedDimensionForDSV;
+            },
+        }
+
+        self.parent.context.device.?.ID3D12Device_CreateDepthStencilView(
+            self.parent.resource,
+            &dsv_desc,
+            .{
+                .ptr = self.d3d_descriptor,
+            },
+        );
     }
 };
 

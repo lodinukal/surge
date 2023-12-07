@@ -19,6 +19,10 @@ pub inline fn convertFormat(format: gpu.Format) dxgi.common.DXGI_FORMAT {
     return d3dcommon.convertFormat(format);
 }
 
+pub inline fn getFormatMapping(format: gpu.Format) d3dcommon.DxgiFormatMapping {
+    return d3dcommon.getFormatMapping(format);
+}
+
 pub fn convertShaderStage(s: gpu.Shader.Type) d3d12.D3D12_SHADER_VISIBILITY {
     if (s.vertex) return .VERTEX;
     if (s.hull) return .HULL;
