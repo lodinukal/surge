@@ -69,7 +69,7 @@ pub const Procs = struct {
     swapChainResize: *const fn (swapchain: *gpu.SwapChain, size: [2]u32) gpu.SwapChain.Error!void,
     swapChainDestroy: *const fn (swapchain: *gpu.SwapChain) void,
     // Texture
-    textureCreateView: *const fn (texture: *gpu.Texture, descriptor: ?*const gpu.TextureView.Descriptor) *gpu.TextureView,
+    textureCreateView: *const fn (texture: *gpu.Texture, descriptor: *const gpu.TextureView.Descriptor) gpu.TextureView.Error!*gpu.TextureView,
     textureDestroy: *const fn (texture: *gpu.Texture) void,
     textureGetFormat: *const fn (texture: *gpu.Texture) gpu.Texture.Format,
     textureGetDepthOrArrayLayers: *const fn (texture: *gpu.Texture) u32,

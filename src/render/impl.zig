@@ -191,7 +191,7 @@ pub inline fn swapChainDestroy(swap_chain: *gpu.SwapChain) void {
 }
 
 // Texture
-pub inline fn textureCreateView(texture: *gpu.Texture, descriptor: ?*const gpu.TextureView.Descriptor) *gpu.TextureView {
+pub inline fn textureCreateView(texture: *gpu.Texture, descriptor: *const gpu.TextureView.Descriptor) gpu.TextureView.Error!*gpu.TextureView {
     return procs.Procs.loaded_procs.?.textureCreateView(texture, descriptor);
 }
 

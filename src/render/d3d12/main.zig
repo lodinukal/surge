@@ -1626,9 +1626,9 @@ pub const D3D12Sampler = struct {
         max_anisotropy: u16,
     ) d3d12.D3D12_FILTER {
         var filter: i32 = 0;
-        filter |= d3d12FilterType(min_filter) << d3d12.D3D12_MIN_FILTER_SHIFT;
-        filter |= d3d12FilterType(mag_filter) << d3d12.D3D12_MAG_FILTER_SHIFT;
-        filter |= d3d12FilterTypeForMipmap(mipmap_filter) << d3d12.D3D12_MIP_FILTER_SHIFT;
+        filter |= @intFromEnum(d3d12FilterType(min_filter)) << d3d12.D3D12_MIN_FILTER_SHIFT;
+        filter |= @intFromEnum(d3d12FilterType(mag_filter)) << d3d12.D3D12_MAG_FILTER_SHIFT;
+        filter |= @intFromEnum(d3d12FilterTypeForMipmap(mipmap_filter)) << d3d12.D3D12_MIP_FILTER_SHIFT;
         filter |= @intFromEnum(
             d3d12.D3D12_FILTER_REDUCTION_TYPE_STANDARD,
         ) << d3d12.D3D12_FILTER_REDUCTION_TYPE_SHIFT;
@@ -1991,7 +1991,7 @@ pub const D3D12Texture = struct {
             .Height = desc.size.height,
             .DepthOrArraySize = @intCast(desc.size.depth_or_array_layers),
             .MipLevels = @intCast(desc.mip_level_count),
-            .Format = if (desc.view_format_count > 0)
+            .Format = if ((if (desc.view_formats) |vf| vf.len else 0) > 0)
                 d3dcommon.dxgiFormatTypeless(desc.format)
             else
                 d3dcommon.dxgiFormatForTexture(desc.format),
@@ -2003,20 +2003,23 @@ pub const D3D12Texture = struct {
             .Flags = d3d12.D3D12_RESOURCE_FLAGS.initFlags(.{
                 .ALLOW_DEPTH_STENCIL = if (desc.format.hasDepthOrStencil() and desc.usage.render_attachment) 1 else 0,
                 .ALLOW_RENDER_TARGET = if (!desc.format.hasDepthOrStencil() and desc.usage.render_attachment) 1 else 0,
-                .ALLOW_UNORDERED_ACCESS = if (desc.usage.storage) 1 else 0,
+                .ALLOW_UNORDERED_ACCESS = if (desc.usage.storage_binding) 1 else 0,
                 .DENY_SHADER_RESOURCE = if (!desc.usage.texture_binding and
                     desc.usage.render_attachment and
                     desc.format.hasDepthOrStencil()) 1 else 0,
             }),
         };
         const read_state = d3d12.D3D12_RESOURCE_STATES.initFlags(.{
-            .COPY_SOURCE = desc.usage.copy_src,
-            .ALL_SHADER_RESOURCE = desc.usage.texture_binding or desc.usage.storage_binding,
+            .COPY_SOURCE = if (desc.usage.copy_src) 1 else 0,
+            .ALL_SHADER_RESOURCE = if (desc.usage.texture_binding or desc.usage.storage_binding) 1 else 0,
         });
         const initial_state = read_state;
 
         const clear_value = d3d12.D3D12_CLEAR_VALUE{
             .Format = resource_desc.Format,
+            .Anonymous = .{
+                .Color = .{ 0, 0, 0, 0 },
+            },
         };
 
         var resource: ?*d3d12.ID3D12Resource = null;

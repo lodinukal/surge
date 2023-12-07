@@ -20,11 +20,11 @@ pub const Sampler = opaque {
         comparison = 0x00000003,
     };
 
-    pub const BindingLayout = extern struct {
+    pub const BindingLayout = struct {
         type: BindingType = .undefined,
     };
 
-    pub const Descriptor = extern struct {
+    pub const Descriptor = struct {
         label: ?[]const u8 = null,
         address_mode_u: AddressMode = .clamp_to_edge,
         address_mode_v: AddressMode = .clamp_to_edge,
