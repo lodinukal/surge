@@ -267,9 +267,9 @@ pub const Heap = opaque {
     };
 
     pub const Type = enum(u8) {
-        unknown,
-        buffer,
-        texture,
+        device_local,
+        upload,
+        readback,
     };
 
     pub const Descriptor = struct {

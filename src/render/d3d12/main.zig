@@ -19,6 +19,12 @@ const d3dcommon = @import("../d3d/common.zig");
 
 const common = @import("../../core/common.zig");
 
+const render_target_view_heap_size: u32 = 1024;
+const depth_stencil_view_heap_size: u32 = 1024;
+const shader_resource_view_heap_size: u32 = 16384;
+const sampler_heap_size: u32 = 1024;
+const max_timer_queries: u32 = 256;
+
 // Loading
 pub const procs: gpu.procs.Procs = .{ // Heap
     .heapGetDescriptor = heapGetDescriptor,
@@ -211,9 +217,7 @@ export fn getProcs() *const gpu.procs.Procs {
 pub const RootSignature = opaque {};
 
 pub const Context = struct {
-    device: ?*d3d12.ID3D12Device = null,
-    device2: ?*d3d12.ID3D12Device2 = null,
-    device5: ?*d3d12.ID3D12Device5 = null,
+    device: ?*d3d12.ID3D12Device2 = null,
 
     draw_indirect_signature: ?*d3d12.ID3D12CommandSignature = null,
     draw_indexed_indirect_signature: ?*d3d12.ID3D12CommandSignature = null,
@@ -231,9 +235,7 @@ pub const Context = struct {
     }
 
     pub fn deinit(self: *Context) void {
-        d3dcommon.releaseIUnknown(d3d12.ID3D12Device, &self.device);
-        d3dcommon.releaseIUnknown(d3d12.ID3D12Device2, &self.device2);
-        d3dcommon.releaseIUnknown(d3d12.ID3D12Device5, &self.device5);
+        d3dcommon.releaseIUnknown(d3d12.ID3D12Device2, &self.device);
         d3dcommon.releaseIUnknown(d3d12.ID3D12CommandSignature, &self.draw_indirect_signature);
         d3dcommon.releaseIUnknown(d3d12.ID3D12CommandSignature, &self.draw_indexed_indirect_signature);
         d3dcommon.releaseIUnknown(d3d12.ID3D12CommandSignature, &self.dispatch_indirect_signature);
@@ -252,7 +254,12 @@ pub fn waitForFence(fence: *d3d12.ID3D12Fence, value: u64, event: win32.foundati
 
 pub const DeviceResources = struct {
     context: *const Context,
-    dxgi_format_plane_counts: std.enums.directEnumArrayDefault(
+    dxgi_format_plane_counts: [
+        std.enums.directEnumArrayLen(
+            dxgi.common.DXGI_FORMAT,
+            72,
+        )
+    ]?u8 = std.enums.directEnumArrayDefault(
         dxgi.common.DXGI_FORMAT,
         ?u8,
         null,
@@ -268,14 +275,14 @@ pub const DeviceResources = struct {
     timer_queries_bits: std.PackedIntArray(u1, 256) = std.PackedIntArray(u1, 256).initAllTo(0),
 
     pub fn init(self: *DeviceResources, context: *const Context) !void {
-        self.context = context;
-
-        self.rtv_heap = StaticDescriptorHeap.init(context);
-        self.dsv_heap = StaticDescriptorHeap.init(context);
-        self.srv_heap = StaticDescriptorHeap.init(context);
-        self.sampler_heap = StaticDescriptorHeap.init(context);
-
-        try self.root_signature_cache.init(allocator);
+        self.* = .{
+            .context = context,
+            .rtv_heap = StaticDescriptorHeap.init(context),
+            .dsv_heap = StaticDescriptorHeap.init(context),
+            .srv_heap = StaticDescriptorHeap.init(context),
+            .sampler_heap = StaticDescriptorHeap.init(context),
+            .root_signature_cache = std.AutoArrayHashMap(usize, *RootSignature).init(allocator),
+        };
     }
 
     pub fn deinit(self: *DeviceResources) void {
@@ -312,6 +319,12 @@ pub const DeviceResources = struct {
 };
 
 pub const DescriptorIndex = u32;
+pub const DescriptorHeapType = enum {
+    rtv,
+    dsv,
+    srv,
+    sampler,
+};
 pub const StaticDescriptorHeap = struct {
     pub const Error = error{
         StaticDescriptorHeapFailedToCreateHeap,
@@ -673,18 +686,11 @@ pub fn textureViewDestroy(texture_view: *gpu.TextureView) void {
 }
 
 pub const TextureView = struct {
-    pub const HeapSource = enum {
-        undefined,
-        rtv,
-        dsv,
-        srv,
-    };
-
     resources: *DeviceResources,
     d3d_descriptor: DescriptorIndex,
     descriptor: gpu.TextureView.Descriptor,
     parent: *Texture,
-    source_heap: HeapSource = .undefined,
+    source_heap: DescriptorHeapType = undefined,
 
     pub fn init(
         parent_texture: *Texture,
@@ -1087,13 +1093,18 @@ pub const Queue = struct {
     recording_instance: std.atomic.Value(u64) = std.atomic.Value(u64).init(1),
     // command_lists_inf_flight: std.ArrayList(?*d3d12.ID3D12CommandList),
 
-    pub fn init(context: *const Context, queue: ?*d3d12.ID3D12CommandQueue) !*Queue {
+    pub fn init(context: *const Context, desc: *const d3d12.D3D12_COMMAND_QUEUE_DESC) !*Queue {
         const self = allocator.create(Queue) catch return Error.QueueFailedToCreate;
         errdefer allocator.destroy(self);
         self.* = .{
             .context = context,
-            .queue = queue,
         };
+
+        _ = context.device.?.ID3D12Device_CreateCommandQueue(
+            desc,
+            d3d12.IID_ID3D12CommandQueue,
+            @ptrCast(&self.queue),
+        );
 
         _ = context.device.?.ID3D12Device_CreateFence(
             0,
@@ -1105,7 +1116,12 @@ pub const Queue = struct {
         return self;
     }
 
-    pub fn updateCompletedInstance(self: *Queue) u64 {
+    pub fn deinit(self: *Queue) void {
+        d3dcommon.releaseIUnknown(d3d12.ID3D12CommandQueue, &self.queue);
+        d3dcommon.releaseIUnknown(d3d12.ID3D12Fence, &self.fence);
+    }
+
+    pub fn updateLastCompletedInstance(self: *Queue) u64 {
         if (self.last_completed_instance < self.last_submitted_instance) {
             self.last_completed_instance = self.fence.?.ID3D12Fence_GetCompletedValue();
         }
@@ -1120,8 +1136,42 @@ pub fn deviceCreateSwapChain(
     desc: *const gpu.SwapChain.Descriptor,
 ) gpu.SwapChain.Error!*gpu.SwapChain {
     std.debug.print("creating swap chain...\n", .{});
-    return @ptrCast(try D3D12SwapChain.init(@ptrCast(@alignCast(device)), @ptrCast(@alignCast(surface.?)), desc));
+    return @ptrCast(
+        try D3D12SwapChain.init(@ptrCast(
+            @alignCast(device),
+        ), @ptrCast(@alignCast(surface.?)), desc),
+    );
 }
+
+pub fn deviceCreateHeap(
+    device: *gpu.Device,
+    desc: *const gpu.Heap.Descriptor,
+) gpu.Heap.Error!*gpu.Heap {
+    std.debug.print("creating heap...\n", .{});
+    return @ptrCast(
+        try D3D12Device.createHeap(
+            @ptrCast(@alignCast(device)),
+            desc,
+        ),
+    );
+}
+
+pub fn deviceCreateTexture(
+    device: *gpu.Device,
+    desc: *const gpu.Texture.Descriptor,
+    resource_desc: *const d3d12.D3D12_RESOURCE_DESC,
+) gpu.Texture.Error!*gpu.Texture {
+    std.debug.print("creating texture...\n", .{});
+    return @ptrCast(
+        try D3D12Texture.init(
+            @ptrCast(@alignCast(device)),
+            @ptrCast(@alignCast(device.resources)),
+            desc,
+            resource_desc,
+        ),
+    );
+}
+)
 
 pub fn deviceDestroy(device: *gpu.Device) void {
     std.debug.print("destroying device...\n", .{});
@@ -1134,52 +1184,48 @@ pub const D3D12Device = struct {
     context: Context,
     resources: DeviceResources,
 
-    queues: std.enums.directEnumArrayDefault(
-        gpu.CommandQueue,
-        ?*Queue,
-        null,
-        0,
-        .{},
-    ),
+    queues: [std.enums.values(gpu.CommandQueue).len]?*Queue = .{ null, null, null },
 
     fence_event: win32.foundation.HANDLE,
+    options: d3d12.D3D12_FEATURE_DATA_D3D12_OPTIONS = undefined,
     mutex: std.Thread.Mutex = .{},
 
     command_lists: std.ArrayList(*d3d12.ID3D12CommandList),
 
-    options: d3d12.D3D12_FEATURE_DATA_D3D12_OPTIONS,
-    options5: d3d12.D3D12_FEATURE_DATA_D3D12_OPTIONS5,
-    options6: d3d12.D3D12_FEATURE_DATA_D3D12_OPTIONS6,
-    options7: d3d12.D3D12_FEATURE_DATA_D3D12_OPTIONS7,
-
     lost_cb: ?gpu.Device.LostCallback = null,
 
     pub fn init(physical_device: *D3D12PhysicalDevice, desc: *const gpu.Device.Descriptor) gpu.Device.Error!*D3D12Device {
-        // const queue = allocator.create(D3D12Queue) catch return gpu.Device.Error.DeviceFailedToCreate;
-        // errdefer allocator.destroy(queue);
-
         const self = allocator.create(D3D12Device) catch return gpu.Device.Error.DeviceFailedToCreate;
         errdefer allocator.destroy(self);
         self.* = .{
             .physical_device = physical_device,
             // .queue = queue,
+            .context = .{},
+            .resources = undefined,
             .lost_cb = desc.lost_callback,
         };
+        self.resources.init(&self.context);
 
-        var device: ?*d3d12.ID3D12Device2 = null;
         const hr = d3d12.D3D12CreateDevice(
             @ptrCast(self.physical_device.adapter),
             .@"11_0",
             d3d12.IID_ID3D12Device2,
-            @ptrCast(&device),
+            @ptrCast(&self.context.device),
         );
         if (!d3dcommon.checkHResult(hr)) return gpu.Device.Error.DeviceFailedToCreate;
-        errdefer d3dcommon.releaseIUnknown(d3d12.ID3D12Device2, &device);
+        errdefer d3dcommon.releaseIUnknown(d3d12.ID3D12Device2, &self.context.device);
+
+        const info_hr = self.context.device.?.ID3D12Device_CheckFeatureSupport(
+            d3d12.D3D12_FEATURE_D3D12_OPTIONS,
+            @ptrCast(&self.options),
+            d3d12.D3D12_FEATURE_D3D12_OPTIONS.sizeof,
+        );
+        if (!d3dcommon.checkHResult(info_hr)) return gpu.Device.Error.DeviceFailedToCreate;
 
         if (self.physical_device.instance.debug) {
             var info_queue: ?*d3d12.ID3D12InfoQueue = null;
             if (winapi.zig.SUCCEEDED(
-                device.?.IUnknown_QueryInterface(d3d12.IID_ID3D12InfoQueue, @ptrCast(&info_queue)),
+                self.context.device.?.IUnknown_QueryInterface(d3d12.IID_ID3D12InfoQueue, @ptrCast(&info_queue)),
             )) {
                 defer d3dcommon.releaseIUnknown(d3d12.ID3D12InfoQueue, &info_queue);
                 var deny_ids = [_]d3d12.D3D12_MESSAGE_ID{
@@ -1231,7 +1277,7 @@ pub const D3D12Device = struct {
             queue_desc.Type = ty;
 
             var queue: ?*d3d12.ID3D12CommandQueue = null;
-            const queue_hr = device.?.ID3D12Device_CreateCommandQueue(
+            const queue_hr = self.context.device.?.ID3D12Device_CreateCommandQueue(
                 &queue_desc,
                 d3d12.IID_ID3D12CommandQueue,
                 @ptrCast(&queue),
@@ -1239,58 +1285,34 @@ pub const D3D12Device = struct {
             if (!d3dcommon.checkHResult(queue_hr)) return gpu.Device.Error.DeviceFailedToCreate;
             errdefer d3dcommon.releaseIUnknown(d3d12.ID3D12CommandQueue, &queue);
 
-            self.queues.items[index] = try Queue.init(self.context, queue);
+            self.queues[index] = try Queue.init(self.context, queue);
         }
         errdefer {
             for (self.queues) |queue| {
-                if (queue) queue.deinit();
+                if (queue) |q| q.deinit();
             }
         }
 
-        // self.queue.* = D3D12Queue.init(self) catch return gpu.Device.Error.DeviceFailedToCreate;
-        // errdefer D3D12Queue.deinit(queue);
-
-        // TODO: heaps
-
-        // self.general_heap = D3D12DescriptorHeap.init(
-        //     self,
-        //     .CBV_SRV_UAV,
-        //     .SHADER_VISIBLE,
-        //     general_heap_size,
-        //     general_block_size,
-        // ) catch return gpu.Device.Error.DeviceFailedToCreate;
-        // errdefer self.general_heap.deinit();
-
-        // self.sampler_heap = D3D12DescriptorHeap.init(
-        //     self,
-        //     .SAMPLER,
-        //     .SHADER_VISIBLE,
-        //     sampler_heap_size,
-        //     sampler_block_size,
-        // ) catch return gpu.Device.Error.DeviceFailedToCreate;
-        // errdefer self.sampler_heap.deinit();
-
-        // self.rtv_heap = D3D12DescriptorHeap.init(
-        //     self,
-        //     .RTV,
-        //     .NONE,
-        //     rtv_heap_size,
-        //     rtv_block_size,
-        // ) catch return gpu.Device.Error.DeviceFailedToCreate;
-        // errdefer self.rtv_heap.deinit();
-
-        // self.dsv_heap = D3D12DescriptorHeap.init(
-        //     self,
-        //     .DSV,
-        //     .NONE,
-        //     dsv_heap_size,
-        //     dsv_block_size,
-        // ) catch return gpu.Device.Error.DeviceFailedToCreate;
-        // errdefer self.dsv_heap.deinit();
-
-        // self.command_pool = D3D12CommandPool.init(self);
-        // self.streaming_pool = D3D12StreamingPool.init(self);
-        // self.resource_pool = D3D12ResourcePool.init(self);
+        try self.resources.dsv_heap.allocateResources(
+            .DSV,
+            depth_stencil_view_heap_size,
+            false,
+        );
+        try self.resources.rtv_heap.allocateResources(
+            .RTV,
+            render_target_view_heap_size,
+            false,
+        );
+        try self.resources.srv_heap.allocateResources(
+            .CBV_SRV_UAV,
+            shader_resource_view_heap_size,
+            true,
+        );
+        try self.resources.sampler_heap.allocateResources(
+            .SAMPLER,
+            sampler_heap_size,
+            true,
+        );
 
         return self;
     }
@@ -1300,15 +1322,83 @@ pub const D3D12Device = struct {
             cb(.destroyed, "device destroyed");
         }
         // _ = self.queue.waitUntil(self.queue.fence_value);
+        self.waitForIdle();
+
+        for (self.queues) |queue| {
+            if (queue) |q| q.deinit();
+        }
 
         // self.queue.deinit();
         // allocator.destroy(self.queue);
-        d3dcommon.releaseIUnknown(d3d12.ID3D12Device2, &self.device);
+        self.context.deinit();
         allocator.destroy(self);
     }
 
-    pub fn getQueue(self: *D3D12Device) *gpu.Queue {
-        return @ptrCast(@alignCast(self.queue));
+    pub fn createHeap(
+        self: *D3D12Device,
+        desc: *const gpu.Heap.Descriptor,
+    ) gpu.Heap.Error!*gpu.Heap {
+        var heap_desc: d3d12.D3D12_HEAP_DESC = undefined;
+        heap_desc.SizeInBytes = desc.capacity;
+        heap_desc.Alignment = d3d12.D3D12_DEFAULT_MSAA_RESOURCE_PLACEMENT_ALIGNMENT;
+        heap_desc.Properties = .{
+            .Type = .DEFAULT,
+            .CPUPageProperty = .UNKNOWN,
+            .MemoryPoolPreference = .UNKNOWN,
+            .CreationNodeMask = 1,
+            .VisibleNodeMask = 1,
+        };
+
+        if (self.options.ResourceHeapTier == .@"1") {
+            heap_desc.Flags = .ALLOW_ONLY_NON_RT_DS_TEXTURES;
+        } else {
+            heap_desc.Flags = .NONE;
+        }
+
+        heap_desc.Properties.Type = switch (desc.type) {
+            .device_local => .DEFAULT,
+            .upload => .UPLOAD,
+            .readback => .READBACK,
+        };
+
+        var d3d_heap: ?*d3d12.ID3D12Heap = null;
+        const heap_hr = self.context.device.?.ID3D12Device_CreateHeap(
+            &heap_desc,
+            d3d12.IID_ID3D12Heap,
+            @ptrCast(&d3d_heap),
+        );
+        if (!d3dcommon.checkHResult(heap_hr)) return gpu.Heap.Error.HeapFailedToCreate;
+        errdefer d3dcommon.releaseIUnknown(d3d12.ID3D12Heap, &d3d_heap);
+
+        if (desc.debug_label) |dbgl| {
+            var scratch = common.ScratchSpace(256){};
+            const temp_allocator = scratch.init().allocator();
+
+            d3d_heap.?.ID3D12Object_SetName(winappimpl.convertToUtf16WithAllocator(
+                temp_allocator,
+                dbgl,
+            ) orelse
+                "<dbgname>");
+        }
+
+        const heap = allocator.create(Heap) catch return gpu.Heap.Error.HeapFailedToCreate;
+        heap.heap = d3d_heap;
+        heap.descriptor = desc.*;
+        return heap;
+    }
+
+    pub fn waitForIdle(self: *D3D12Device) void {
+        for (self.queues) |queue| {
+            if (queue == null) continue;
+
+            if (queue.updateLastCompletedInstance() < queue.last_submitted_instance) {
+                waitForFence(queue.fence, queue.last_submitted_instance, self.fence_event);
+            }
+        }
+    }
+
+    pub fn getQueue(self: *D3D12Device, ty: gpu.CommandQueue) *Queue {
+        return self.queues[@intFromEnum(ty)].?;
     }
 };
 
