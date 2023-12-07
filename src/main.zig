@@ -6,12 +6,37 @@ const math = @import("math.zig");
 const gpu = @import("render/gpu.zig");
 
 const RenderContext = struct {
+    pub const Vertex = struct {
+        position: math.Vec,
+        color: math.Vec,
+    };
+
     instance: *gpu.Instance = undefined,
     surface: *gpu.Surface = undefined,
     physical_device: *gpu.PhysicalDevice = undefined,
     device: *gpu.Device = undefined,
 
     swapchain: *gpu.SwapChain = undefined,
+
+    // rendering objects
+
+    vertex_buffer: ?*gpu.Buffer = null,
+    vertex_count: usize = 0,
+
+    index_buffer: ?*gpu.Buffer = null,
+    index_count: usize = 0,
+
+    uniform_buffer: ?*gpu.Buffer = null,
+    uniform_count: usize = 0,
+
+    pipeline_layout: ?*gpu.PipelineLayout = null,
+
+    render_pipeline: ?*gpu.RenderPipeline = null,
+
+    render_pass: struct {
+        colour_attachment: [1]gpu.RenderPass.ColourAttachment = .{undefined},
+        descriptor: gpu.RenderPass.Descriptor = .{},
+    } = .{},
 
     pub fn load(self: *RenderContext, context: *Context) !void {
         if (gpu.loadBackend(.d3d12) == false) return;

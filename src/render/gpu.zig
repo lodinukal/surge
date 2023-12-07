@@ -28,8 +28,8 @@ pub const query_set_index_undefined = 0xffffffff;
 pub const whole_map_size = std.math.maxInt(u64);
 pub const whole_size = 0xffffffffffffffff;
 
-pub const BindGroup = opaque {};
-pub const BindGroupLayout = opaque {};
+pub const BindGroup = @import("bind_group.zig").BindGroup;
+pub const BindGroupLayout = @import("bind_group_layout.zig").BindGroupLayout;
 pub const Buffer = @import("buffer.zig").Buffer;
 pub const CommandBuffer = @import("command_buffer.zig").CommandBuffer;
 pub const CommandEncoder = @import("command_encoder.zig").CommandEncoder;
@@ -38,12 +38,12 @@ pub const ComputePipeline = opaque {};
 pub const Device = @import("device.zig").Device;
 pub const Instance = @import("instance.zig").Instance;
 pub const PhysicalDevice = @import("physical_device.zig").PhysicalDevice;
-pub const PipelineLayout = opaque {};
+pub const PipelineLayout = @import("pipeline_layout.zig").PipelineLayout;
 pub const QuerySet = opaque {};
 pub const Queue = @import("queue.zig").Queue;
 pub const RenderBundle = opaque {};
 pub const RenderBundleEncoder = opaque {};
-pub const RenderPassEncoder = opaque {};
+pub const RenderPass = @import("render_pass.zig");
 pub const RenderPipeline = opaque {};
 pub const Sampler = @import("sampler.zig").Sampler;
 pub const ShaderModule = opaque {};
@@ -70,7 +70,7 @@ pub const Error = blk: {
         Queue,
         RenderBundle,
         RenderBundleEncoder,
-        RenderPassEncoder,
+        RenderPass.Encoder,
         RenderPipeline,
         Sampler,
         ShaderModule,
@@ -458,7 +458,7 @@ pub const VertexStepMode = enum(u32) {
     vertex_buffer_not_used = 0x00000002,
 };
 
-pub const ColorWriteMaskFlags = packed struct(u32) {
+pub const ColourWriteMaskFlags = packed struct(u32) {
     red: bool = false,
     green: bool = false,
     blue: bool = false,
@@ -473,14 +473,14 @@ pub const ColorWriteMaskFlags = packed struct(u32) {
         );
     }
 
-    pub const all = ColorWriteMaskFlags{
+    pub const all = ColourWriteMaskFlags{
         .red = true,
         .green = true,
         .blue = true,
         .alpha = true,
     };
 
-    pub fn equal(a: ColorWriteMaskFlags, b: ColorWriteMaskFlags) bool {
+    pub fn equal(a: ColourWriteMaskFlags, b: ColourWriteMaskFlags) bool {
         return @as(u4, @truncate(@as(u32, @bitCast(a)))) == @as(u4, @truncate(@as(u32, @bitCast(b))));
     }
 };
@@ -544,7 +544,7 @@ pub const BlendComponent = extern struct {
     dst_factor: BlendFactor = .zero,
 };
 
-pub const Color = extern struct {
+pub const Colour = extern struct {
     r: f64,
     g: f64,
     b: f64,
@@ -563,38 +563,40 @@ pub const Extent3D = extern struct {
 };
 
 pub const Limits = extern struct {
-    max_texture_dimension_1d: u32 = limit_u32_undefined,
-    max_texture_dimension_2d: u32 = limit_u32_undefined,
-    max_texture_dimension_3d: u32 = limit_u32_undefined,
-    max_texture_array_layers: u32 = limit_u32_undefined,
-    max_bind_groups: u32 = limit_u32_undefined,
-    max_bind_groups_plus_vertex_buffers: u32 = limit_u32_undefined,
-    max_bindings_per_bind_group: u32 = limit_u32_undefined,
-    max_dynamic_uniform_buffers_per_pipeline_layout: u32 = limit_u32_undefined,
-    max_dynamic_storage_buffers_per_pipeline_layout: u32 = limit_u32_undefined,
-    max_sampled_textures_per_shader_stage: u32 = limit_u32_undefined,
-    max_samplers_per_shader_stage: u32 = limit_u32_undefined,
-    max_storage_buffers_per_shader_stage: u32 = limit_u32_undefined,
-    max_storage_textures_per_shader_stage: u32 = limit_u32_undefined,
-    max_uniform_buffers_per_shader_stage: u32 = limit_u32_undefined,
-    max_uniform_buffer_binding_size: u64 = limit_u64_undefined,
-    max_storage_buffer_binding_size: u64 = limit_u64_undefined,
-    min_uniform_buffer_offset_alignment: u32 = limit_u32_undefined,
-    min_storage_buffer_offset_alignment: u32 = limit_u32_undefined,
-    max_vertex_buffers: u32 = limit_u32_undefined,
-    max_buffer_size: u64 = limit_u64_undefined,
-    max_vertex_attributes: u32 = limit_u32_undefined,
-    max_vertex_buffer_array_stride: u32 = limit_u32_undefined,
-    max_inter_stage_shader_components: u32 = limit_u32_undefined,
-    max_inter_stage_shader_variables: u32 = limit_u32_undefined,
-    max_color_attachments: u32 = limit_u32_undefined,
-    max_color_attachment_bytes_per_sample: u32 = limit_u32_undefined,
-    max_compute_workgroup_storage_size: u32 = limit_u32_undefined,
-    max_compute_invocations_per_workgroup: u32 = limit_u32_undefined,
-    max_compute_workgroup_size_x: u32 = limit_u32_undefined,
-    max_compute_workgroup_size_y: u32 = limit_u32_undefined,
-    max_compute_workgroup_size_z: u32 = limit_u32_undefined,
-    max_compute_workgroups_per_dimension: u32 = limit_u32_undefined,
+    pub const max_texture_dimension1d: u32 = 8192;
+    pub const max_texture_dimension2d: u32 = 8192;
+    pub const max_texture_dimension3d: u32 = 2048;
+    pub const max_texture_array_layers: u32 = 256;
+    pub const max_bind_groups: u32 = 4;
+    pub const max_bind_groups_plus_vertex_buffers: u32 = 24;
+    pub const max_bindings_per_bind_group: u32 = 1000;
+    pub const max_dynamic_uniform_buffers_per_pipeline_layout: u32 = 8;
+    pub const max_dynamic_storage_buffers_per_pipeline_layout: u32 = 4;
+    pub const max_sampled_textures_per_shader_stage: u32 = 16;
+    pub const max_samplers_per_shader_stage: u32 = 16;
+    pub const max_storage_buffers_per_shader_stage: u32 = 8;
+    pub const max_storage_textures_per_shader_stage: u32 = 4;
+    pub const max_uniform_buffers_per_shader_stage: u32 = 12;
+    pub const max_uniform_buffer_binding_size: u64 = 65536;
+    pub const max_storage_buffer_binding_size: u64 = 134217728;
+    pub const min_uniform_buffer_offset_alignment: u32 = 256;
+    pub const min_storage_buffer_offset_alignment: u32 = 256;
+    pub const max_vertex_buffers: u32 = 8;
+    pub const max_buffer_size: u64 = 268435456;
+    pub const max_vertex_attributes: u32 = 16;
+    pub const max_vertex_buffer_array_stride: u32 = 2048;
+    pub const max_inter_stage_shader_components: u32 = 60;
+    pub const max_inter_stage_shader_variables: u32 = 16;
+    pub const max_colour_attachments: u32 = 8;
+    pub const max_color_attachment_bytes_per_sample: u32 = 32;
+    pub const max_compute_workgroup_storage_size: u32 = 16384;
+    pub const max_compute_invocations_per_workgroup: u32 = 256;
+    pub const max_compute_workgroup_size_x: u32 = 256;
+    pub const max_compute_workgroup_size_y: u32 = 256;
+    pub const max_compute_workgroup_size_z: u32 = 64;
+    pub const max_compute_workgroups_per_dimension: u32 = 65535;
+
+    pub const max_buffers_per_shader_stage = max_storage_buffers_per_shader_stage + max_uniform_buffers_per_shader_stage;
 };
 
 pub const Origin2D = extern struct {
@@ -739,14 +741,6 @@ pub const ProgrammableStageDescriptor = extern struct {
     constants: ?[]const ConstantEntry = null,
 };
 
-pub const RenderPassColorAttachment = extern struct {
-    view: ?*TextureView = null,
-    resolve_target: ?*TextureView = null,
-    load_op: LoadOp,
-    store_op: StoreOp,
-    clear_value: Color,
-};
-
 pub const RequiredLimits = extern struct {
     limits: Limits,
 };
@@ -769,10 +763,10 @@ pub const VertexBufferLayout = extern struct {
     attributes: ?[]const VertexAttribute = null,
 };
 
-pub const ColorTargetState = extern struct {
+pub const ColourTargetState = extern struct {
     format: Texture.Format,
     blend: ?*const BlendState = null,
-    write_mask: ColorWriteMaskFlags = ColorWriteMaskFlags.all,
+    write_mask: ColourWriteMaskFlags = ColourWriteMaskFlags.all,
 };
 
 pub const VertexState = extern struct {
@@ -786,5 +780,5 @@ pub const FragmentState = extern struct {
     module: *ShaderModule,
     entry_point: []const u8,
     constants: ?[]const ConstantEntry = null,
-    targets: ?[]const ColorTargetState = null,
+    targets: ?[]const ColourTargetState = null,
 };

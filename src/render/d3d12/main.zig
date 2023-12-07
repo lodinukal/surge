@@ -29,6 +29,7 @@ const common = @import("../../core/common.zig");
 // Loading
 pub const procs: gpu.procs.Procs = .{
     // BindGroup
+    .bindGroupDestroy = bindGroupDestroy,
     // BindGroupLayout
     .bindGroupLayoutDestroy = bindGroupLayoutDestroy,
     // Buffer
@@ -47,7 +48,11 @@ pub const procs: gpu.procs.Procs = .{
     // ComputePassEncoder
     // ComputePipeline
     // Device
+    .deviceCreateBindGroup = deviceCreateBindGroup,
+    .deviceCreateBindGroupLayout = deviceCreateBindGroupLayout,
+    .deviceCreatePipelineLayout = deviceCreatePipelineLayout,
     .deviceCreateBuffer = deviceCreateBuffer,
+    .deviceCreateCommandEncoder = deviceCreateCommandEncoder,
     .deviceCreateSampler = deviceCreateSampler,
     .deviceCreateSwapChain = deviceCreateSwapChain,
     .deviceCreateTexture = deviceCreateTexture,
@@ -63,12 +68,24 @@ pub const procs: gpu.procs.Procs = .{
     .physicalDeviceGetProperties = physicalDeviceGetProperties,
     .physicalDeviceDestroy = physicalDeviceDestroy,
     // PipelineLayout
+    .pipelineLayoutDestroy = pipelineLayoutDestroy,
     // QuerySet
     // Queue
     .queueSubmit = queueSubmit,
     // RenderBundle
     // RenderBundleEncoder
     // RenderPassEncoder
+    .renderPassEncoderDraw = renderPassEncoderDraw,
+    .renderPassEncoderDrawIndexed = renderPassEncoderDrawIndexed,
+    .renderPassEncoderDrawIndexedIndirect = renderPassEncoderDrawIndexedIndirect,
+    .renderPassEncoderDrawIndirect = renderPassEncoderDrawIndirect,
+    .renderPassEncoderEnd = renderPassEncoderEnd,
+    .renderPassEncoderExecuteBundles = renderPassEncoderExecuteBundles,
+    .renderPassEncoderInsertDebugMarker = renderPassEncoderInsertDebugMarker,
+    .renderPassEncoderPopDebugGroup = renderPassEncoderPopDebugGroup,
+    .renderPassEncoderPushDebugGroup = renderPassEncoderPushDebugGroup,
+    .renderPassEncoderSetBindGroup = renderPassEncoderSetBindGroup,
+    .renderPassEncoderDestroy = renderPassEncoderDestroy,
     // RenderPipeline
     // Sampler
     .samplerDestroy = samplerDestroy,
@@ -101,6 +118,261 @@ export fn getProcs() *const gpu.procs.Procs {
 }
 
 // BindGroup
+pub fn bindGroupDestroy(bind_group: *gpu.BindGroup) void {
+    std.debug.print("destroying bind group...\n", .{});
+    D3D12BindGroup.deinit(@alignCast(@ptrCast(bind_group)));
+}
+
+pub const D3D12BindGroup = struct {
+    const ResourceAccess = struct {
+        resource: *D3D12Resource,
+        uav: bool,
+    };
+    const DynamicResource = struct {
+        address: u64, // d3d12.D3D12_GPU_VIRTUAL_ADDRESS
+        parameter_type: d3d12.D3D12_ROOT_PARAMETER_TYPE,
+    };
+
+    device: *D3D12Device,
+    general_allocation: ?D3D12DescriptorHeap.Allocation,
+    general_table: ?d3d12.D3D12_GPU_DESCRIPTOR_HANDLE,
+    sampler_allocation: ?D3D12DescriptorHeap.Allocation,
+    sampler_table: ?d3d12.D3D12_GPU_DESCRIPTOR_HANDLE,
+    dynamic_resources: []DynamicResource,
+    buffers: std.ArrayListUnmanaged(*D3D12Buffer),
+    textures: std.ArrayListUnmanaged(*D3D12Texture),
+    accesses: std.ArrayListUnmanaged(ResourceAccess),
+
+    pub fn init(device: *D3D12Device, desc: *const gpu.BindGroup.Descriptor) !*D3D12BindGroup {
+        const layout: *D3D12BindGroupLayout = @ptrCast(@alignCast(desc.layout));
+
+        // General Descriptor Table
+        var general_allocation: ?D3D12DescriptorHeap.Allocation = null;
+        var general_table: ?d3d12.D3D12_GPU_DESCRIPTOR_HANDLE = null;
+
+        if (layout.general_table_size > 0) {
+            const allocation = device.general_heap.alloc() catch return gpu.BindGroup.Error.BindGroupFailedToCreate;
+            general_allocation = allocation;
+            general_table = device.general_heap.gpuDescriptor(allocation);
+
+            for (desc.entries orelse &.{}) |entry| {
+                const layout_entry = layout.getEntry(entry.binding) orelse
+                    return gpu.BindGroup.Error.BindGroupUnknownBinding;
+                if (layout_entry.sampler.type != .undefined)
+                    continue;
+
+                if (layout_entry.table_index) |table_index| {
+                    const dest_descriptor = device.general_heap.cpuDescriptor(allocation + table_index);
+
+                    if (layout_entry.buffer.type != .undefined) {
+                        const buffer: *D3D12Buffer = @ptrCast(@alignCast(entry.buffer.?));
+                        const d3d_resource = buffer.buffer.resource.?;
+
+                        const buffer_location = d3d_resource.ID3D12Resource_GetGPUVirtualAddress() + entry.offset;
+
+                        switch (layout_entry.buffer.type) {
+                            .undefined => unreachable,
+                            .uniform => {
+                                const cbv_desc: d3d12.D3D12_CONSTANT_BUFFER_VIEW_DESC = .{
+                                    .BufferLocation = buffer_location,
+                                    .SizeInBytes = @intCast(gpu.util.alignUp(entry.size, gpu.Limits.min_uniform_buffer_offset_alignment)),
+                                };
+
+                                device.device.?.ID3D12Device_CreateConstantBufferView(
+                                    &cbv_desc,
+                                    dest_descriptor,
+                                );
+                            },
+                            .storage => {
+                                // TODO - switch to RWByteAddressBuffer after using DXC
+                                const stride = entry.element_size;
+                                const uav_desc: d3d12.D3D12_UNORDERED_ACCESS_VIEW_DESC = .{
+                                    .Format = .UNKNOWN,
+                                    .ViewDimension = d3d12.D3D12_UAV_DIMENSION_BUFFER,
+                                    .Anonymous = .{
+                                        .Buffer = .{
+                                            .FirstElement = @intCast(entry.offset / stride),
+                                            .NumElements = @intCast(entry.size / stride),
+                                            .StructureByteStride = stride,
+                                            .CounterOffsetInBytes = 0,
+                                            .Flags = d3d12.D3D12_BUFFER_UAV_FLAG_NONE,
+                                        },
+                                    },
+                                };
+
+                                device.device.?.ID3D12Device_CreateUnorderedAccessView(
+                                    d3d_resource,
+                                    null,
+                                    &uav_desc,
+                                    dest_descriptor,
+                                );
+                            },
+                            .read_only_storage => {
+                                // TODO - switch to ByteAddressBuffer after using DXC
+                                const stride = entry.element_size;
+                                const srv_desc: d3d12.D3D12_SHADER_RESOURCE_VIEW_DESC = .{
+                                    .Format = dxgi.common.DXGI_FORMAT_UNKNOWN,
+                                    .ViewDimension = d3d12.D3D12_SRV_DIMENSION_BUFFER,
+                                    .Shader4ComponentMapping = d3d12.D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
+                                    .Anonymous = .{
+                                        .Buffer = .{
+                                            .FirstElement = @intCast(entry.offset / stride),
+                                            .NumElements = @intCast(entry.size / stride),
+                                            .StructureByteStride = stride,
+                                            .Flags = d3d12.D3D12_BUFFER_SRV_FLAG_NONE,
+                                        },
+                                    },
+                                };
+
+                                device.device.?.ID3D12Device_CreateShaderResourceView(
+                                    d3d_resource,
+                                    &srv_desc,
+                                    dest_descriptor,
+                                );
+                            },
+                        }
+                    } else if (layout_entry.texture.sample_type != .undefined) {
+                        const texture_view: *D3D12TextureView = @ptrCast(@alignCast(entry.texture_view.?));
+                        const d3d_resource = texture_view.texture.resource.?.resource;
+
+                        device.device.?.ID3D12Device_CreateShaderResourceView(
+                            d3d_resource,
+                            &texture_view.srvDesc(),
+                            dest_descriptor,
+                        );
+                    } else if (layout_entry.storage_texture.format != .undefined) {
+                        const texture_view: *D3D12TextureView = @ptrCast(@alignCast(entry.texture_view.?));
+                        const d3d_resource = texture_view.texture.resource.?.resource;
+
+                        device.device.?.ID3D12Device_CreateUnorderedAccessView(
+                            d3d_resource,
+                            null,
+                            &texture_view.uavDesc(),
+                            dest_descriptor,
+                        );
+                    }
+                }
+            }
+        }
+
+        // Sampler Descriptor Table
+        var sampler_allocation: ?D3D12DescriptorHeap.Allocation = null;
+        var sampler_table: ?d3d12.D3D12_GPU_DESCRIPTOR_HANDLE = null;
+
+        if (layout.sampler_table_size > 0) {
+            const allocation = device.sampler_heap.alloc() catch return gpu.BindGroup.Error.BindGroupFailedToCreate;
+            sampler_allocation = allocation;
+            sampler_table = device.sampler_heap.gpuDescriptor(allocation);
+
+            for (desc.entries orelse &.{}) |entry| {
+                const layout_entry = layout.getEntry(entry.binding) orelse
+                    return gpu.BindGroup.Error.BindGroupUnknownBinding;
+                if (layout_entry.sampler.type == .undefined)
+                    continue;
+
+                if (layout_entry.table_index) |table_index| {
+                    const dest_descriptor = device.sampler_heap.cpuDescriptor(allocation + table_index);
+
+                    const sampler: *D3D12Sampler = @ptrCast(@alignCast(entry.sampler.?));
+
+                    device.device.?.ID3D12Device_CreateSampler(
+                        &sampler.desc,
+                        dest_descriptor,
+                    );
+                }
+            }
+        }
+
+        // Resource tracking and dynamic resources
+        var dynamic_resources = allocator.alloc(DynamicResource, layout.dynamic_entries.items.len) catch
+            return gpu.BindGroup.Error.BindGroupFailedToCreate;
+        errdefer allocator.free(dynamic_resources);
+
+        var buffers = std.ArrayListUnmanaged(*D3D12Buffer){};
+        errdefer buffers.deinit(allocator);
+
+        var textures = std.ArrayListUnmanaged(*D3D12Texture){};
+        errdefer textures.deinit(allocator);
+
+        var accesses = std.ArrayListUnmanaged(ResourceAccess){};
+        errdefer accesses.deinit(allocator);
+
+        for (desc.entries orelse &.{}) |entry| {
+            const layout_entry = layout.getEntry(entry.binding) orelse
+                return gpu.BindGroup.Error.BindGroupUnknownBinding;
+
+            if (layout_entry.buffer.type != .undefined) {
+                const buffer: *D3D12Buffer = @ptrCast(@alignCast(entry.buffer.?));
+                const d3d_resource = buffer.buffer.resource.?;
+
+                buffers.append(allocator, buffer) catch
+                    return gpu.BindGroup.Error.BindGroupFailedToCreate;
+
+                const buffer_location = d3d_resource.ID3D12Resource_GetGPUVirtualAddress() + entry.offset;
+                if (layout_entry.dynamic_index) |dynamic_index| {
+                    const layout_dynamic_entry = layout.dynamic_entries.items[dynamic_index];
+                    dynamic_resources[dynamic_index] = .{
+                        .address = buffer_location,
+                        .parameter_type = layout_dynamic_entry.parameter_type,
+                    };
+                }
+
+                accesses.append(allocator, .{
+                    .resource = &buffer.buffer,
+                    .uav = layout_entry.buffer.type == .storage,
+                }) catch
+                    return gpu.BindGroup.Error.BindGroupFailedToCreate;
+            } else if (layout_entry.sampler.type != .undefined) {} else if (layout_entry.texture.sample_type != .undefined) {
+                const texture_view: *D3D12TextureView = @ptrCast(@alignCast(entry.texture_view.?));
+                const texture = texture_view.texture;
+
+                textures.append(allocator, texture) catch
+                    return gpu.BindGroup.Error.BindGroupFailedToCreate;
+
+                accesses.append(allocator, .{ .resource = &texture.resource.?, .uav = false }) catch
+                    return gpu.BindGroup.Error.BindGroupFailedToCreate;
+            } else if (layout_entry.storage_texture.format != .undefined) {
+                const texture_view: *D3D12TextureView = @ptrCast(@alignCast(entry.texture_view.?));
+                const texture = texture_view.texture;
+
+                textures.append(allocator, texture) catch
+                    return gpu.BindGroup.Error.BindGroupFailedToCreate;
+
+                accesses.append(allocator, .{ .resource = &texture.resource.?, .uav = true }) catch
+                    return gpu.BindGroup.Error.BindGroupFailedToCreate;
+            }
+        }
+
+        const group = allocator.create(D3D12BindGroup) catch
+            return gpu.BindGroup.Error.BindGroupFailedToCreate;
+        group.* = .{
+            .device = device,
+            .general_allocation = general_allocation,
+            .general_table = general_table,
+            .sampler_allocation = sampler_allocation,
+            .sampler_table = sampler_table,
+            .dynamic_resources = dynamic_resources,
+            .buffers = buffers,
+            .textures = textures,
+            .accesses = accesses,
+        };
+        return group;
+    }
+
+    pub fn deinit(group: *D3D12BindGroup) void {
+        if (group.general_allocation) |allocation|
+            group.device.general_heap.free(allocation);
+        if (group.sampler_allocation) |allocation|
+            group.device.sampler_heap.free(allocation);
+
+        group.buffers.deinit(allocator);
+        group.textures.deinit(allocator);
+        group.accesses.deinit(allocator);
+        allocator.free(group.dynamic_resources);
+        allocator.destroy(group);
+    }
+};
+
 // BindGroupLayout
 pub fn bindGroupLayoutDestroy(bind_group_layout: *gpu.BindGroupLayout) void {
     std.debug.print("destroying bind group layout...\n", .{});
@@ -108,8 +380,114 @@ pub fn bindGroupLayoutDestroy(bind_group_layout: *gpu.BindGroupLayout) void {
 }
 
 pub const D3D12BindGroupLayout = struct {
-    pub fn deinit(self: *D3D12BindGroupLayout) void {
-        allocator.destroy(self);
+    const Entry = struct {
+        binding: u32,
+        visibility: gpu.ShaderStageFlags,
+        buffer: gpu.Buffer.BindingLayout = .{},
+        sampler: gpu.Sampler.BindingLayout = .{},
+        texture: gpu.Texture.BindingLayout = .{},
+        storage_texture: gpu.StorageTextureBindingLayout = .{},
+        range_type: d3d12.D3D12_DESCRIPTOR_RANGE_TYPE,
+        table_index: ?u32,
+        dynamic_index: ?u32,
+    };
+
+    const DynamicEntry = struct {
+        parameter_type: d3d12.D3D12_ROOT_PARAMETER_TYPE,
+    };
+
+    entries: std.ArrayListUnmanaged(Entry),
+    dynamic_entries: std.ArrayListUnmanaged(DynamicEntry),
+    general_table_size: u32,
+    sampler_table_size: u32,
+
+    pub fn init(device: *D3D12Device, desc: *const gpu.BindGroupLayout.Descriptor) !*D3D12BindGroupLayout {
+        _ = device;
+
+        var entries = std.ArrayListUnmanaged(Entry){};
+        errdefer entries.deinit(allocator);
+
+        var dynamic_entries = std.ArrayListUnmanaged(DynamicEntry){};
+        errdefer dynamic_entries.deinit(allocator);
+
+        var general_table_size: u32 = 0;
+        var sampler_table_size: u32 = 0;
+        for (desc.entries orelse &.{}) |entry| {
+            var table_index: ?u32 = null;
+            var dynamic_index: ?u32 = null;
+            if (entry.buffer.has_dynamic_offset == true) {
+                dynamic_index = @intCast(dynamic_entries.items.len);
+                dynamic_entries.append(allocator, .{
+                    .parameter_type = switch (entry.buffer.type) {
+                        .undefined => unreachable,
+                        .uniform => d3d12.D3D12_ROOT_PARAMETER_TYPE_CBV,
+                        .storage => d3d12.D3D12_ROOT_PARAMETER_TYPE_UAV,
+                        .read_only_storage => d3d12.D3D12_ROOT_PARAMETER_TYPE_SRV,
+                    },
+                }) catch return gpu.BindGroupLayout.Error.BindGroupLayoutFailedToCreate;
+            } else if (entry.sampler.type != .undefined) {
+                table_index = sampler_table_size;
+                sampler_table_size += 1;
+            } else {
+                table_index = general_table_size;
+                general_table_size += 1;
+            }
+
+            entries.append(allocator, .{
+                .binding = entry.binding,
+                .visibility = entry.visibility,
+                .buffer = entry.buffer,
+                .sampler = entry.sampler,
+                .texture = entry.texture,
+                .storage_texture = entry.storage_texture,
+                .range_type = blk: {
+                    if (entry.buffer.type != .undefined) {
+                        break :blk switch (entry.buffer.type) {
+                            .undefined => unreachable,
+                            .uniform => d3d12.D3D12_DESCRIPTOR_RANGE_TYPE_CBV,
+                            .storage => d3d12.D3D12_DESCRIPTOR_RANGE_TYPE_UAV,
+                            .read_only_storage => d3d12.D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
+                        };
+                    } else if (entry.sampler.type != .undefined) {
+                        break :blk d3d12.D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER;
+                    } else if (entry.texture.sample_type != .undefined) {
+                        break :blk d3d12.D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+                    } else {
+                        // storage_texture
+                        break :blk d3d12.D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+                    }
+
+                    unreachable;
+                },
+                .table_index = table_index,
+                .dynamic_index = dynamic_index,
+            }) catch return gpu.BindGroupLayout.Error.BindGroupLayoutFailedToCreate;
+        }
+
+        const layout = allocator.create(D3D12BindGroupLayout) catch
+            return gpu.BindGroupLayout.Error.BindGroupLayoutFailedToCreate;
+        layout.* = .{
+            .entries = entries,
+            .dynamic_entries = dynamic_entries,
+            .general_table_size = general_table_size,
+            .sampler_table_size = sampler_table_size,
+        };
+        return layout;
+    }
+
+    pub fn deinit(layout: *D3D12BindGroupLayout) void {
+        layout.entries.deinit(allocator);
+        layout.dynamic_entries.deinit(allocator);
+        allocator.destroy(layout);
+    }
+
+    pub fn getEntry(self: *D3D12BindGroupLayout, binding: u32) ?*const Entry {
+        for (self.entries.items) |*entry| {
+            if (entry.binding == binding)
+                return entry;
+        }
+
+        return null;
     }
 };
 
@@ -419,6 +797,13 @@ pub const D3D12CommandEncoder = struct {
         allocator.destroy(self);
     }
 
+    // pub fn beginComputePass(self: *D3D12CommandEncoder, desc: *const gpu.ComputePassDescriptor) gpu.Compute
+
+    pub fn beginRenderPass(self: *D3D12CommandEncoder, desc: *const gpu.RenderPass.Descriptor) !*D3D12RenderPassEncoder {
+        try self.barrier_enforcer.endPass();
+        return D3D12RenderPassEncoder.init(self, desc);
+    }
+
     pub fn copyBufferToBuffer(
         self: *D3D12CommandEncoder,
         src: *D3D12Buffer,
@@ -483,7 +868,7 @@ pub const D3D12CommandEncoder = struct {
             destination_origin.y,
             destination_origin.z,
             &.{
-                .pResource = source_buffer.resource.d3d_resource,
+                .pResource = source_buffer.buffer.resource,
                 .Type = .PLACED_FOOTPRINT,
                 .Anonymous = .{
                     .PlacedFootprint = .{
@@ -544,7 +929,7 @@ pub const D3D12CommandEncoder = struct {
             &.{
                 .pResource = destination_texture.resource.d3d_resource,
                 .Type = .SUBRESOURCE_INDEX,
-                .unnamed_0 = .{
+                .Anonymous = .{
                     .SubresourceIndex = destination_subresource_index,
                 },
             },
@@ -554,7 +939,7 @@ pub const D3D12CommandEncoder = struct {
             &.{
                 .pResource = source_texture.resource.d3d_resource,
                 .Type = .SUBRESOURCE_INDEX,
-                .unnamed_0 = .{
+                .Anonymous = .{
                     .SubresourceIndex = source_subresource_index,
                 },
             },
@@ -581,6 +966,29 @@ pub const D3D12CommandEncoder = struct {
         if (!d3dcommon.checkHResult(hr_close)) return gpu.CommandBuffer.Error.CommandBufferFailedToCreate;
 
         return self.command_buffer;
+    }
+
+    pub fn writeBuffer(
+        self: *D3D12CommandEncoder,
+        buffer: *D3D12Buffer,
+        offset: u64,
+        data: []const u8,
+    ) !void {
+        const command_list = self.command_buffer.command_list.?;
+
+        const stream = try self.command_buffer.upload(data.len);
+        @memcpy(stream.map[0..data.len], data);
+
+        try self.barrier_enforcer.transition(&buffer.buffer, .COPY_DEST);
+        self.barrier_enforcer.flush(command_list);
+
+        command_list.ID3D12GraphicsCommandList_CopyBufferRegion(
+            buffer.buffer.buffer,
+            offset,
+            stream.d3d_resource,
+            stream.offset,
+            data.len,
+        );
     }
 
     pub fn writeTexture(
@@ -619,7 +1027,7 @@ pub const D3D12CommandEncoder = struct {
             &.{
                 .pResource = destination_texture.resource.d3d_resource,
                 .Type = .SUBRESOURCE_INDEX,
-                .unnamed_0 = .{
+                .Anonymous = .{
                     .SubresourceIndex = destination_subresource_index,
                 },
             },
@@ -629,7 +1037,7 @@ pub const D3D12CommandEncoder = struct {
             &.{
                 .pResource = stream.d3d_resource,
                 .Type = .PLACED_FOOTPRINT,
-                .unnamed_0 = .{
+                .Anonymous = .{
                     .PlacedFootprint = .{
                         .Offset = stream.offset,
                         .Footprint = .{
@@ -735,12 +1143,44 @@ pub const D3D12BarrierEnforcer = struct {
 // ComputePassEncoder
 // ComputePipeline
 // Device
+pub fn deviceCreateBindGroup(
+    device: *gpu.Device,
+    desc: *const gpu.BindGroup.Descriptor,
+) gpu.BindGroup.Error!*gpu.BindGroup {
+    std.debug.print("creating bind group...\n", .{});
+    return @ptrCast(try D3D12BindGroup.init(@ptrCast(@alignCast(device)), desc));
+}
+
+pub fn deviceCreateBindGroupLayout(
+    device: *gpu.Device,
+    desc: *const gpu.BindGroupLayout.Descriptor,
+) gpu.BindGroupLayout.Error!*gpu.BindGroupLayout {
+    std.debug.print("creating bind group layout...\n", .{});
+    return @ptrCast(try D3D12BindGroupLayout.init(@ptrCast(@alignCast(device)), desc));
+}
+
+pub fn deviceCreatePipelineLayout(
+    device: *gpu.Device,
+    desc: *const gpu.PipelineLayout.Descriptor,
+) gpu.PipelineLayout.Error!*gpu.PipelineLayout {
+    std.debug.print("creating pipeline layout...\n", .{});
+    return @ptrCast(try D3D12PipelineLayout.init(@ptrCast(@alignCast(device)), desc));
+}
+
 pub fn deviceCreateBuffer(
     device: *gpu.Device,
     desc: *const gpu.Buffer.Descriptor,
 ) gpu.Buffer.Error!*gpu.Buffer {
     std.debug.print("creating buffer...\n", .{});
     return @ptrCast(try D3D12Buffer.init(@ptrCast(@alignCast(device)), desc));
+}
+
+pub fn deviceCreateCommandEncoder(
+    device: *gpu.Device,
+    desc: *const gpu.CommandEncoder.Descriptor,
+) gpu.CommandEncoder.Error!*gpu.CommandEncoder {
+    std.debug.print("creating command encoder...\n", .{});
+    return @ptrCast(try D3D12CommandEncoder.init(@ptrCast(@alignCast(device)), desc));
 }
 
 pub fn deviceCreateSampler(
@@ -1120,14 +1560,14 @@ pub const D3D12DescriptorHeap = struct {
             }
             const index = heap.next_alloc;
             heap.next_alloc += heap.block_size;
-            try heap.free_blocks.append(index);
+            try heap.free_blocks.append(allocator, index);
         }
 
         return heap.free_blocks.pop();
     }
 
     pub fn free(heap: *D3D12DescriptorHeap, allocation: Allocation) void {
-        heap.free_blocks.append(allocation) catch {
+        heap.free_blocks.append(allocator, allocation) catch {
             @panic("failed to free descriptor heap allocation");
         };
     }
@@ -1308,6 +1748,217 @@ pub const D3D12PhysicalDevice = struct {
 };
 
 // PipelineLayout
+pub fn pipelineLayoutDestroy(pipeline_layout: *gpu.PipelineLayout) void {
+    std.debug.print("destroying pipeline_layout...\n", .{});
+    D3D12PipelineLayout.deinit(@alignCast(@ptrCast(pipeline_layout)));
+}
+
+pub const D3D12PipelineLayout = struct {
+    pub const Function = struct {
+        stage: gpu.ShaderStageFlags,
+        shader_module: *gpu.ShaderModule,
+        entry_point: [*:0]const u8,
+    };
+
+    root_signature: *d3d12.ID3D12RootSignature,
+    group_layouts: []*D3D12BindGroupLayout,
+    group_parameter_indices: std.BoundedArray(u32, gpu.Limits.max_bind_groups),
+
+    pub fn init(device: *D3D12Device, desc: *const gpu.PipelineLayout.Descriptor) !*D3D12PipelineLayout {
+        var hr: win32.foundation.HRESULT = undefined;
+
+        var scratch = common.ScratchSpace(8192){};
+        const temp_allocator = scratch.init().allocator();
+
+        // Per Bind Group:
+        // - up to 1 descriptor table for CBV/SRV/UAV
+        // - up to 1 descriptor table for Sampler
+        // - 1 root descriptor per dynamic resource
+        // Root signature 1.1 hints not supported yet
+
+        var group_layouts = allocator.alloc(*D3D12BindGroupLayout, (desc.bind_group_layouts orelse &.{}).len) catch
+            return gpu.PipelineLayout.Error.PipelineLayoutFailedToCreate;
+        errdefer allocator.free(group_layouts);
+
+        var group_parameter_indices =
+            std.BoundedArray(u32, gpu.Limits.max_bind_groups){};
+
+        var parameter_count: u32 = 0;
+        var range_count: u32 = 0;
+        for (desc.bind_group_layouts orelse &.{}, 0..) |bgl, i| {
+            const layout: *D3D12BindGroupLayout = @ptrCast(@alignCast(bgl));
+            group_layouts[i] = layout;
+            group_parameter_indices.appendAssumeCapacity(parameter_count);
+
+            var general_entry_count: u32 = 0;
+            var sampler_entry_count: u32 = 0;
+            for (layout.entries.items) |entry| {
+                if (entry.dynamic_index) |_| {
+                    parameter_count += 1;
+                } else if (entry.sampler.type != .undefined) {
+                    sampler_entry_count += 1;
+                    range_count += 1;
+                } else {
+                    general_entry_count += 1;
+                    range_count += 1;
+                }
+            }
+
+            if (general_entry_count > 0)
+                parameter_count += 1;
+            if (sampler_entry_count > 0)
+                parameter_count += 1;
+        }
+
+        var parameters = std.ArrayListUnmanaged(
+            d3d12.D3D12_ROOT_PARAMETER,
+        ).initCapacity(
+            temp_allocator,
+            parameter_count,
+        ) catch return gpu.PipelineLayout.Error.PipelineLayoutFailedToCreate;
+        defer parameters.deinit(temp_allocator);
+
+        var ranges = std.ArrayListUnmanaged(
+            d3d12.D3D12_DESCRIPTOR_RANGE,
+        ).initCapacity(
+            temp_allocator,
+            range_count,
+        ) catch return gpu.PipelineLayout.Error.PipelineLayoutFailedToCreate;
+        defer ranges.deinit(temp_allocator);
+
+        for (desc.bind_group_layouts orelse &.{}, 0..) |bgl, group_index| {
+            const layout: *D3D12BindGroupLayout = @ptrCast(@alignCast(bgl));
+
+            // General Table
+            {
+                const entry_range_base = ranges.items.len;
+                for (layout.entries.items) |entry| {
+                    if (entry.dynamic_index == null and entry.sampler.type == .undefined) {
+                        ranges.appendAssumeCapacity(.{
+                            .RangeType = entry.range_type,
+                            .NumDescriptors = 1,
+                            .BaseShaderRegister = entry.binding,
+                            .RegisterSpace = @intCast(group_index),
+                            .OffsetInDescriptorsFromTableStart = d3d12.D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND,
+                        });
+                    }
+                }
+                const entry_range_count = ranges.items.len - entry_range_base;
+                if (entry_range_count > 0) {
+                    parameters.appendAssumeCapacity(.{
+                        .ParameterType = d3d12.D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE,
+                        .Anonymous = .{
+                            .DescriptorTable = .{
+                                .NumDescriptorRanges = @intCast(entry_range_count),
+                                .pDescriptorRanges = @ptrCast(&ranges.items[entry_range_base]),
+                            },
+                        },
+                        .ShaderVisibility = d3d12.D3D12_SHADER_VISIBILITY_ALL,
+                    });
+                }
+            }
+
+            // Sampler Table
+            {
+                const entry_range_base = ranges.items.len;
+                for (layout.entries.items) |entry| {
+                    if (entry.dynamic_index == null and entry.sampler.type != .undefined) {
+                        ranges.appendAssumeCapacity(.{
+                            .RangeType = entry.range_type,
+                            .NumDescriptors = 1,
+                            .BaseShaderRegister = entry.binding,
+                            .RegisterSpace = @intCast(group_index),
+                            .OffsetInDescriptorsFromTableStart = d3d12.D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND,
+                        });
+                    }
+                }
+                const entry_range_count = ranges.items.len - entry_range_base;
+                if (entry_range_count > 0) {
+                    parameters.appendAssumeCapacity(.{
+                        .ParameterType = d3d12.D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE,
+                        .Anonymous = .{
+                            .DescriptorTable = .{
+                                .NumDescriptorRanges = @intCast(entry_range_count),
+                                .pDescriptorRanges = @ptrCast(&ranges.items[entry_range_base]),
+                            },
+                        },
+                        .ShaderVisibility = d3d12.D3D12_SHADER_VISIBILITY_ALL,
+                    });
+                }
+            }
+
+            // Dynamic Resources
+            for (layout.entries.items) |entry| {
+                if (entry.dynamic_index) |dynamic_index| {
+                    const layout_dynamic_entry = layout.dynamic_entries.items[dynamic_index];
+                    parameters.appendAssumeCapacity(.{
+                        .ParameterType = layout_dynamic_entry.parameter_type,
+                        .Anonymous = .{
+                            .Descriptor = .{
+                                .ShaderRegister = entry.binding,
+                                .RegisterSpace = @intCast(group_index),
+                            },
+                        },
+                        .ShaderVisibility = d3d12.D3D12_SHADER_VISIBILITY_ALL,
+                    });
+                }
+            }
+        }
+
+        var root_signature_blob: ?*d3d.ID3DBlob = null;
+        var opt_errors: ?*d3d.ID3DBlob = null;
+        hr = d3d12.D3D12SerializeRootSignature(
+            &d3d12.D3D12_ROOT_SIGNATURE_DESC{
+                .NumParameters = @intCast(parameters.items.len),
+                .pParameters = parameters.items.ptr,
+                .NumStaticSamplers = 0,
+                .pStaticSamplers = undefined,
+                .Flags = d3d12.D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT, // TODO - would like a flag for this
+            },
+            d3d12.D3D_ROOT_SIGNATURE_VERSION_1,
+            @ptrCast(&root_signature_blob),
+            @ptrCast(&opt_errors),
+        );
+        if (opt_errors) |errors| {
+            const message: [*:0]const u8 = @ptrCast(errors.ID3DBlob_GetBufferPointer().?);
+            std.debug.print("{s}\n", .{message});
+            d3dcommon.releaseIUnknown(d3d.ID3DBlob, &opt_errors);
+        }
+        if (winapi.zig.FAILED(hr)) {
+            return gpu.PipelineLayout.Error.PipelineLayoutSerializeRootSignatureFailed;
+        }
+        defer d3dcommon.releaseIUnknown(d3d.ID3DBlob, &root_signature_blob);
+
+        var root_signature: ?*d3d12.ID3D12RootSignature = null;
+        hr = device.device.?.ID3D12Device_CreateRootSignature(
+            0,
+            @ptrCast(root_signature_blob.?.ID3DBlob_GetBufferPointer()),
+            root_signature_blob.?.ID3DBlob_GetBufferSize(),
+            d3d12.IID_ID3D12RootSignature,
+            @ptrCast(&root_signature),
+        );
+        errdefer d3dcommon.releaseIUnknown(d3d12.ID3D12RootSignature, &root_signature);
+
+        // Result
+        const layout = allocator.create(D3D12PipelineLayout) catch
+            return gpu.PipelineLayout.Error.PipelineLayoutFailedToCreate;
+        layout.* = .{
+            .root_signature = root_signature.?,
+            .group_layouts = group_layouts,
+            .group_parameter_indices = group_parameter_indices,
+        };
+        return layout;
+    }
+
+    pub fn deinit(layout: *D3D12PipelineLayout) void {
+        var root_signature: ?*d3d12.ID3D12RootSignature = layout.root_signature;
+
+        d3dcommon.releaseIUnknown(d3d12.ID3D12RootSignature, &root_signature);
+        allocator.free(layout.group_layouts);
+        allocator.destroy(layout);
+    }
+};
+
 // QuerySet
 // Queue
 pub fn queueSubmit(queue: *gpu.Queue, command_buffers: []const *gpu.CommandBuffer) gpu.Queue.Error!void {
@@ -1586,7 +2237,564 @@ pub const D3D12ResourcePool = struct {
 // RenderBundle
 // RenderBundleEncoder
 // RenderPassEncoder
+pub fn renderPassEncoderDraw(
+    render_pass_encoder: *gpu.RenderPass.Encoder,
+    vertex_count: u32,
+    instance_count: u32,
+    first_vertex: u32,
+    first_instance: u32,
+) void {
+    std.debug.print("drawing...\n", .{});
+    D3D12RenderPassEncoder.draw(
+        @ptrCast(@alignCast(render_pass_encoder)),
+        vertex_count,
+        instance_count,
+        first_vertex,
+        first_instance,
+    );
+}
+
+pub fn renderPassEncoderDrawIndexed(
+    render_pass_encoder: *gpu.RenderPass.Encoder,
+    index_count: u32,
+    instance_count: u32,
+    first_index: u32,
+    base_vertex: i32,
+    first_instance: u32,
+) void {
+    std.debug.print("drawing indexed...\n", .{});
+    D3D12RenderPassEncoder.drawIndexed(
+        @ptrCast(@alignCast(render_pass_encoder)),
+        index_count,
+        instance_count,
+        first_index,
+        base_vertex,
+        first_instance,
+    );
+}
+
+pub fn renderPassEncoderDrawIndexedIndirect(
+    render_pass_encoder: *gpu.RenderPass.Encoder,
+    indirect_buffer: *gpu.Buffer,
+    indirect_offset: u64,
+) void {
+    _ = render_pass_encoder;
+    _ = indirect_buffer;
+    _ = indirect_offset;
+    std.debug.print("drawing indexed indirect...\n", .{});
+    // TODO: DrawIndexedIndirect
+    // D3D12RenderPassEncoder.drawIndexedIndirect(
+    //     @ptrCast(@alignCast(render_pass_encoder)),
+    //     @ptrCast(@alignCast(indirect_buffer)),
+    //     indirect_offset,
+    // );
+}
+
+pub fn renderPassEncoderDrawIndirect(
+    render_pass_encoder: *gpu.RenderPass.Encoder,
+    indirect_buffer: *gpu.Buffer,
+    indirect_offset: u64,
+) void {
+    _ = render_pass_encoder;
+    _ = indirect_buffer;
+    _ = indirect_offset;
+    std.debug.print("drawing indirect...\n", .{});
+    // TODO: DrawIndirect
+    // D3D12RenderPassEncoder.drawIndirect(
+    //     @ptrCast(@alignCast(render_pass_encoder)),
+    //     @ptrCast(@alignCast(indirect_buffer)),
+    //     indirect_offset,
+    // );
+}
+
+pub fn renderPassEncoderEnd(render_pass_encoder: *gpu.RenderPass.Encoder) gpu.RenderPass.Encoder.Error!void {
+    std.debug.print("ending render_pass...\n", .{});
+    try D3D12RenderPassEncoder.end(@ptrCast(@alignCast(render_pass_encoder)));
+}
+
+pub fn renderPassEncoderExecuteBundles(
+    render_pass_encoder: *gpu.RenderPass.Encoder,
+    bundles: []const *gpu.RenderBundle,
+) void {
+    _ = render_pass_encoder;
+    _ = bundles;
+    std.debug.print("executing bundles...\n", .{});
+    // TODO: ExecuteBundles
+}
+
+pub fn renderPassEncoderInsertDebugMarker(
+    render_pass_encoder: *gpu.RenderPass.Encoder,
+    label: []const u8,
+) void {
+    _ = render_pass_encoder;
+    std.debug.print("inserting debug marker...: {s}\n", .{label});
+}
+
+pub fn renderPassEncoderPopDebugGroup(render_pass_encoder: *gpu.RenderPass.Encoder) void {
+    _ = render_pass_encoder;
+    std.debug.print("popping debug group...\n", .{});
+}
+
+pub fn renderPassEncoderPushDebugGroup(
+    render_pass_encoder: *gpu.RenderPass.Encoder,
+    label: []const u8,
+) void {
+    _ = render_pass_encoder;
+    std.debug.print("pushing debug group...: {s}\n", .{label});
+}
+
+pub fn renderPassEncoderSetBindGroup(
+    render_pass_encoder: *gpu.RenderPass.Encoder,
+    index: u32,
+    bind_group: *gpu.BindGroup,
+    dynamic_offsets: ?[]const u32,
+) void {
+    std.debug.print("setting bind_group...\n", .{});
+    D3D12RenderPassEncoder.setBindGroup(
+        @ptrCast(@alignCast(render_pass_encoder)),
+        index,
+        @ptrCast(@alignCast(bind_group)),
+        dynamic_offsets,
+    );
+}
+
+pub fn renderPassEncoderDestroy(render_pass_encoder: *gpu.RenderPass.Encoder) void {
+    std.debug.print("destroying render_pass_encoder...\n", .{});
+    D3D12RenderPassEncoder.deinit(@alignCast(@ptrCast(render_pass_encoder)));
+}
+
+pub const D3D12RenderPassEncoder = struct {
+    command_list: ?*d3d12.ID3D12GraphicsCommandList = null,
+    barrier_enforcer: *D3D12BarrierEnforcer,
+    color_attachments: std.BoundedArray(gpu.RenderPass.ColourAttachment, gpu.Limits.max_colour_attachments) = .{},
+    depth_attachment: ?gpu.RenderPass.DepthStencilAttachment,
+    group_parameter_indices: []u32 = undefined,
+    vertex_apply_count: u32 = 0,
+    vertex_buffer_views: [gpu.Limits.max_vertex_buffers]d3d12.D3D12_VERTEX_BUFFER_VIEW,
+    vertex_strides: []u32 = undefined,
+
+    pub fn init(self: *D3D12CommandEncoder, desc: *const gpu.RenderPass.Descriptor) !*D3D12RenderPassEncoder {
+        const command_list = self.command_buffer.command_list.?;
+
+        var width: u32 = 0;
+        var height: u32 = 0;
+        var color_attachments: std.BoundedArray(
+            gpu.RenderPass.ColourAttachment,
+            gpu.Limits.max_colour_attachments,
+        ) = .{};
+        var rtv_handles = try self.command_buffer.allocateRtvDescriptors(desc.color_attachment_count);
+        const descriptor_size = self.device.rtv_heap.descriptor_size;
+
+        var rtv_handle = rtv_handles;
+        for (desc.colour_attachments orelse &.{}) |attach| {
+            if (attach.view) |view_raw| {
+                const view: *D3D12TextureView = @ptrCast(@alignCast(view_raw));
+                const texture = view.texture;
+
+                try self.barrier_enforcer.transition(&texture.resource, d3d12.D3D12_RESOURCE_STATE_RENDER_TARGET);
+
+                width = view.width();
+                height = view.height();
+                color_attachments.appendAssumeCapacity(attach);
+
+                // TODO - rtvDesc()
+                self.device.device.?.ID3D12Device_CreateRenderTargetView(
+                    texture.resource.d3d_resource,
+                    null,
+                    rtv_handle,
+                );
+            } else {
+                self.device.device.?.ID3D12Device_CreateRenderTargetView(
+                    null,
+                    &.{
+                        .Format = d3d12.DXGI_FORMAT_R8G8B8A8_UNORM,
+                        .ViewDimension = d3d12.D3D12_RTV_DIMENSION_TEXTURE2D,
+                        .unnamed_0 = .{ .Texture2D = .{ .MipSlice = 0, .PlaneSlice = 0 } },
+                    },
+                    rtv_handle,
+                );
+            }
+            rtv_handle.ptr += descriptor_size;
+        }
+
+        var depth_attachment: ?gpu.RenderPassDepthStencilAttachment = null;
+        var dsv_handle: d3d12.D3D12_CPU_DESCRIPTOR_HANDLE = .{ .ptr = 0 };
+
+        if (desc.depth_stencil_attachment) |attach| {
+            const view: *D3D12TextureView = @ptrCast(@alignCast(attach.view));
+            const texture = view.texture;
+
+            try self.barrier_enforcer.transition(&texture.resource, d3d12.D3D12_RESOURCE_STATE_DEPTH_WRITE);
+
+            width = view.width();
+            height = view.height();
+            depth_attachment = attach.*;
+
+            dsv_handle = try self.command_buffer.allocateDsvDescriptor();
+
+            self.device.device.?.ID3D12Device_CreateDepthStencilView(
+                texture.resource.d3d_resource,
+                null,
+                dsv_handle,
+            );
+        }
+
+        self.barrier_enforcer.flush(command_list);
+
+        command_list.ID3D12GraphicsCommandList_OMSetRenderTargets(
+            @intCast((desc.colour_attachments orelse &.{}).len),
+            &rtv_handles,
+            TRUE,
+            if (desc.depth_stencil_attachment != null) &dsv_handle else null,
+        );
+
+        rtv_handle = rtv_handles;
+        for (desc.colour_attachments orelse &.{}) |attach| {
+            if (attach.load_op == .clear) {
+                const clear_color = [4]f32{
+                    @floatCast(attach.clear_value.r),
+                    @floatCast(attach.clear_value.g),
+                    @floatCast(attach.clear_value.b),
+                    @floatCast(attach.clear_value.a),
+                };
+                command_list.ID3D12GraphicsCommandList_ClearRenderTargetView(
+                    rtv_handle,
+                    &clear_color,
+                    0,
+                    null,
+                );
+            }
+
+            rtv_handle.ptr += descriptor_size;
+        }
+
+        if (desc.depth_stencil_attachment) |attach| {
+            var clear_flags: d3d12.D3D12_CLEAR_FLAGS = 0;
+
+            if (attach.depth_load_op == .clear)
+                clear_flags |= d3d12.D3D12_CLEAR_FLAG_DEPTH;
+            if (attach.stencil_load_op == .clear)
+                clear_flags |= d3d12.D3D12_CLEAR_FLAG_STENCIL;
+
+            if (clear_flags != 0) {
+                command_list.ID3D12GraphicsCommandList_ClearDepthStencilView(
+                    dsv_handle,
+                    clear_flags,
+                    attach.depth_clear_value,
+                    @intCast(attach.stencil_clear_value),
+                    0,
+                    null,
+                );
+            }
+        }
+
+        const viewport = d3d12.D3D12_VIEWPORT{
+            .TopLeftX = 0,
+            .TopLeftY = 0,
+            .Width = @floatFromInt(width),
+            .Height = @floatFromInt(height),
+            .MinDepth = 0,
+            .MaxDepth = 1,
+        };
+        const scissor_rect = d3d12.D3D12_RECT{
+            .left = 0,
+            .top = 0,
+            .right = @intCast(width),
+            .bottom = @intCast(height),
+        };
+
+        command_list.ID3D12GraphicsCommandList_RSSetViewports(1, &viewport);
+        command_list.ID3D12GraphicsCommandList_RSSetScissorRects(1, &scissor_rect);
+
+        // Result
+        const encoder = try allocator.create(D3D12RenderPassEncoder);
+        encoder.* = .{
+            .command_list = command_list,
+            .color_attachments = color_attachments,
+            .depth_attachment = depth_attachment,
+            .barrier_enforcer = &self.barrier_enforcer,
+            .vertex_buffer_views = std.mem.zeroes([gpu.Limits.max_vertex_buffers]d3d12.D3D12_VERTEX_BUFFER_VIEW),
+        };
+        return encoder;
+    }
+
+    pub fn deinit(encoder: *D3D12RenderPassEncoder) void {
+        allocator.destroy(encoder);
+    }
+
+    pub fn draw(
+        encoder: *D3D12RenderPassEncoder,
+        vertex_count: u32,
+        instance_count: u32,
+        first_vertex: u32,
+        first_instance: u32,
+    ) void {
+        const command_list = encoder.command_list.?;
+
+        encoder.applyVertexBuffers();
+
+        command_list.ID3D12GraphicsCommandList_DrawInstanced(
+            vertex_count,
+            instance_count,
+            first_vertex,
+            first_instance,
+        );
+    }
+
+    pub fn drawIndexed(
+        encoder: *D3D12RenderPassEncoder,
+        index_count: u32,
+        instance_count: u32,
+        first_index: u32,
+        base_vertex: i32,
+        first_instance: u32,
+    ) void {
+        const command_list = encoder.command_list.?;
+
+        encoder.applyVertexBuffers();
+
+        command_list.ID3D12GraphicsCommandList_DrawIndexedInstanced(
+            index_count,
+            instance_count,
+            first_index,
+            base_vertex,
+            first_instance,
+        );
+    }
+
+    pub fn end(encoder: *D3D12RenderPassEncoder) !void {
+        const command_list = encoder.command_list.?;
+
+        for (encoder.color_attachments.slice()) |attach| {
+            const view: *D3D12TextureView = @ptrCast(@alignCast(attach.view.?));
+
+            if (attach.resolve_target) |resolve_target_raw| {
+                const resolve_target: *D3D12TextureView = @ptrCast(@alignCast(resolve_target_raw));
+
+                encoder.barrier_enforcer.transition(
+                    &view.texture.resource.?,
+                    d3d12.D3D12_RESOURCE_STATE_RESOLVE_SOURCE,
+                ) catch
+                    return gpu.RenderPass.Encoder.Error.RenderPassEncoderFailedToEnd;
+                encoder.barrier_enforcer.transition(
+                    &resolve_target.texture.resource.?,
+                    d3d12.D3D12_RESOURCE_STATE_RESOLVE_DEST,
+                ) catch
+                    return gpu.RenderPass.Encoder.Error.RenderPassEncoderFailedToEnd;
+
+                encoder.barrier_enforcer.flush(command_list);
+
+                // Format
+                const resolve_d3d_resource = resolve_target.texture.resource.?.resource.?;
+                const view_d3d_resource = view.texture.resource.?.resource.?;
+
+                var format: dxgi.common.DXGI_FORMAT = undefined;
+                var d3d_desc = resolve_d3d_resource.ID3D12Resource_GetDesc();
+                format = d3d_desc.Format;
+                if (d3dcommon.dxgiFormatIsTypeless(format)) {
+                    d3d_desc = view_d3d_resource.ID3D12Resource_GetDesc();
+                    format = d3d_desc.Format;
+                    if (d3dcommon.dxgiFormatIsTypeless(format)) {
+                        return gpu.RenderPass.Encoder.Error.RenderPassEncoderFailedToEnd;
+                    }
+                }
+
+                command_list.ID3D12GraphicsCommandList_ResolveSubresource(
+                    resolve_target.texture.resource.?.resource,
+                    resolve_target.base_subresource,
+                    view.texture.resource.?.resource,
+                    view.base_subresource,
+                    format,
+                );
+
+                encoder.barrier_enforcer.transition(
+                    &resolve_target.texture.resource.?,
+                    resolve_target.texture.resource.?.read_state,
+                ) catch
+                    return gpu.RenderPass.Encoder.Error.RenderPassEncoderFailedToEnd;
+            }
+
+            encoder.barrier_enforcer.transition(
+                &view.texture.resource.?,
+                view.texture.resource.?.read_state,
+            ) catch
+                return gpu.RenderPass.Encoder.Error.RenderPassEncoderFailedToEnd;
+        }
+
+        if (encoder.depth_attachment) |attach| {
+            const view: *D3D12TextureView = @ptrCast(@alignCast(attach.view));
+
+            encoder.barrier_enforcer.transition(
+                &view.texture.resource.?,
+                view.texture.resource.?.read_state,
+            ) catch
+                return gpu.RenderPass.Encoder.Error.RenderPassEncoderFailedToEnd;
+        }
+    }
+
+    pub fn setBindGroup(
+        encoder: *D3D12RenderPassEncoder,
+        group_index: u32,
+        group: *D3D12BindGroup,
+        dynamic_offsets: ?[]const u32,
+    ) void {
+        const command_list = encoder.command_list.?;
+
+        var parameter_index = encoder.group_parameter_indices[group_index];
+
+        if (group.general_table) |table| {
+            command_list.ID3D12GraphicsCommandList_SetGraphicsRootDescriptorTable(
+                parameter_index,
+                table,
+            );
+            parameter_index += 1;
+        }
+
+        if (group.sampler_table) |table| {
+            command_list.ID3D12GraphicsCommandList_SetGraphicsRootDescriptorTable(
+                parameter_index,
+                table,
+            );
+            parameter_index += 1;
+        }
+
+        for (dynamic_offsets orelse &.{}, 0..) |dynamic_offset, i| {
+            const dynamic_resource = group.dynamic_resources[i];
+
+            switch (dynamic_resource.parameter_type) {
+                d3d12.D3D12_ROOT_PARAMETER_TYPE_CBV => command_list.ID3D12GraphicsCommandList_SetGraphicsRootConstantBufferView(
+                    parameter_index,
+                    dynamic_resource.address + dynamic_offset,
+                ),
+                d3d12.D3D12_ROOT_PARAMETER_TYPE_SRV => command_list.ID3D12GraphicsCommandList_SetGraphicsRootShaderResourceView(
+                    parameter_index,
+                    dynamic_resource.address + dynamic_offset,
+                ),
+                d3d12.D3D12_ROOT_PARAMETER_TYPE_UAV => command_list.ID3D12GraphicsCommandList_SetGraphicsRootUnorderedAccessView(
+                    parameter_index,
+                    dynamic_resource.address + dynamic_offset,
+                ),
+                else => {},
+            }
+
+            parameter_index += 1;
+        }
+    }
+
+    pub fn setIndexBuffer(
+        encoder: *D3D12RenderPassEncoder,
+        buffer: *D3D12Buffer,
+        format: gpu.IndexFormat,
+        offset: u64,
+        size: u64,
+    ) !void {
+        const command_list = encoder.command_list.?;
+        const d3d_resource = buffer.buffer.resource.?;
+
+        const d3d_size: u32 = @intCast(if (size == gpu.whole_size) buffer.size - offset else size);
+
+        command_list.ID3D12GraphicsCommandList_IASetIndexBuffer(
+            &d3d12.D3D12_INDEX_BUFFER_VIEW{
+                .BufferLocation = d3d_resource.ID3D12Resource_GetGPUVirtualAddress(d3d_resource) + offset,
+                .SizeInBytes = d3d_size,
+                .Format = switch (format) {
+                    .undefined => unreachable,
+                    .uint16 => .R16_UINT,
+                    .uint32 => .R32_UINT,
+                },
+            },
+        );
+    }
+
+    pub fn setPipeline(encoder: *D3D12RenderPassEncoder, pipeline: *D3D12RenderPipeline) !void {
+        const command_list = encoder.command_list.?;
+
+        encoder.group_parameter_indices = pipeline.layout.group_parameter_indices.slice();
+        encoder.vertex_strides = pipeline.vertex_strides.slice();
+
+        command_list.ID3D12GraphicsCommandList_SetGraphicsRootSignature(
+            pipeline.layout.root_signature,
+        );
+
+        command_list.ID3D12GraphicsCommandList_SetPipelineState(
+            pipeline.d3d_pipeline,
+        );
+
+        command_list.ID3D12GraphicsCommandList_IASetPrimitiveTopology(
+            pipeline.topology,
+        );
+    }
+
+    pub fn setScissorRect(encoder: *D3D12RenderPassEncoder, x: u32, y: u32, width: u32, height: u32) !void {
+        const command_list = encoder.command_list.?;
+
+        const scissor_rect = d3d12.D3D12_RECT{
+            .left = @intCast(x),
+            .top = @intCast(y),
+            .right = @intCast(x + width),
+            .bottom = @intCast(y + height),
+        };
+
+        command_list.ID3D12GraphicsCommandList_RSSetScissorRects(command_list, 1, &scissor_rect);
+    }
+
+    pub fn setVertexBuffer(encoder: *D3D12RenderPassEncoder, slot: u32, buffer: *D3D12Buffer, offset: u64, size: u64) !void {
+        const d3d_resource = buffer.buffer.resource.?;
+
+        var view = &encoder.vertex_buffer_views[slot];
+        view.BufferLocation = d3d_resource.ID3D12Resource_GetGPUVirtualAddress(d3d_resource) + offset;
+        view.SizeInBytes = @intCast(size);
+        // StrideInBytes deferred until draw()
+
+        encoder.vertex_apply_count = @max(encoder.vertex_apply_count, slot + 1);
+    }
+
+    pub fn setViewport(
+        encoder: *D3D12RenderPassEncoder,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        min_depth: f32,
+        max_depth: f32,
+    ) !void {
+        const command_list = encoder.command_list.?;
+
+        const viewport = d3d12.D3D12_VIEWPORT{
+            .TopLeftX = x,
+            .TopLeftY = y,
+            .Width = width,
+            .Height = height,
+            .MinDepth = min_depth,
+            .MaxDepth = max_depth,
+        };
+
+        command_list.ID3D12GraphicsCommandList_RSSetViewports(command_list, 1, &viewport);
+    }
+
+    // Private
+    fn applyVertexBuffers(encoder: *D3D12RenderPassEncoder) void {
+        if (encoder.vertex_apply_count > 0) {
+            const command_list = encoder.command_list.?;
+
+            for (0..encoder.vertex_apply_count) |i| {
+                var view = &encoder.vertex_buffer_views[i];
+                view.StrideInBytes = encoder.vertex_strides[i];
+            }
+
+            command_list.ID3D12GraphicsCommandList_IASetVertexBuffers(
+                0,
+                encoder.vertex_apply_count,
+                &encoder.vertex_buffer_views,
+            );
+
+            encoder.vertex_apply_count = 0;
+        }
+    }
+};
+
 // RenderPipeline
+pub const D3D12RenderPipeline = struct {};
 
 // Sampler
 pub fn samplerDestroy(sampler: *gpu.Sampler) void {

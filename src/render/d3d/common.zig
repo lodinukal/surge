@@ -251,3 +251,32 @@ pub fn dxgiFormatForTextureView(format: gpu.Texture.Format, aspect: gpu.Texture.
         .plane1_only => unreachable,
     };
 }
+
+pub fn dxgiFormatIsTypeless(format: dxgi.common.DXGI_FORMAT) bool {
+    return switch (format) {
+        .R32G32B32A32_TYPELESS,
+        .R32G32B32_TYPELESS,
+        .R16G16B16A16_TYPELESS,
+        .R32G32_TYPELESS,
+        .R32G8X24_TYPELESS,
+        .R32_FLOAT_X8X24_TYPELESS,
+        .R10G10B10A2_TYPELESS,
+        .R8G8B8A8_TYPELESS,
+        .R16G16_TYPELESS,
+        .R32_TYPELESS,
+        .R24G8_TYPELESS,
+        .R8G8_TYPELESS,
+        .R16_TYPELESS,
+        .R8_TYPELESS,
+        .BC1_TYPELESS,
+        .BC2_TYPELESS,
+        .BC3_TYPELESS,
+        .BC4_TYPELESS,
+        .BC5_TYPELESS,
+        .B8G8R8A8_TYPELESS,
+        .BC6H_TYPELESS,
+        .BC7_TYPELESS,
+        => true,
+        else => false,
+    };
+}

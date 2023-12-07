@@ -6,6 +6,7 @@ pub const Procs = struct {
     pub var loaded_procs: ?*const Procs = null;
 
     // BindGroup
+    bindGroupDestroy: *const fn (bindGroup: *gpu.BindGroup) void,
     // BindGroupLayout
     bindGroupLayoutDestroy: *const fn (bindGroupLayout: *gpu.BindGroupLayout) void,
     // Buffer
@@ -27,7 +28,11 @@ pub const Procs = struct {
     // ComputePassEncoder
     // ComputePipeline
     // Device
+    deviceCreateBindGroup: *const fn (device: *gpu.Device, desc: *const gpu.BindGroup.Descriptor) gpu.BindGroup.Error!*gpu.BindGroup,
+    deviceCreateBindGroupLayout: *const fn (device: *gpu.Device, desc: *const gpu.BindGroupLayout.Descriptor) gpu.BindGroupLayout.Error!*gpu.BindGroupLayout,
+    deviceCreatePipelineLayout: *const fn (device: *gpu.Device, desc: *const gpu.PipelineLayout.Descriptor) gpu.PipelineLayout.Error!*gpu.PipelineLayout,
     deviceCreateBuffer: *const fn (device: *gpu.Device, desc: *const gpu.Buffer.Descriptor) gpu.Buffer.Error!*gpu.Buffer,
+    deviceCreateCommandEncoder: *const fn (device: *gpu.Device, desc: *const gpu.CommandEncoder.Descriptor) gpu.CommandEncoder.Error!*gpu.CommandEncoder,
     deviceCreateSampler: *const fn (device: *gpu.Device, desc: *const gpu.Sampler.Descriptor) gpu.Sampler.Error!*gpu.Sampler,
     deviceCreateSwapChain: *const fn (
         device: *gpu.Device,
@@ -47,6 +52,7 @@ pub const Procs = struct {
     physicalDeviceGetProperties: *const fn (physicalDevice: *gpu.PhysicalDevice, out_props: *gpu.PhysicalDevice.Properties) bool,
     physicalDeviceDestroy: *const fn (physicalDevice: *gpu.PhysicalDevice) void,
     // PipelineLayout
+    pipelineLayoutDestroy: *const fn (pipelineLayout: *gpu.PipelineLayout) void,
     // QuerySet
     // Queue
     queueSubmit: *const fn (
@@ -56,6 +62,63 @@ pub const Procs = struct {
     // RenderBundle
     // RenderBundleEncoder
     // RenderPassEncoder
+    renderPassEncoderDraw: *const fn (
+        renderPassEncoder: *gpu.RenderPass.Encoder,
+        vertexCount: u32,
+        instanceCount: u32,
+        firstVertex: u32,
+        firstInstance: u32,
+    ) void,
+    renderPassEncoderDrawIndexed: *const fn (
+        renderPassEncoder: *gpu.RenderPass.Encoder,
+        indexCount: u32,
+        instanceCount: u32,
+        firstIndex: u32,
+        baseVertex: i32,
+        firstInstance: u32,
+    ) void,
+    renderPassEncoderDrawIndexedIndirect: *const fn (
+        renderPassEncoder: *gpu.RenderPass.Encoder,
+        indirectBuffer: *gpu.Buffer,
+        indirectOffset: u64,
+    ) void,
+    renderPassEncoderDrawIndirect: *const fn (
+        renderPassEncoder: *gpu.RenderPass.Encoder,
+        indirectBuffer: *gpu.Buffer,
+        indirectOffset: u64,
+    ) void,
+    renderPassEncoderEnd: *const fn (renderPassEncoder: *gpu.RenderPass.Encoder) gpu.RenderPass.Encoder.Error!void,
+    renderPassEncoderExecuteBundles: *const fn (
+        renderPassEncoder: *gpu.RenderPass.Encoder,
+        bundles: []const *gpu.RenderBundle,
+    ) void,
+    renderPassEncoderInsertDebugMarker: *const fn (
+        renderPassEncoder: *gpu.RenderPass.Encoder,
+        label: []const u8,
+    ) void,
+    renderPassEncoderPopDebugGroup: *const fn (renderPassEncoder: *gpu.RenderPass.Encoder) void,
+    renderPassEncoderPushDebugGroup: *const fn (
+        renderPassEncoder: *gpu.RenderPass.Encoder,
+        label: []const u8,
+    ) void,
+    renderPassEncoderSetBindGroup: *const fn (
+        renderPassEncoder: *gpu.RenderPass.Encoder,
+        index: u32,
+        bindGroup: *gpu.BindGroup,
+        dynamicOffsets: ?[]const u32,
+    ) void,
+    renderPassEncoderSetBlendConstant: *const fn (
+        renderPassEncoder: *gpu.RenderPass.Encoder,
+        color: [4]f32,
+    ) void,
+    renderPassEncoderSetIndexBuffer: *const fn () void,
+    renderPassEncoderSetPipeline: *const fn () void,
+    renderPassEncoderSetScissorRect: *const fn () void,
+    renderPassEncoderSetStencilReference: *const fn () void,
+    renderPassEncoderSetVertexBuffer: *const fn () void,
+    renderPassEncoderSetViewport: *const fn () void,
+    renderPassEncoderWriteTimestamp: *const fn () void,
+    renderPassEncoderDestroy: *const fn (renderPassEncoder: *gpu.RenderPass.Encoder) void,
     // RenderPipeline
     // Sampler
     samplerDestroy: *const fn (sampler: *gpu.Sampler) void,

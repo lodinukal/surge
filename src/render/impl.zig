@@ -36,6 +36,11 @@ pub fn closeBackend() void {
     }
 }
 
+// BindGroup
+pub inline fn bindGroupDestroy(bind_group: *gpu.BindGroup) void {
+    return procs.Procs.loaded_procs.?.bindGroupDestroy(bind_group);
+}
+
 // BindGroupLayout
 pub inline fn bindGroupLayoutDestroy(bind_group_layout: *gpu.BindGroupLayout) void {
     return procs.Procs.loaded_procs.?.bindGroupLayoutDestroy(bind_group_layout);
@@ -81,8 +86,24 @@ pub inline fn commandEncoderDestroy(command_encoder: *gpu.CommandEncoder) void {
 }
 
 // Device
+pub inline fn deviceCreateBindGroup(device: *gpu.Device, desc: *const gpu.BindGroup.Descriptor) gpu.BindGroup.Error!*gpu.BindGroup {
+    return procs.Procs.loaded_procs.?.deviceCreateBindGroup(device, desc);
+}
+
+pub inline fn deviceCreateBindGroupLayout(device: *gpu.Device, desc: *const gpu.BindGroupLayout.Descriptor) gpu.BindGroupLayout.Error!*gpu.BindGroupLayout {
+    return procs.Procs.loaded_procs.?.deviceCreateBindGroupLayout(device, desc);
+}
+
+pub inline fn deviceCreatePipelineLayout(device: *gpu.Device, desc: *const gpu.PipelineLayout.Descriptor) gpu.PipelineLayout.Error!*gpu.PipelineLayout {
+    return procs.Procs.loaded_procs.?.deviceCreatePipelineLayout(device, desc);
+}
+
 pub inline fn deviceCreateBuffer(device: *gpu.Device, desc: *const gpu.Buffer.Descriptor) gpu.Buffer.Error!*gpu.Buffer {
     return procs.Procs.loaded_procs.?.deviceCreateBuffer(device, desc);
+}
+
+pub inline fn deviceCreateCommandEncoder(device: *gpu.Device, desc: *const gpu.CommandEncoder.Descriptor) gpu.CommandEncoder.Error!*gpu.CommandEncoder {
+    return procs.Procs.loaded_procs.?.deviceCreateCommandEncoder(device, desc);
 }
 
 pub inline fn deviceCreateSampler(device: *gpu.Device, desc: *const gpu.Sampler.Descriptor) gpu.Sampler.Error!*gpu.Sampler {
@@ -151,12 +172,123 @@ pub inline fn physicalDeviceDestroy(physicalDevice: *gpu.PhysicalDevice) void {
     return procs.Procs.loaded_procs.?.physicalDeviceDestroy(physicalDevice);
 }
 
+// PipelineLayout
+pub inline fn pipelineLayoutDestroy(pipeline_layout: *gpu.PipelineLayout) void {
+    return procs.Procs.loaded_procs.?.pipelineLayoutDestroy(pipeline_layout);
+}
+
 // Queue
 pub inline fn queueSubmit(
     queue: *gpu.Queue,
     command_buffers: []const *gpu.CommandBuffer,
 ) gpu.Queue.Error!void {
     return procs.Procs.loaded_procs.?.queueSubmit(queue, command_buffers);
+}
+
+// RenderPassEncoder
+pub inline fn renderPassEncoderDraw(
+    render_pass_encoder: *gpu.RenderPass.Encoder,
+    vertex_count: u32,
+    instance_count: u32,
+    first_vertex: u32,
+    first_instance: u32,
+) void {
+    return procs.Procs.loaded_procs.?.renderPassEncoderDraw(
+        render_pass_encoder,
+        vertex_count,
+        instance_count,
+        first_vertex,
+        first_instance,
+    );
+}
+
+pub inline fn renderPassEncoderDrawIndexed(
+    render_pass_encoder: *gpu.RenderPass.Encoder,
+    index_count: u32,
+    instance_count: u32,
+    first_index: u32,
+    base_vertex: i32,
+    first_instance: u32,
+) void {
+    return procs.Procs.loaded_procs.?.renderPassEncoderDrawIndexed(
+        render_pass_encoder,
+        index_count,
+        instance_count,
+        first_index,
+        base_vertex,
+        first_instance,
+    );
+}
+
+pub inline fn renderPassEncoderDrawIndexedIndirect(
+    render_pass_encoder: *gpu.RenderPass.Encoder,
+    indirect_buffer: *gpu.Buffer,
+    indirect_offset: u64,
+) void {
+    return procs.Procs.loaded_procs.?.renderPassEncoderDrawIndexedIndirect(
+        render_pass_encoder,
+        indirect_buffer,
+        indirect_offset,
+    );
+}
+
+pub inline fn renderPassEncoderDrawIndirect(
+    render_pass_encoder: *gpu.RenderPass.Encoder,
+    indirect_buffer: *gpu.Buffer,
+    indirect_offset: u64,
+) void {
+    return procs.Procs.loaded_procs.?.renderPassEncoderDrawIndirect(
+        render_pass_encoder,
+        indirect_buffer,
+        indirect_offset,
+    );
+}
+
+pub inline fn renderPassEncoderEnd(render_pass_encoder: *gpu.RenderPass.Encoder) !void {
+    return procs.Procs.loaded_procs.?.renderPassEncoderEnd(render_pass_encoder);
+}
+
+pub inline fn renderPassEncoderExecuteBundles(
+    render_pass_encoder: *gpu.RenderPass.Encoder,
+    bundles: []const *gpu.RenderBundle,
+) void {
+    return procs.Procs.loaded_procs.?.renderPassEncoderExecuteBundles(render_pass_encoder, bundles);
+}
+
+pub inline fn renderPassEncoderInsertDebugMarker(
+    render_pass_encoder: *gpu.RenderPass.Encoder,
+    label: []const u8,
+) void {
+    return procs.Procs.loaded_procs.?.renderPassEncoderInsertDebugMarker(render_pass_encoder, label);
+}
+
+pub inline fn renderPassEncoderPopDebugGroup(render_pass_encoder: *gpu.RenderPass.Encoder) void {
+    return procs.Procs.loaded_procs.?.renderPassEncoderPopDebugGroup(render_pass_encoder);
+}
+
+pub inline fn renderPassEncoderPushDebugGroup(
+    render_pass_encoder: *gpu.RenderPass.Encoder,
+    label: []const u8,
+) void {
+    return procs.Procs.loaded_procs.?.renderPassEncoderPushDebugGroup(render_pass_encoder, label);
+}
+
+pub inline fn renderPassEncoderSetBindGroup(
+    render_pass_encoder: *gpu.RenderPass.Encoder,
+    index: u32,
+    bind_group: *gpu.BindGroup,
+    dynamic_offsets: ?[]const u32,
+) void {
+    return procs.Procs.loaded_procs.?.renderPassEncoderSetBindGroup(
+        render_pass_encoder,
+        index,
+        bind_group,
+        dynamic_offsets,
+    );
+}
+
+pub inline fn renderPassEncoderDestroy(render_pass_encoder: *gpu.RenderPass.Encoder) void {
+    return procs.Procs.loaded_procs.?.renderPassEncoderDestroy(render_pass_encoder);
 }
 
 // Sampler

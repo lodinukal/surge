@@ -25,8 +25,24 @@ pub const Device = opaque {
         return impl.deviceGetQueue(self);
     }
 
+    pub inline fn createBindGroup(self: *Device, descriptor: *const gpu.BindGroup.Descriptor) !*gpu.BindGroup {
+        return try impl.deviceCreateBindGroup(self, descriptor);
+    }
+
+    pub inline fn createBindGroupLayout(self: *Device, descriptor: *const gpu.BindGroupLayout.Descriptor) !*gpu.BindGroupLayout {
+        return try impl.deviceCreateBindGroupLayout(self, descriptor);
+    }
+
+    pub inline fn createPipelineLayout(self: *Device, descriptor: *const gpu.PipelineLayout.Descriptor) !*gpu.PipelineLayout {
+        return try impl.deviceCreatePipelineLayout(self, descriptor);
+    }
+
     pub inline fn createBuffer(self: *Device, descriptor: *const gpu.Buffer.Descriptor) !*gpu.Buffer {
         return try impl.deviceCreateBuffer(self, descriptor);
+    }
+
+    pub inline fn createCommandEncoder(self: *Device, descriptor: *const gpu.CommandEncoder.Descriptor) !*gpu.CommandEncoder {
+        return try impl.deviceCreateCommandEncoder(self, descriptor);
     }
 
     pub inline fn createSampler(self: *Device, descriptor: *const gpu.Sampler.Descriptor) !*gpu.Sampler {

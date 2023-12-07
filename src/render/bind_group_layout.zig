@@ -5,10 +5,10 @@ const impl = gpu.impl;
 
 pub const BindGroupLayout = opaque {
     pub const Error = error{
-        BindGroupFailedToCreate,
+        BindGroupLayoutFailedToCreate,
     };
 
-    pub const Entry = extern struct {
+    pub const Entry = struct {
         binding: u32,
         visibility: gpu.ShaderStageFlags,
         buffer: gpu.Buffer.BindingLayout = .{},
@@ -83,7 +83,7 @@ pub const BindGroupLayout = opaque {
         }
     };
 
-    pub const Descriptor = extern struct {
+    pub const Descriptor = struct {
         label: ?[]const u8 = null,
         entries: ?[]const Entry = null,
     };
