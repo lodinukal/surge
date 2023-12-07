@@ -52,7 +52,7 @@ pub fn Sender(comptime T: type) type {
 
         pub fn send(self: *Self, value: T) !void {
             if (self.channel.connected) {
-                var node = try self.channel.allocator.create(ChannelType.QueueType.Node);
+                const node = try self.channel.allocator.create(ChannelType.QueueType.Node);
                 node.* = .{
                     .prev = undefined,
                     .next = undefined,

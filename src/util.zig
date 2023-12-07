@@ -4,7 +4,7 @@ pub fn enumFromValue(comptime E: type, value: anytype) E {
     const typeInfo = @typeInfo(@TypeOf(value));
     if (typeInfo == std.builtin.Type.EnumLiteral) {
         return @as(E, value);
-    } else if (comptime std.meta.trait.isIntegral(@TypeOf(value))) {
+    } else if (typeInfo == .Int) {
         return @enumFromInt(value);
     } else if (@TypeOf(value) == E) {
         return value;
@@ -40,51 +40,31 @@ pub fn xorEnum(comptime E: type, other: anytype) E {
     return @enumFromInt(result);
 }
 
-fn EnumStructInitialiser(comptime E: type) type {
-    const fields = @typeInfo(E).Enum.fields;
-    var new_fields: [fields.len]std.builtin.Type.StructField = undefined;
-    inline for (fields, 0..) |field, i| {
-        new_fields[i] = .{
-            .name = field.name,
-            .type = bool,
-            .default_value = @ptrCast(&@as(bool, false)),
-            .is_comptime = false,
-            .alignment = @alignOf(bool),
+pub fn ErrorEnum(comptime E: type) type {
+    const ti = @typeInfo(E);
+    const error_set = ti.ErrorSet.?;
+    comptime var enum_fields: [error_set.len]std.builtin.Type.EnumField = undefined;
+    inline for (error_set, 0..) |e, index| {
+        enum_fields[index] = .{
+            .name = e.name,
+            .value = index,
         };
     }
-    return @Type(.{ .Struct = .{
-        .layout = .Auto,
-        .fields = &new_fields,
-        .decls = &.{},
-        .is_tuple = false,
-    } });
-}
 
-pub fn initEnum(comptime E: type, flags: EnumStructInitialiser(E)) E {
-    var result: @typeInfo(E).Enum.tag_type = 0;
-    const fields = @typeInfo(E).Enum.fields;
-    inline for (fields) |field| {
-        if (@field(flags, field.name)) {
-            result |= field.value;
-        }
-    }
-    return @enumFromInt(result);
-}
-
-test initEnum {
-    const Foo = enum(u8) {
-        A = 1,
-        B = 2,
-        C = 4,
-        _,
-    };
-    const result = initEnum(Foo, .{
-        .A = true,
-        .B = false,
-        .C = true,
+    return @Type(std.builtin.Type{
+        .Enum = .{
+            .tag_type = u16,
+            .fields = &enum_fields,
+            .decls = &.{},
+            .is_exhaustive = true,
+        },
     });
-    try std.testing.expectEqual(@as(
-        Foo,
-        @enumFromInt(@intFromEnum(Foo.A) | @intFromEnum(Foo.C)),
-    ), result);
+}
+
+pub fn errorEnumFromError(comptime E: type, err: E) ErrorEnum(E) {
+    return @field(ErrorEnum(E), @errorName(err));
+}
+
+pub fn errorFromErrorEnum(comptime E: type, err: E) E {
+    return @field(E, @tagName(err));
 }

@@ -2,186 +2,124 @@ const std = @import("std");
 
 const app = @import("app/app.zig");
 const math = @import("math.zig");
-const Renderer = @import("render/gpu/Renderer.zig");
 
-const interface = @import("core/interface.zig");
-
-const Vertex = struct {
-    position: [2]f32,
-    colour: [4]u8,
-};
+const gpu = @import("render/gpu.zig");
 
 const RenderContext = struct {
-    context: *Context = undefined,
-    renderer: *Renderer = undefined,
+    pub const Vertex = struct {
+        position: math.Vec,
+        color: math.Vec,
+    };
 
-    swapchain: Renderer.Handle(Renderer.SwapChain) = undefined,
-    cached_size: ?[2]u32 = null,
+    instance: *gpu.Instance = undefined,
+    surface: *gpu.Surface = undefined,
+    physical_device: *gpu.PhysicalDevice = undefined,
+    device: *gpu.Device = undefined,
 
-    vertex_buffer: Renderer.Handle(Renderer.Buffer) = undefined,
+    swapchain: *gpu.SwapChain = undefined,
 
-    vertex_shader: Renderer.Handle(Renderer.Shader) = undefined,
-    pixel_shader: Renderer.Handle(Renderer.Shader) = undefined,
+    // rendering objects
 
-    pub fn init(self: *RenderContext, ctx: *Context) !void {
-        self.context = ctx;
-        self.renderer = try Renderer.create(self.context.allocator, .{});
-        errdefer self.renderer.destroy();
-        try self.renderer.load(.d3d11);
+    vertex_buffer: ?*gpu.Buffer = null,
+    vertex_count: usize = 0,
+
+    index_buffer: ?*gpu.Buffer = null,
+    index_count: usize = 0,
+
+    uniform_buffer: ?*gpu.Buffer = null,
+    uniform_count: usize = 0,
+
+    pipeline_layout: ?*gpu.PipelineLayout = null,
+
+    render_pipeline: ?*gpu.RenderPipeline = null,
+
+    render_pass: struct {
+        colour_attachment: [1]gpu.RenderPass.ColourAttachment = .{undefined},
+        descriptor: gpu.RenderPass.Descriptor = .{},
+    } = .{},
+
+    pub fn load(self: *RenderContext, context: *Context) !void {
+        if (gpu.loadBackend(.d3d12) == false) return;
+        const instance = try gpu.createInstance(context.allocator, &.{});
+        errdefer instance.destroy();
+
+        const surface = try instance.createSurface(&.{
+            .native_handle = context.window.getNativeHandle().wnd,
+            .native_handle_size = 8,
+        });
+        errdefer surface.destroy();
+
+        const physicalDevice = try instance.requestPhysicalDevice(&.{
+            .power_preference = .high_performance,
+        });
+        errdefer physicalDevice.destroy();
+
+        const device = try physicalDevice.createDevice(&.{ .label = "device" });
+        errdefer device.destroy();
+
+        const swapchain = try device.createSwapChain(surface, &.{
+            .height = 600,
+            .width = 800,
+            .present_mode = .mailbox,
+            .format = .bgra8_unorm,
+            .usage = .{
+                .render_attachment = true,
+            },
+        });
+        errdefer swapchain.destroy();
+
+        self.instance = instance;
+        self.surface = surface;
+        self.physical_device = physicalDevice;
+        self.device = device;
+        self.swapchain = swapchain;
     }
 
     pub fn deinit(self: *RenderContext) void {
-        self.renderer.destroySwapchain(self.swapchain) catch {};
-        self.renderer.destroy();
-    }
-
-    pub fn build(self: *RenderContext) !void {
-        self.swapchain = try self.renderer.createSwapchain(&.{
-            .resolution = .{ 800, 600 },
-        }, self.context.window);
-
-        try self.createResources();
-    }
-
-    pub fn resize(self: *RenderContext, size: [2]u32) !void {
-        const old_cached_size = self.cached_size;
-        _ = old_cached_size;
-        self.cached_size = size;
-    }
-
-    pub fn processSizeChange(self: *RenderContext) !void {
-        if (self.cached_size) |size| {
-            var swapchain = try self.renderer.useSwapchainMutable(self.swapchain);
-            try swapchain.resizeBuffers(
-                .{
-                    @intCast(size[0]),
-                    @intCast(size[1]),
-                },
-                .{
-                    .modify_surface = true,
-                    .fullscreen = self.context.window.getFullscreenMode() == .fullscreen,
-                },
-            );
-            self.cached_size = null;
-        }
-    }
-
-    pub fn present(self: *RenderContext) !void {
-        var swapchain = try self.renderer.useSwapchainMutable(self.swapchain);
-        swapchain.present();
-    }
-
-    fn createResources(self: *RenderContext) !void {
-        var buffer: [2048]u8 = undefined;
-        var fba = std.heap.FixedBufferAllocator.init(&buffer);
-        var temp_allocator = fba.allocator();
-
-        var vertex_format = Renderer.VertexFormat.init(temp_allocator);
-        try vertex_format.appendAttribute(.{
-            .name = "POS",
-            .format = .rg32float,
-        });
-        try vertex_format.appendAttribute(.{
-            .name = "COLOR",
-            .format = .rgba8unorm,
-        });
-        vertex_format.setStride(@sizeOf(Vertex));
-
-        var vertex_attributes = try vertex_format.done();
-
-        try self.createBuffers(vertex_attributes);
-        try self.createShaders(vertex_attributes);
-    }
-
-    fn createBuffers(self: *RenderContext, attributes: []const Renderer.VertexAttribute) !void {
-        const vertices = [_]Vertex{
-            .{ .position = .{ -0.5, -0.5 }, .colour = .{ 255, 0, 0, 255 } },
-            .{ .position = .{ 0.5, -0.5 }, .colour = .{ 0, 255, 0, 255 } },
-            .{ .position = .{ 0.0, 0.5 }, .colour = .{ 0, 0, 255, 255 } },
-        };
-        const as_data: []const u8 = @as([*]const u8, @ptrCast(&vertices))[0 .. vertices.len * @sizeOf(Vertex)];
-
-        var buffer_descriptor = Renderer.Buffer.BufferDescriptor{
-            .size = vertices.len * @sizeOf(Vertex),
-            .binding = .{ .vertex_buffer = true },
-            .vertex_attributes = attributes,
-        };
-        self.vertex_buffer = try self.renderer.createBuffer(&buffer_descriptor, as_data);
-    }
-
-    fn createShaders(self: *RenderContext, attributes: []const Renderer.VertexAttribute) !void {
-        const src = @embedFile("shaders.hlsl");
-
-        var desc: Renderer.Shader.ShaderDescriptor = .{
-            .type = .vertex,
-            .source = src,
-            .entry_point = "vs_main",
-            .profile = "vs_5_0",
-            .vertex = .{
-                .input = attributes,
-            },
-        };
-        self.vertex_shader = try self.renderer.createShader(&desc);
-
-        desc = .{
-            .type = .fragment,
-            .source = src,
-            .entry_point = "ps_main",
-            .profile = "ps_5_0",
-        };
-        self.pixel_shader = try self.renderer.createShader(&desc);
+        self.swapchain.destroy();
+        self.device.destroy();
+        self.physical_device.destroy();
+        self.surface.destroy();
+        self.instance.destroy();
     }
 };
 
 const Context = struct {
-    allocator: std.mem.Allocator = undefined,
-    application: *app.Application = undefined,
-    window: *app.window.Window = undefined,
+    allocator: std.mem.Allocator,
+    application: *app.Application,
+    window: *app.window.Window,
 
     ui_thread: ?std.Thread = null,
+    mutex: std.Thread.Mutex = .{},
 
     ready_condition: std.Thread.Condition = .{},
     ready_mutex: std.Thread.Mutex = .{},
 
-    render_ctx: RenderContext = .{},
+    render: RenderContext = .{},
+    resized: ?[2]u32 = null,
 
-    pub fn create(allocator: std.mem.Allocator) !*Context {
-        var context = try allocator.create(Context);
-        context.* = .{};
-        context.allocator = allocator;
-        try context.init();
-
-        return context;
-    }
-
-    pub fn destroy(self: *Context) void {
-        self.deinit();
-        self.allocator.destroy(self);
-    }
-
-    fn init(self: *Context) !void {
-        self.application = try app.Application.create(self.allocator);
-        errdefer self.application.destroy();
-
-        try self.render_ctx.init(self);
+    pub fn init(allocator: std.mem.Allocator) !Context {
+        var application = try app.Application.create(allocator);
+        errdefer application.destroy();
 
         // application.input.focused_changed_callback = focused_changed_callback;
-        self.application.input.input_began_callback = inputBeganCallback;
-        self.application.input.input_changed_callback = inputChangedCallback;
-        self.application.input.input_ended_callback = inputEndedCallback;
-        self.application.input.frame_update_callback = frameUpdate;
+        application.input.input_began_callback = inputBeganCallback;
+        application.input.input_changed_callback = inputChangedCallback;
+        application.input.input_ended_callback = inputEndedCallback;
+        application.input.frame_update_callback = frameUpdate;
 
-        self.window = try self.application.createWindow(.{
-            .title = "engine",
-            .size = .{ 800, 600 },
-            .visible = true,
-        });
-        self.window.storeContext(Context, self);
+        return Context{
+            .allocator = allocator,
+            .application = application,
+            .window = try application.createWindow(.{
+                .title = "helloo!",
+                .size = .{ 800, 600 },
+                .visible = true,
+            }),
+        };
     }
 
-    fn deinit(self: *Context) void {
-        self.render_ctx.deinit();
-
+    pub fn deinit(self: *Context) void {
         if (self.ui_thread) |t| {
             t.join();
         }
@@ -211,32 +149,36 @@ const Context = struct {
 
     fn windowLoop(self: *Context) !void {
         try self.window.build();
-        self.render_ctx.build() catch |err| {
-            std.debug.print("failed to build render context: {}\n", .{err});
-            return;
-        };
+
+        self.window.storeContext(Context, self);
 
         self.ready_mutex.lock();
         self.ready_condition.broadcast();
         self.ready_mutex.unlock();
 
+        try self.render.load(self);
+
         while (self.running()) {
             try self.pumpEvents();
-            var char_buffer: [256]u8 = undefined;
-            if (self.window.getPosition()) |pos| {
-                const res = try std.fmt.bufPrint(&char_buffer, "{}x{}", .{ pos[0], pos[1] });
-                self.window.setTitle(res);
+            self.window.setTitle(if (self.window.isFocused()) "focused" else "not focused");
+
+            const frame_start = std.time.nanoTimestamp();
+
+            if (self.resized) |size| {
+                try self.render.swapchain.resize(size);
             }
+            try self.render.swapchain.present();
+
+            const frame_end = std.time.nanoTimestamp();
+
+            const frame_time = frame_end - frame_start;
+            _ = frame_time;
+            // std.debug.print("frame time: {d:1}\n", .{1000.0 / @as(f64, @floatFromInt(frame_time))});
+
             std.time.sleep(if (self.window.isFocused()) focused_sleep else unfocused_sleep);
-
-            try self.render_ctx.processSizeChange();
-            self.render_ctx.present() catch |err| {
-                std.debug.print("failed to present: {}\n", .{err});
-                return;
-            };
-
-            frameUpdate(self.window);
         }
+
+        self.render.deinit();
     }
 
     fn frameUpdate(wnd: *app.window.Window) void {
@@ -244,35 +186,35 @@ const Context = struct {
     }
 
     fn inputBeganCallback(ipo: app.input.InputObject) void {
-        if (ipo.type == .mousebutton) {
-            std.debug.print("mousebutton {} down\n", .{ipo.data.mousebutton});
-        }
-        if (ipo.type == .textinput) {
-            if (ipo.data.textinput == .short) {
-                std.debug.print("{c}\n", .{ipo.data.textinput.short});
-            }
-        }
+        _ = ipo;
     }
 
     fn inputChangedCallback(ipo: app.input.InputObject) void {
-        // std.debug.print("input changed: {}\n", .{ipo});
         if (ipo.type == .resize) {
-            var context: *Context = @alignCast(ipo.window.?.getContext(Context).?);
-            _ = context;
+            var ctx = ipo.window.?.getContext(Context).?;
+            ctx.resized = .{
+                @intCast(ipo.data.resize[0]),
+                @intCast(ipo.data.resize[1]),
+            };
         }
     }
 
     fn inputEndedCallback(ipo: app.input.InputObject) void {
-        // std.debug.print("input ended: {}\n", .{ipo});
-        if (ipo.type == .mousebutton) {
-            std.debug.print("mousebutton {} up\n", .{ipo.data.mousebutton});
-        }
+        _ = ipo;
     }
 };
 
-pub fn checked_main(alloc: std.mem.Allocator) !void {
-    var context = try Context.create(alloc);
-    defer context.destroy();
+pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const alloc = gpa.allocator();
+
+    // var arena = std.heap.ArenaAllocator.init(gpa_alloc);
+    // defer arena.deinit();
+    // const alloc = arena.allocator();
+
+    var context = try Context.init(alloc);
+    defer context.deinit();
 
     try context.spawnWindowThread();
 
@@ -288,17 +230,4 @@ pub fn checked_main(alloc: std.mem.Allocator) !void {
     }
 
     // std.debug.print("mem: {}\n", .{arena.queryCapacity()});
-}
-
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    var gpa_alloc = gpa.allocator();
-    var alloc = gpa_alloc;
-
-    try checked_main(alloc);
-}
-
-test {
-    std.testing.refAllDecls(Renderer);
 }

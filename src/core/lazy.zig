@@ -6,7 +6,7 @@ pub fn Lazy(comptime T: type, comptime R: type) type {
             if (cached) |found| {
                 return found;
             }
-            var result = T.init();
+            const result = T.init();
             cached = result;
             return result;
         }

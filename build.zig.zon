@@ -6,6 +6,10 @@
             .url = "https://github.com/lodinukal/zigwin32/archive/aa411449233675b580940e13c9fc7c7d8d752f25.tar.gz",
             .hash = "122005290b4ddb95539c26c0bf8481390b9026fd64729ad7c822f2d91a58e547184c",
         },
+        // .@"mach-sysgpu" = .{
+        //     .url = "https://pkg.machengine.org/mach-sysgpu/e5682c4d05ab8f50defdf821be431eb7ead75111.tar.gz",
+        //     .hash = "1220e011b9bb9e642b0a0434f7a30617cc12e2c8ea05af50d889f079ec531dc04512",
+        // },
     },
     .paths = .{"src"},
 }

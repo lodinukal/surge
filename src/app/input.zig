@@ -13,11 +13,11 @@ pub const Input = struct {
             ?*void,
         };
         buffers: [buffered_event_buffer_count]std.ArrayList(EventPair),
-        current_buffer: std.atomic.Atomic(usize),
+        current_buffer: std.atomic.Value(usize),
 
         pub fn init(allocator: std.mem.Allocator) !BufferedEventsList {
             var self: BufferedEventsList = undefined;
-            self.current_buffer = std.atomic.Atomic(usize).init(0);
+            self.current_buffer = std.atomic.Value(usize).init(0);
             for (&self.buffers) |*buffer| {
                 buffer.* = try std.ArrayList(EventPair).initCapacity(
                     allocator,
@@ -195,7 +195,7 @@ pub const Input = struct {
 
     fn updateCurrentMousePosition(self: *Input, input_object: InputObject) void {
         if (input_object.type == .mousemove) {
-            var rounded = @round(input_object.position);
+            const rounded = @round(input_object.position);
             self.mouse_state.position[0] = @intFromFloat(rounded[0]);
             self.mouse_state.position[1] = @intFromFloat(rounded[1]);
         }
