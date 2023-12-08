@@ -13,6 +13,12 @@ const RenderContext = struct {
         colour: math.Vec,
     };
 
+    pub const Uniforms = struct {
+        projection: math.Mat = math.identity(),
+        view: math.Mat = math.identity(),
+        model: math.Mat = math.identity(),
+    };
+
     instance: *gpu.Instance = undefined,
     surface: *gpu.Surface = undefined,
     physical_device: *gpu.PhysicalDevice = undefined,
@@ -31,6 +37,7 @@ const RenderContext = struct {
 
     uniform_buffer: ?*gpu.Buffer = null,
     uniform_count: usize = 0,
+    uniforms: Uniforms = .{},
 
     pipeline_layout: ?*gpu.PipelineLayout = null,
 
@@ -40,6 +47,9 @@ const RenderContext = struct {
         colour_attachment: [1]gpu.RenderPass.ColourAttachment = .{undefined},
         descriptor: gpu.RenderPass.Descriptor = .{},
     } = .{},
+
+    bind_group_layout: ?*gpu.BindGroupLayout = null,
+    bind_group: ?*gpu.BindGroup = null,
 
     pub fn load(self: *RenderContext, context: *Context) !void {
         if (gpu.loadBackend(.d3d12) == false) return;
@@ -93,11 +103,17 @@ const RenderContext = struct {
 
     fn loadResources(self: *RenderContext) !void {
         try self.prepareVertexAndIndexBuffers();
+        try self.setupPipelineLayout();
+        try self.prepareUniformBuffers();
     }
 
     fn cleanResources(self: *RenderContext) void {
         if (self.vertex_buffer) |b| b.destroy();
         if (self.index_buffer) |b| b.destroy();
+
+        if (self.bind_group) |bg| bg.destroy();
+        if (self.bind_group_layout) |bgl| bgl.destroy();
+
         if (self.uniform_buffer) |b| b.destroy();
         if (self.pipeline_layout) |pl| pl.destroy();
         // if (self.render_pipeline) |rp| rp.destroy();
@@ -144,6 +160,66 @@ const RenderContext = struct {
         self.index_buffer = try self.createUploadedBuffer(.{
             .index = true,
         }, u16, &indices);
+    }
+
+    fn setupPipelineLayout(self: *RenderContext) !void {
+        self.bind_group_layout = try self.device.createBindGroupLayout(&.{
+            .label = "bgl!",
+            .entries = &.{
+                gpu.BindGroupLayout.Entry.buffer(
+                    0,
+                    gpu.ShaderStageFlags.vertex,
+                    .uniform,
+                    false,
+                    @sizeOf(Uniforms),
+                ),
+            },
+        });
+
+        self.pipeline_layout = try self.device.createPipelineLayout(&gpu.PipelineLayout.Descriptor{
+            .label = "pl!",
+            .bind_group_layouts = &.{self.bind_group_layout.?},
+        });
+    }
+
+    fn prepareUniformBuffers(self: *RenderContext) !void {
+        self.uniform_buffer = try self.createUploadedBuffer(.{
+            .uniform = true,
+        }, Uniforms, &.{self.uniforms});
+        errdefer self.uniform_buffer.?.destroy();
+
+        try self.updateUniformBuffers();
+    }
+
+    fn updateUniformBuffers(self: *RenderContext) !void {
+        std.debug.print("updateUniformBuffers\n", .{});
+        // TODO: Make a camera
+        // self.uniforms.model = math.rotateZ(math.identity(), std.time.timestamp() / 1000000000.0);
+        // self.uniforms.view = math.translate(math.identity(), .{ 0.0, 0.0, -2.0 });
+        // self.uniforms.projection = math.perspective(math.radians(45.0), 800.0 / 600.0, 0.1, 100.0);
+
+        try self.queue.writeBuffer(
+            self.uniform_buffer.?,
+            0,
+            Uniforms,
+            &.{self.uniforms},
+        );
+    }
+
+    fn setupBindGroups(self: *RenderContext) !void {
+        self.bind_group = try self.device.createBindGroup(&gpu.BindGroup.Descriptor{
+            .label = "bg!",
+            .layout = self.bind_group_layout.?,
+            .entries = &.{
+                gpu.BindGroup.Entry.fromBuffer(
+                    0,
+                    self.uniform_buffer.?,
+                    0,
+                    @sizeOf(Uniforms),
+                    @sizeOf(Uniforms),
+                ),
+            },
+        });
     }
 };
 

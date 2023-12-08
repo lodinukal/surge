@@ -516,6 +516,18 @@ pub const ShaderStageFlags = packed struct(u32) {
 
     _padding: u29 = 0,
 
+    pub const vertex: ShaderStageFlags = .{
+        .vertex = true,
+    };
+
+    pub const fragment: ShaderStageFlags = .{
+        .fragment = true,
+    };
+
+    pub const compute: ShaderStageFlags = .{
+        .compute = true,
+    };
+
     comptime {
         std.debug.assert(
             @sizeOf(@This()) == @sizeOf(u32) and
