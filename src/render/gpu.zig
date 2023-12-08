@@ -88,7 +88,11 @@ pub const Error = blk: {
 
 pub const ErrorEnum = commonutil.ErrorEnum(Error);
 
-pub const AlphaMode = enum(u32) { premultiplied = 0x00000000, unpremultiplied = 0x00000001, opaq = 0x00000002 };
+pub const AlphaMode = enum(u32) {
+    premultiplied = 0x00000000,
+    unpremultiplied = 0x00000001,
+    opaq = 0x00000002,
+};
 
 pub const BackendType = enum(u32) {
     undefined,

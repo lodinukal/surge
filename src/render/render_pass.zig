@@ -1,3 +1,5 @@
+const std = @import("std");
+
 const gpu = @import("gpu.zig");
 const impl = gpu.impl;
 
@@ -161,8 +163,8 @@ pub const Encoder = opaque {
         self: *Encoder,
         buffer: *gpu.Buffer,
         format: gpu.IndexFormat,
-        offset: u64,
-        size: u64,
+        offset: ?u64,
+        size: ?u64,
     ) void {
         impl.renderPassEncoderSetIndexBuffer(
             self,

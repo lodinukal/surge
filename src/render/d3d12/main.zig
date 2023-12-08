@@ -85,6 +85,14 @@ pub const procs: gpu.procs.Procs = .{
     .renderPassEncoderPopDebugGroup = renderPassEncoderPopDebugGroup,
     .renderPassEncoderPushDebugGroup = renderPassEncoderPushDebugGroup,
     .renderPassEncoderSetBindGroup = renderPassEncoderSetBindGroup,
+    .renderPassEncoderSetBlendConstant = renderPassEncoderSetBlendConstant,
+    .renderPassEncoderSetIndexBuffer = renderPassEncoderSetIndexBuffer,
+    .renderPassEncoderSetPipeline = renderPassEncoderSetPipeline,
+    .renderPassEncoderSetScissorRect = renderPassEncoderSetScissorRect,
+    .renderPassEncoderSetStencilReference = renderPassEncoderSetStencilReference,
+    .renderPassEncoderSetVertexBuffer = renderPassEncoderSetVertexBuffer,
+    .renderPassEncoderSetViewport = renderPassEncoderSetViewport,
+    .renderPassEncoderWriteTimestamp = renderPassEncoderWriteTimestamp,
     .renderPassEncoderDestroy = renderPassEncoderDestroy,
     // RenderPipeline
     // Sampler
@@ -2358,6 +2366,129 @@ pub fn renderPassEncoderSetBindGroup(
     );
 }
 
+pub fn renderPassEncoderSetBlendConstant(
+    render_pass_encoder: *gpu.RenderPass.Encoder,
+    color: [4]f32,
+) void {
+    _ = render_pass_encoder;
+    _ = color;
+    std.debug.print("setting blend constant...\n", .{});
+    // TODO: SetBlendConstant
+    // D3D12RenderPassEncoder.setBlendConstant(
+    //     @ptrCast(@alignCast(render_pass_encoder)),
+    //     color,
+    // );
+}
+
+pub fn renderPassEncoderSetIndexBuffer(
+    render_pass_encoder: *gpu.RenderPass.Encoder,
+    buffer: *gpu.Buffer,
+    format: gpu.IndexFormat,
+    offset: u64,
+    size: u64,
+) gpu.RenderPass.Encoder.Error!void {
+    std.debug.print("setting index buffer...\n", .{});
+    try D3D12RenderPassEncoder.setIndexBuffer(
+        @ptrCast(@alignCast(render_pass_encoder)),
+        @ptrCast(@alignCast(buffer)),
+        format,
+        offset,
+        size,
+    );
+}
+
+pub fn renderPassEncoderSetPipeline(
+    render_pass_encoder: *gpu.RenderPass.Encoder,
+    pipeline: *gpu.RenderPipeline,
+) gpu.RenderPass.Encoder.Error!void {
+    std.debug.print("setting pipeline...\n", .{});
+    try D3D12RenderPassEncoder.setPipeline(
+        @ptrCast(@alignCast(render_pass_encoder)),
+        @ptrCast(@alignCast(pipeline)),
+    );
+}
+
+pub fn renderPassEncoderSetScissorRect(
+    render_pass_encoder: *gpu.RenderPass.Encoder,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+) gpu.RenderPass.Encoder.Error!void {
+    std.debug.print("setting scissor rect...\n", .{});
+    try D3D12RenderPassEncoder.setScissorRect(
+        @ptrCast(@alignCast(render_pass_encoder)),
+        x,
+        y,
+        width,
+        height,
+    );
+}
+
+pub fn renderPassEncoderSetStencilReference(
+    render_pass_encoder: *gpu.RenderPass.Encoder,
+    reference: u32,
+) void {
+    _ = render_pass_encoder;
+    _ = reference;
+    std.debug.print("setting stencil reference...\n", .{});
+    // TODO: SetStencilReference
+    // D3D12RenderPassEncoder.setStencilReference(
+    //     @ptrCast(@alignCast(render_pass_encoder)),
+    //     reference,
+    // );
+}
+
+pub fn renderPassEncoderSetVertexBuffer(
+    render_pass_encoder: *gpu.RenderPass.Encoder,
+    slot: u32,
+    buffer: *gpu.Buffer,
+    offset: u64,
+    size: u64,
+) gpu.RenderPass.Encoder.Error!void {
+    std.debug.print("setting vertex buffer...\n", .{});
+    try D3D12RenderPassEncoder.setVertexBuffer(
+        @ptrCast(@alignCast(render_pass_encoder)),
+        slot,
+        @ptrCast(@alignCast(buffer)),
+        offset,
+        size,
+    );
+}
+
+pub fn renderPassEncoderSetViewport(
+    render_pass_encoder: *gpu.RenderPass.Encoder,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    min_depth: f32,
+    max_depth: f32,
+) gpu.RenderPass.Encoder.Error!void {
+    std.debug.print("setting viewport...\n", .{});
+    try D3D12RenderPassEncoder.setViewport(
+        @ptrCast(@alignCast(render_pass_encoder)),
+        x,
+        y,
+        width,
+        height,
+        min_depth,
+        max_depth,
+    );
+}
+
+pub fn renderPassEncoderWriteTimestamp(
+    render_pass_encoder: *gpu.RenderPass.Encoder,
+    query_set: *gpu.QuerySet,
+    query_index: u32,
+) void {
+    _ = render_pass_encoder;
+    _ = query_set;
+    _ = query_index;
+    std.debug.print("writing timestamp...\n", .{});
+    // TODO: WriteTimestamp
+}
+
 pub fn renderPassEncoderDestroy(render_pass_encoder: *gpu.RenderPass.Encoder) void {
     std.debug.print("destroying render_pass_encoder...\n", .{});
     D3D12RenderPassEncoder.deinit(@alignCast(@ptrCast(render_pass_encoder)));
@@ -2695,7 +2826,7 @@ pub const D3D12RenderPassEncoder = struct {
 
         command_list.ID3D12GraphicsCommandList_IASetIndexBuffer(
             &d3d12.D3D12_INDEX_BUFFER_VIEW{
-                .BufferLocation = d3d_resource.ID3D12Resource_GetGPUVirtualAddress(d3d_resource) + offset,
+                .BufferLocation = d3d_resource.ID3D12Resource_GetGPUVirtualAddress() + offset,
                 .SizeInBytes = d3d_size,
                 .Format = switch (format) {
                     .undefined => unreachable,
@@ -2707,42 +2838,45 @@ pub const D3D12RenderPassEncoder = struct {
     }
 
     pub fn setPipeline(encoder: *D3D12RenderPassEncoder, pipeline: *D3D12RenderPipeline) !void {
+        _ = pipeline;
+
         const command_list = encoder.command_list.?;
+        _ = command_list;
 
-        encoder.group_parameter_indices = pipeline.layout.group_parameter_indices.slice();
-        encoder.vertex_strides = pipeline.vertex_strides.slice();
+        // encoder.group_parameter_indices = pipeline.layout.group_parameter_indices.slice();
+        // encoder.vertex_strides = pipeline.vertex_strides.slice();
 
-        command_list.ID3D12GraphicsCommandList_SetGraphicsRootSignature(
-            pipeline.layout.root_signature,
-        );
+        // command_list.ID3D12GraphicsCommandList_SetGraphicsRootSignature(
+        //     pipeline.layout.root_signature,
+        // );
 
-        command_list.ID3D12GraphicsCommandList_SetPipelineState(
-            pipeline.d3d_pipeline,
-        );
+        // command_list.ID3D12GraphicsCommandList_SetPipelineState(
+        //     pipeline.d3d_pipeline,
+        // );
 
-        command_list.ID3D12GraphicsCommandList_IASetPrimitiveTopology(
-            pipeline.topology,
-        );
+        // command_list.ID3D12GraphicsCommandList_IASetPrimitiveTopology(
+        //     pipeline.topology,
+        // );
     }
 
     pub fn setScissorRect(encoder: *D3D12RenderPassEncoder, x: u32, y: u32, width: u32, height: u32) !void {
         const command_list = encoder.command_list.?;
 
-        const scissor_rect = d3d12.D3D12_RECT{
+        const scissor_rect = win32.foundation.RECT{
             .left = @intCast(x),
             .top = @intCast(y),
             .right = @intCast(x + width),
             .bottom = @intCast(y + height),
         };
 
-        command_list.ID3D12GraphicsCommandList_RSSetScissorRects(command_list, 1, &scissor_rect);
+        command_list.ID3D12GraphicsCommandList_RSSetScissorRects(1, @ptrCast(&scissor_rect));
     }
 
     pub fn setVertexBuffer(encoder: *D3D12RenderPassEncoder, slot: u32, buffer: *D3D12Buffer, offset: u64, size: u64) !void {
         const d3d_resource = buffer.buffer.resource.?;
 
         var view = &encoder.vertex_buffer_views[slot];
-        view.BufferLocation = d3d_resource.ID3D12Resource_GetGPUVirtualAddress(d3d_resource) + offset;
+        view.BufferLocation = d3d_resource.ID3D12Resource_GetGPUVirtualAddress() + offset;
         view.SizeInBytes = @intCast(size);
         // StrideInBytes deferred until draw()
 
@@ -2769,7 +2903,7 @@ pub const D3D12RenderPassEncoder = struct {
             .MaxDepth = max_depth,
         };
 
-        command_list.ID3D12GraphicsCommandList_RSSetViewports(command_list, 1, &viewport);
+        command_list.ID3D12GraphicsCommandList_RSSetViewports(1, @ptrCast(&viewport));
     }
 
     // Private
@@ -2794,7 +2928,9 @@ pub const D3D12RenderPassEncoder = struct {
 };
 
 // RenderPipeline
-pub const D3D12RenderPipeline = struct {};
+pub const D3D12RenderPipeline = struct {
+    layout: *D3D12PipelineLayout,
+};
 
 // Sampler
 pub fn samplerDestroy(sampler: *gpu.Sampler) void {

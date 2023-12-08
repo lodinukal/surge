@@ -82,6 +82,37 @@ const RenderContext = struct {
         self.surface.destroy();
         self.instance.destroy();
     }
+
+    fn prepareVertexAndIndexBuffers(self: *RenderContext) !void {
+        const vertices = [3]Vertex{
+            .{
+                .position = .{ 0.0, 0.5, 0.0 },
+                .colour = .{ 1.0, 0.0, 0.0, 1.0 },
+            },
+            .{
+                .position = .{ 0.5, -0.5, 0.0 },
+                .colour = .{ 0.0, 1.0, 0.0, 1.0 },
+            },
+            .{
+                .position = .{ -0.5, -0.5, 0.0 },
+                .colour = .{ 0.0, 0.0, 1.0, 1.0 },
+            },
+        };
+        self.vertex_count = vertices.len;
+
+        const indices = [3]u16{ 0, 1, 2 };
+        self.index_count = indices.len;
+
+        self.vertex_buffer = try self.device.createBuffer(&.{
+            .usage = .{},
+            .size = @sizeOf(Vertex) * vertices.len,
+        });
+
+        self.index_buffer = try self.device.createBuffer(&.{
+            .usage = .{},
+            .size = @sizeOf(u16) * indices.len,
+        });
+    }
 };
 
 const Context = struct {

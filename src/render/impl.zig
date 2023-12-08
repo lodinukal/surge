@@ -287,6 +287,110 @@ pub inline fn renderPassEncoderSetBindGroup(
     );
 }
 
+pub inline fn renderPassEncoderSetBlendConstant(
+    render_pass_encoder: *gpu.RenderPass.Encoder,
+    color: [4]f32,
+) void {
+    return procs.Procs.loaded_procs.?.renderPassEncoderSetBlendConstant(
+        render_pass_encoder,
+        color,
+    );
+}
+
+pub inline fn renderPassEncoderSetIndexBuffer(
+    render_pass_encoder: *gpu.RenderPass.Encoder,
+    buffer: *gpu.Buffer,
+    format: gpu.IndexFormat,
+    offset: ?u64,
+    size: ?u64,
+) void {
+    return procs.Procs.loaded_procs.?.renderPassEncoderSetIndexBuffer(
+        render_pass_encoder,
+        buffer,
+        format,
+        offset orelse 0,
+        size orelse gpu.whole_size,
+    );
+}
+
+pub inline fn renderPassEncoderSetPipeline(
+    render_pass_encoder: *gpu.RenderPass.Encoder,
+    pipeline: *gpu.RenderPipeline,
+) void {
+    return procs.Procs.loaded_procs.?.renderPassEncoderSetPipeline(render_pass_encoder, pipeline);
+}
+
+pub inline fn renderPassEncoderSetScissorRect(
+    render_pass_encoder: *gpu.RenderPass.Encoder,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+) void {
+    return procs.Procs.loaded_procs.?.renderPassEncoderSetScissorRect(
+        render_pass_encoder,
+        x,
+        y,
+        width,
+        height,
+    );
+}
+
+pub inline fn renderPassEncoderSetStencilReference(
+    render_pass_encoder: *gpu.RenderPass.Encoder,
+    reference: u32,
+) void {
+    return procs.Procs.loaded_procs.?.renderPassEncoderSetStencilReference(render_pass_encoder, reference);
+}
+
+pub inline fn renderPassEncoderSetVertexBuffer(
+    render_pass_encoder: *gpu.RenderPass.Encoder,
+    slot: u32,
+    buffer: *gpu.Buffer,
+    offset: u64,
+    size: u64,
+) void {
+    return procs.Procs.loaded_procs.?.renderPassEncoderSetVertexBuffer(
+        render_pass_encoder,
+        slot,
+        buffer,
+        offset,
+        size,
+    );
+}
+
+pub inline fn renderPassEncoderSetViewport(
+    render_pass_encoder: *gpu.RenderPass.Encoder,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    min_depth: f32,
+    max_depth: f32,
+) void {
+    return procs.Procs.loaded_procs.?.renderPassEncoderSetViewport(
+        render_pass_encoder,
+        x,
+        y,
+        width,
+        height,
+        min_depth,
+        max_depth,
+    );
+}
+
+pub inline fn renderPassEncoderWriteTimestamp(
+    render_pass_encoder: *gpu.RenderPass.Encoder,
+    query_set: *gpu.QuerySet,
+    query_index: u32,
+) void {
+    return procs.Procs.loaded_procs.?.renderPassEncoderWriteTimestamp(
+        render_pass_encoder,
+        query_set,
+        query_index,
+    );
+}
+
 pub inline fn renderPassEncoderDestroy(render_pass_encoder: *gpu.RenderPass.Encoder) void {
     return procs.Procs.loaded_procs.?.renderPassEncoderDestroy(render_pass_encoder);
 }
