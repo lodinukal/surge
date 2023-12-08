@@ -2430,15 +2430,15 @@ pub fn renderPassEncoderSetBindGroup(
 
 pub fn renderPassEncoderSetBlendConstant(
     render_pass_encoder: *gpu.RenderPass.Encoder,
-    color: [4]f32,
+    colour: [4]f32,
 ) void {
     _ = render_pass_encoder;
-    _ = color;
+    _ = colour;
     std.debug.print("setting blend constant...\n", .{});
     // TODO: SetBlendConstant
     // D3D12RenderPassEncoder.setBlendConstant(
     //     @ptrCast(@alignCast(render_pass_encoder)),
-    //     color,
+    //     colour,
     // );
 }
 
@@ -2559,7 +2559,7 @@ pub fn renderPassEncoderDestroy(render_pass_encoder: *gpu.RenderPass.Encoder) vo
 pub const D3D12RenderPassEncoder = struct {
     command_list: ?*d3d12.ID3D12GraphicsCommandList = null,
     barrier_enforcer: *D3D12BarrierEnforcer,
-    color_attachments: std.BoundedArray(gpu.RenderPass.ColourAttachment, gpu.Limits.max_colour_attachments) = .{},
+    colour_attachments: std.BoundedArray(gpu.RenderPass.ColourAttachment, gpu.Limits.max_colour_attachments) = .{},
     depth_attachment: ?gpu.RenderPass.DepthStencilAttachment,
     group_parameter_indices: []u32 = undefined,
     vertex_apply_count: u32 = 0,
@@ -2571,11 +2571,11 @@ pub const D3D12RenderPassEncoder = struct {
 
         var width: u32 = 0;
         var height: u32 = 0;
-        var color_attachments: std.BoundedArray(
+        var colour_attachments: std.BoundedArray(
             gpu.RenderPass.ColourAttachment,
             gpu.Limits.max_colour_attachments,
         ) = .{};
-        var rtv_handles = try self.command_buffer.allocateRtvDescriptors(desc.color_attachment_count);
+        var rtv_handles = try self.command_buffer.allocateRtvDescriptors(desc.colour_attachment_count);
         const descriptor_size = self.device.rtv_heap.descriptor_size;
 
         var rtv_handle = rtv_handles;
@@ -2588,7 +2588,7 @@ pub const D3D12RenderPassEncoder = struct {
 
                 width = view.width();
                 height = view.height();
-                color_attachments.appendAssumeCapacity(attach);
+                colour_attachments.appendAssumeCapacity(attach);
 
                 // TODO - rtvDesc()
                 self.device.device.?.ID3D12Device_CreateRenderTargetView(
@@ -2610,7 +2610,7 @@ pub const D3D12RenderPassEncoder = struct {
             rtv_handle.ptr += descriptor_size;
         }
 
-        var depth_attachment: ?gpu.RenderPassDepthStencilAttachment = null;
+        var depth_attachment: ?gpu.RenderPass.DepthStencilAttachment = null;
         var dsv_handle: d3d12.D3D12_CPU_DESCRIPTOR_HANDLE = .{ .ptr = 0 };
 
         if (desc.depth_stencil_attachment) |attach| {
@@ -2644,7 +2644,7 @@ pub const D3D12RenderPassEncoder = struct {
         rtv_handle = rtv_handles;
         for (desc.colour_attachments orelse &.{}) |attach| {
             if (attach.load_op == .clear) {
-                const clear_color = [4]f32{
+                const clear_colour = [4]f32{
                     @floatCast(attach.clear_value.r),
                     @floatCast(attach.clear_value.g),
                     @floatCast(attach.clear_value.b),
@@ -2652,7 +2652,7 @@ pub const D3D12RenderPassEncoder = struct {
                 };
                 command_list.ID3D12GraphicsCommandList_ClearRenderTargetView(
                     rtv_handle,
-                    &clear_color,
+                    &clear_colour,
                     0,
                     null,
                 );
@@ -2703,7 +2703,7 @@ pub const D3D12RenderPassEncoder = struct {
         const encoder = try allocator.create(D3D12RenderPassEncoder);
         encoder.* = .{
             .command_list = command_list,
-            .color_attachments = color_attachments,
+            .colour_attachments = colour_attachments,
             .depth_attachment = depth_attachment,
             .barrier_enforcer = &self.barrier_enforcer,
             .vertex_buffer_views = std.mem.zeroes([gpu.Limits.max_vertex_buffers]d3d12.D3D12_VERTEX_BUFFER_VIEW),
@@ -2758,8 +2758,8 @@ pub const D3D12RenderPassEncoder = struct {
     pub fn end(encoder: *D3D12RenderPassEncoder) !void {
         const command_list = encoder.command_list.?;
 
-        for (encoder.color_attachments.slice()) |attach| {
-            const view: *D3D12TextureView = @ptrCast(@alignCast(attach.view.?));
+        for (encoder.colour_attachments.slice()) |attach| {
+            const view: *const D3D12TextureView = @ptrCast(@alignCast(attach.view.?));
 
             if (attach.resolve_target) |resolve_target_raw| {
                 const resolve_target: *D3D12TextureView = @ptrCast(@alignCast(resolve_target_raw));
@@ -2815,7 +2815,7 @@ pub const D3D12RenderPassEncoder = struct {
         }
 
         if (encoder.depth_attachment) |attach| {
-            const view: *D3D12TextureView = @ptrCast(@alignCast(attach.view));
+            const view: *const D3D12TextureView = @ptrCast(@alignCast(attach.view));
 
             encoder.barrier_enforcer.transition(
                 &view.texture.resource.?,
@@ -3567,11 +3567,11 @@ pub const D3D12TextureView = struct {
     }
 
     // internal
-    pub fn width(self: *D3D12TextureView) u32 {
+    pub fn width(self: *const D3D12TextureView) u32 {
         return @max(1, self.texture.size.width >> @intCast(self.base_mip_level));
     }
 
-    pub fn height(self: *D3D12TextureView) u32 {
+    pub fn height(self: *const D3D12TextureView) u32 {
         return @max(1, self.texture.size.height >> @intCast(self.base_mip_level));
     }
 
