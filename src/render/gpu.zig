@@ -373,7 +373,7 @@ pub const SType = enum(u32) {
     request_adapter_options_luid = 0x000003F2,
     request_adapter_options_get_gl_proc = 0x000003F3,
     dawn_multisample_state_render_to_single_sampled = 0x000003F4,
-    dawn_render_pass_color_attachment_render_to_single_sampled = 0x000003F5,
+    dawn_render_pass_colour_attachment_render_to_single_sampled = 0x000003F5,
     shared_texture_memory_vk_image_descriptor = 0x0000044C,
     shared_texture_memory_vk_dedicated_allocation_descriptor = 0x0000044D,
     shared_texture_memory_a_hardware_buffer_descriptor = 0x0000044E,
@@ -604,7 +604,7 @@ pub const Limits = struct {
     pub const max_inter_stage_shader_components: u32 = 60;
     pub const max_inter_stage_shader_variables: u32 = 16;
     pub const max_colour_attachments: u32 = 8;
-    pub const max_color_attachment_bytes_per_sample: u32 = 32;
+    pub const max_colour_attachment_bytes_per_sample: u32 = 32;
     pub const max_compute_workgroup_storage_size: u32 = 16384;
     pub const max_compute_invocations_per_workgroup: u32 = 256;
     pub const max_compute_workgroup_size_x: u32 = 256;
@@ -645,7 +645,7 @@ pub const ConstantEntry = struct {
 
 pub const CopyTextureForBrowserOptions = struct {
     flip_y: bool = false,
-    needs_color_space_conversion: bool = false,
+    needs_colour_space_conversion: bool = false,
     src_alpha_mode: AlphaMode = .unpremultiplied,
     src_transfer_function_parameters: ?*const [7]f32 = null,
     conversion_matrix: ?*const [9]f32 = null,
@@ -703,7 +703,7 @@ pub const VertexAttribute = struct {
 };
 
 pub const BlendState = struct {
-    color: BlendComponent = .{},
+    colour: BlendComponent = .{},
     alpha: BlendComponent = .{},
 };
 
@@ -777,6 +777,32 @@ pub const VertexBufferLayout = struct {
     array_stride: u64,
     step_mode: VertexStepMode = .vertex,
     attributes: ?[]const VertexAttribute = null,
+
+    pub fn fromStruct(comptime T: type, comptime field_info: anytype) VertexBufferLayout {
+        const fields: []const std.builtin.Type.StructField = std.meta.fields(T);
+
+        return VertexBufferLayout{
+            .array_stride = @sizeOf(T),
+            .step_mode = .vertex,
+            .attributes = comptime blk: {
+                var attributes: [fields.len]VertexAttribute = undefined;
+                inline for (fields, 0..) |field, i| {
+                    const field_data = if (@hasField(@TypeOf(field_info), field.name))
+                        @field(field_info, field.name)
+                    else
+                        @compileError("missing `." ++ field.name ++ " = .{shader_location, format},");
+                    const shader_location = field_data.@"0";
+                    const format = field_data.@"1";
+                    attributes[i] = .{
+                        .format = format,
+                        .offset = @offsetOf(T, field.name),
+                        .shader_location = shader_location,
+                    };
+                }
+                break :blk &attributes;
+            },
+        };
+    }
 };
 
 pub const ColourTargetState = struct {
