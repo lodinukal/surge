@@ -332,8 +332,8 @@ pub const Texture = opaque {
         view_formats: ?[]const Format = null,
     };
 
-    pub inline fn createView(texture: *Texture, descriptor: ?*const gpu.TextureView.Descriptor) *gpu.TextureView {
-        return impl.textureCreateView(texture, descriptor);
+    pub inline fn createView(texture: *Texture, descriptor: ?*const gpu.TextureView.Descriptor) !*gpu.TextureView {
+        return impl.textureCreateView(texture, descriptor orelse &.{});
     }
 
     pub inline fn destroy(texture: *Texture) void {
