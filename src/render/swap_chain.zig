@@ -33,6 +33,10 @@ pub const SwapChain = opaque {
         return try impl.swapChainGetCurrentTextureView(self);
     }
 
+    pub inline fn getTextureViews(self: *SwapChain, views: *[3]?*const gpu.TextureView) !u32 {
+        return try impl.swapChainGetTextureViews(self, views);
+    }
+
     pub inline fn present(self: *SwapChain) !void {
         return try impl.swapChainPresent(self);
     }

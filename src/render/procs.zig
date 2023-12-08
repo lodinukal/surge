@@ -175,8 +175,9 @@ pub const Procs = struct {
     // Surface
     surfaceDestroy: *const fn (surface: *gpu.Surface) void,
     // SwapChain
-    swapChainGetCurrentTexture: *const fn (swapchain: *gpu.SwapChain) ?*gpu.Texture,
-    swapChainGetCurrentTextureView: *const fn (swapchain: *gpu.SwapChain) ?*gpu.TextureView,
+    swapChainGetCurrentTexture: *const fn (swapchain: *gpu.SwapChain) ?*const gpu.Texture,
+    swapChainGetCurrentTextureView: *const fn (swapchain: *gpu.SwapChain) ?*const gpu.TextureView,
+    swapChainGetTextureViews: *const fn (swapchain: *gpu.SwapChain, views: *[3]?*const gpu.TextureView) u32,
     swapChainPresent: *const fn (swapchain: *gpu.SwapChain) gpu.SwapChain.Error!void,
     swapChainResize: *const fn (swapchain: *gpu.SwapChain, size: [2]u32) gpu.SwapChain.Error!void,
     swapChainDestroy: *const fn (swapchain: *gpu.SwapChain) void,

@@ -26,6 +26,8 @@ const RenderContext = struct {
     queue: *gpu.Queue = undefined,
 
     swapchain: *gpu.SwapChain = undefined,
+    views: [3]?*const gpu.TextureView = .{ null, null, null },
+    view_count: usize = 0,
 
     // rendering objects
 
@@ -102,6 +104,7 @@ const RenderContext = struct {
     }
 
     fn loadResources(self: *RenderContext) !void {
+        try self.loadViews();
         try self.prepareVertexAndIndexBuffers();
         try self.setupPipelineLayout();
         try self.prepareUniformBuffers();
@@ -117,6 +120,10 @@ const RenderContext = struct {
         if (self.uniform_buffer) |b| b.destroy();
         if (self.pipeline_layout) |pl| pl.destroy();
         // if (self.render_pipeline) |rp| rp.destroy();
+    }
+
+    fn loadViews(self: *RenderContext) !void {
+        self.view_count = try self.swapchain.getTextureViews(&self.views);
     }
 
     fn createUploadedBuffer(self: *RenderContext, usage: gpu.Buffer.UsageFlags, comptime T: type, data: []const T) !*gpu.Buffer {

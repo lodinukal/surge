@@ -446,6 +446,13 @@ pub inline fn swapChainGetCurrentTextureView(swap_chain: *gpu.SwapChain) ?*gpu.T
     return procs.Procs.loaded_procs.?.swapChainGetCurrentTextureView(swap_chain);
 }
 
+pub inline fn swapChainGetTextureViews(
+    swap_chain: *gpu.SwapChain,
+    out_texture_views: *[3]?*const gpu.TextureView,
+) !u32 {
+    return procs.Procs.loaded_procs.?.swapChainGetTextureViews(swap_chain, out_texture_views);
+}
+
 pub inline fn swapChainPresent(swap_chain: *gpu.SwapChain) gpu.SwapChain.Error!void {
     return procs.Procs.loaded_procs.?.swapChainPresent(swap_chain);
 }
