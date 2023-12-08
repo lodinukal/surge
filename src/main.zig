@@ -5,16 +5,19 @@ const math = @import("math.zig");
 
 const gpu = @import("render/gpu.zig");
 
+/// Based off a wgpu-native example:
+/// https://github.com/samdauwe/webgpu-native-examples/blob/master/src/examples/triangle.c
 const RenderContext = struct {
     pub const Vertex = struct {
         position: math.Vec,
-        color: math.Vec,
+        colour: math.Vec,
     };
 
     instance: *gpu.Instance = undefined,
     surface: *gpu.Surface = undefined,
     physical_device: *gpu.PhysicalDevice = undefined,
     device: *gpu.Device = undefined,
+    queue: *gpu.Queue = undefined,
 
     swapchain: *gpu.SwapChain = undefined,
 
@@ -72,10 +75,15 @@ const RenderContext = struct {
         self.surface = surface;
         self.physical_device = physicalDevice;
         self.device = device;
+        self.queue = device.getQueue();
         self.swapchain = swapchain;
+
+        try self.loadResources();
     }
 
     pub fn deinit(self: *RenderContext) void {
+        self.cleanResources();
+
         self.swapchain.destroy();
         self.device.destroy();
         self.physical_device.destroy();
@@ -83,35 +91,59 @@ const RenderContext = struct {
         self.instance.destroy();
     }
 
+    fn loadResources(self: *RenderContext) !void {
+        try self.prepareVertexAndIndexBuffers();
+    }
+
+    fn cleanResources(self: *RenderContext) void {
+        if (self.vertex_buffer) |b| b.destroy();
+        if (self.index_buffer) |b| b.destroy();
+        if (self.uniform_buffer) |b| b.destroy();
+        if (self.pipeline_layout) |pl| pl.destroy();
+        // if (self.render_pipeline) |rp| rp.destroy();
+    }
+
+    fn createUploadedBuffer(self: *RenderContext, usage: gpu.Buffer.UsageFlags, comptime T: type, data: []const T) !*gpu.Buffer {
+        var modified_usage = usage;
+        modified_usage.copy_dst = true;
+        var buffer = try self.device.createBuffer(&.{
+            .usage = modified_usage,
+            .size = data.len * @sizeOf(T),
+        });
+        errdefer buffer.destroy();
+
+        try self.queue.writeBuffer(buffer, 0, T, data);
+
+        return buffer;
+    }
+
     fn prepareVertexAndIndexBuffers(self: *RenderContext) !void {
         const vertices = [3]Vertex{
             .{
-                .position = .{ 0.0, 0.5, 0.0 },
+                .position = .{ 0.0, 0.5, 0.0, 0.0 },
                 .colour = .{ 1.0, 0.0, 0.0, 1.0 },
             },
             .{
-                .position = .{ 0.5, -0.5, 0.0 },
+                .position = .{ 0.5, -0.5, 0.0, 0.0 },
                 .colour = .{ 0.0, 1.0, 0.0, 1.0 },
             },
             .{
-                .position = .{ -0.5, -0.5, 0.0 },
+                .position = .{ -0.5, -0.5, 0.0, 0.0 },
                 .colour = .{ 0.0, 0.0, 1.0, 1.0 },
             },
         };
         self.vertex_count = vertices.len;
 
-        const indices = [3]u16{ 0, 1, 2 };
+        const indices = [4]u16{ 0, 1, 2, 0 };
         self.index_count = indices.len;
 
-        self.vertex_buffer = try self.device.createBuffer(&.{
-            .usage = .{},
-            .size = @sizeOf(Vertex) * vertices.len,
-        });
+        self.vertex_buffer = try self.createUploadedBuffer(.{
+            .vertex = true,
+        }, Vertex, &vertices);
 
-        self.index_buffer = try self.device.createBuffer(&.{
-            .usage = .{},
-            .size = @sizeOf(u16) * indices.len,
-        });
+        self.index_buffer = try self.createUploadedBuffer(.{
+            .index = true,
+        }, u16, &indices);
     }
 };
 

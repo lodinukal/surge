@@ -185,6 +185,38 @@ pub inline fn queueSubmit(
     return procs.Procs.loaded_procs.?.queueSubmit(queue, command_buffers);
 }
 
+pub inline fn queueWriteBuffer(
+    queue: *gpu.Queue,
+    buffer: *gpu.Buffer,
+    buffer_offset: u64,
+    comptime T: type,
+    data: []const T,
+) gpu.Queue.Error!void {
+    return procs.Procs.loaded_procs.?.queueWriteBuffer(
+        queue,
+        buffer,
+        buffer_offset,
+        std.mem.sliceAsBytes(data),
+    );
+}
+
+pub inline fn queueWriteTexture(
+    queue: *gpu.Queue,
+    destination: *gpu.ImageCopyTexture,
+    comptime T: type,
+    data: []const T,
+    data_layout: *const gpu.Texture.DataLayout,
+    size: *const gpu.Extent3D,
+) gpu.Queue.Error!void {
+    return procs.Procs.loaded_procs.?.queueWriteTexture(
+        queue,
+        destination,
+        std.mem.sliceAsBytes(data),
+        data_layout,
+        size,
+    );
+}
+
 // RenderPassEncoder
 pub inline fn renderPassEncoderDraw(
     render_pass_encoder: *gpu.RenderPass.Encoder,

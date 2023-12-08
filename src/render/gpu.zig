@@ -358,8 +358,8 @@ pub const SType = enum(u32) {
     surface_descriptor_from_wayland_surface = 0x00000008,
     surface_descriptor_from_android_native_window = 0x00000009,
     surface_descriptor_from_windows_core_window = 0x0000000B,
-    external_texture_binding_entry = 0x0000000C,
-    external_texture_binding_layout = 0x0000000D,
+    al_texture_binding_entry = 0x0000000C,
+    al_texture_binding_layout = 0x0000000D,
     surface_descriptor_from_windows_swap_chain_panel = 0x0000000E,
     render_pass_descriptor_max_draw_count = 0x0000000F,
     dawn_texture_internal_usage_descriptor = 0x000003E8,
@@ -530,43 +530,43 @@ pub const ShaderStageFlags = packed struct(u32) {
     }
 };
 
-pub const ChainedStruct = extern struct {
+pub const ChainedStruct = struct {
     // TODO: dawn: not marked as nullable in dawn.json but in fact is.
     next: ?*const ChainedStruct = null,
     s_type: SType,
 };
 
-pub const ChainedStructOut = extern struct {
+pub const ChainedStructOut = struct {
     // TODO: dawn: not marked as nullable in dawn.json but in fact is.
     next: ?*ChainedStructOut = null,
     s_type: SType,
 };
 
-pub const BlendComponent = extern struct {
+pub const BlendComponent = struct {
     operation: BlendOperation = .add,
     src_factor: BlendFactor = .one,
     dst_factor: BlendFactor = .zero,
 };
 
-pub const Colour = extern struct {
+pub const Colour = struct {
     r: f64,
     g: f64,
     b: f64,
     a: f64,
 };
 
-pub const Extent2D = extern struct {
+pub const Extent2D = struct {
     width: u32,
     height: u32,
 };
 
-pub const Extent3D = extern struct {
+pub const Extent3D = struct {
     width: u32,
     height: u32 = 1,
     depth_or_array_layers: u32 = 1,
 };
 
-pub const Limits = extern struct {
+pub const Limits = struct {
     pub const max_texture_dimension1d: u32 = 8192;
     pub const max_texture_dimension2d: u32 = 8192;
     pub const max_texture_dimension3d: u32 = 2048;
@@ -603,18 +603,18 @@ pub const Limits = extern struct {
     pub const max_buffers_per_shader_stage = max_storage_buffers_per_shader_stage + max_uniform_buffers_per_shader_stage;
 };
 
-pub const Origin2D = extern struct {
+pub const Origin2D = struct {
     x: u32 = 0,
     y: u32 = 0,
 };
 
-pub const Origin3D = extern struct {
+pub const Origin3D = struct {
     x: u32 = 0,
     y: u32 = 0,
     z: u32 = 0,
 };
 
-pub const CompilationMessage = extern struct {
+pub const CompilationMessage = struct {
     message: ?[]const u8 = null,
     type: CompilationMessageType,
     line_num: u64,
@@ -626,12 +626,12 @@ pub const CompilationMessage = extern struct {
     utf16_length: u64,
 };
 
-pub const ConstantEntry = extern struct {
+pub const ConstantEntry = struct {
     key: [*:0]const u8,
     value: f64,
 };
 
-pub const CopyTextureForBrowserOptions = extern struct {
+pub const CopyTextureForBrowserOptions = struct {
     flip_y: bool = false,
     needs_color_space_conversion: bool = false,
     src_alpha_mode: AlphaMode = .unpremultiplied,
@@ -642,19 +642,19 @@ pub const CopyTextureForBrowserOptions = extern struct {
     internal_usage: bool = false,
 };
 
-pub const MultisampleState = extern struct {
+pub const MultisampleState = struct {
     count: u32 = 1,
     mask: u32 = 0xFFFFFFFF,
     alpha_to_coverage_enabled: bool = false,
 };
 
-pub const PrimitiveDepthClipControl = extern struct {
+pub const PrimitiveDepthClipControl = struct {
     chain: ChainedStruct = .{ .next = null, .s_type = .primitive_depth_clip_control },
     unclipped_depth: bool = false,
 };
 
-pub const PrimitiveState = extern struct {
-    pub const NextInChain = extern union {
+pub const PrimitiveState = struct {
+    pub const NextInChain = union {
         generic: ?*const ChainedStruct,
         primitive_depth_clip_control: *const PrimitiveDepthClipControl,
     };
@@ -666,36 +666,36 @@ pub const PrimitiveState = extern struct {
     cull_mode: CullMode = .none,
 };
 
-pub const RenderPassDescriptorMaxDrawCount = extern struct {
+pub const RenderPassDescriptorMaxDrawCount = struct {
     chain: ChainedStruct = .{ .next = null, .s_type = .render_pass_descriptor_max_draw_count },
     max_draw_count: u64 = 50000000,
 };
 
-pub const StencilFaceState = extern struct {
+pub const StencilFaceState = struct {
     compare: CompareFunction = .always,
     fail_op: StencilOperation = .keep,
     depth_fail_op: StencilOperation = .keep,
     pass_op: StencilOperation = .keep,
 };
 
-pub const StorageTextureBindingLayout = extern struct {
+pub const StorageTextureBindingLayout = struct {
     access: StorageTextureAccess = .undefined,
     format: Texture.Format = .undefined,
     view_dimension: TextureView.Dimension = .dimension_undefined,
 };
 
-pub const VertexAttribute = extern struct {
+pub const VertexAttribute = struct {
     format: VertexFormat,
     offset: u64,
     shader_location: u32,
 };
 
-pub const BlendState = extern struct {
+pub const BlendState = struct {
     color: BlendComponent = .{},
     alpha: BlendComponent = .{},
 };
 
-pub const CompilationInfo = extern struct {
+pub const CompilationInfo = struct {
     message_count: usize,
     messages: ?[*]const CompilationMessage = null,
 
@@ -708,7 +708,7 @@ pub const CompilationInfo = extern struct {
     }
 };
 
-pub const DepthStencilState = extern struct {
+pub const DepthStencilState = struct {
     format: Texture.Format,
     depth_write_enabled: bool = false,
     depth_compare: CompareFunction = .always,
@@ -721,31 +721,31 @@ pub const DepthStencilState = extern struct {
     depth_bias_clamp: f32 = 0.0,
 };
 
-pub const ImageCopyBuffer = extern struct {
+pub const ImageCopyBuffer = struct {
     layout: Texture.DataLayout,
     buffer: *Buffer,
 };
 
-// pub const ImageCopyExternalTexture = extern struct {
-//     external_texture: *ExternalTexture,
+// pub const ImageCopyalTexture =  struct {
+//     al_texture: *alTexture,
 //     origin: Origin3D,
 //     natural_size: Extent2D,
 // };
 
-pub const ImageCopyTexture = extern struct {
+pub const ImageCopyTexture = struct {
     texture: *Texture,
     mip_level: u32 = 0,
     origin: Origin3D = .{},
     aspect: Texture.Aspect = .all,
 };
 
-pub const ProgrammableStageDescriptor = extern struct {
+pub const ProgrammableStageDescriptor = struct {
     module: *ShaderModule,
     entry_point: []const u8,
     constants: ?[]const ConstantEntry = null,
 };
 
-pub const RequiredLimits = extern struct {
+pub const RequiredLimits = struct {
     limits: Limits,
 };
 
@@ -757,30 +757,30 @@ pub const RequiredLimits = extern struct {
 /// ```
 ///
 /// Note that `getLimits` can only fail if `next_in_chain` options are invalid.
-pub const SupportedLimits = extern struct {
+pub const SupportedLimits = struct {
     limits: Limits = undefined,
 };
 
-pub const VertexBufferLayout = extern struct {
+pub const VertexBufferLayout = struct {
     array_stride: u64,
     step_mode: VertexStepMode = .vertex,
     attributes: ?[]const VertexAttribute = null,
 };
 
-pub const ColourTargetState = extern struct {
+pub const ColourTargetState = struct {
     format: Texture.Format,
     blend: ?*const BlendState = null,
     write_mask: ColourWriteMaskFlags = ColourWriteMaskFlags.all,
 };
 
-pub const VertexState = extern struct {
+pub const VertexState = struct {
     module: *ShaderModule,
     entry_point: []const u8,
     constants: ?[]const ConstantEntry = null,
     buffers: ?[]const VertexBufferLayout = null,
 };
 
-pub const FragmentState = extern struct {
+pub const FragmentState = struct {
     module: *ShaderModule,
     entry_point: []const u8,
     constants: ?[]const ConstantEntry = null,

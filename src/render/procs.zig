@@ -59,6 +59,19 @@ pub const Procs = struct {
         queue: *gpu.Queue,
         command_buffers: []const *gpu.CommandBuffer,
     ) gpu.Queue.Error!void,
+    queueWriteBuffer: *const fn (
+        queue: *gpu.Queue,
+        buffer: *gpu.Buffer,
+        buffer_offset: u64,
+        data: []const u8,
+    ) gpu.Queue.Error!void,
+    queueWriteTexture: *const fn (
+        queue: *gpu.Queue,
+        destination: *gpu.ImageCopyTexture,
+        data: []const u8,
+        data_layout: *const gpu.Texture.DataLayout,
+        size: *const gpu.Extent3D,
+    ) gpu.Queue.Error!void,
     // RenderBundle
     // RenderBundleEncoder
     // RenderPassEncoder

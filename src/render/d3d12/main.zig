@@ -72,6 +72,8 @@ pub const procs: gpu.procs.Procs = .{
     // QuerySet
     // Queue
     .queueSubmit = queueSubmit,
+    .queueWriteBuffer = queueWriteBuffer,
+    .queueWriteTexture = queueWriteTexture,
     // RenderBundle
     // RenderBundleEncoder
     // RenderPassEncoder
@@ -661,8 +663,8 @@ pub fn commandBufferDestroy(command_buffer: *gpu.CommandBuffer) void {
 
 pub const D3D12CommandBuffer = struct {
     pub const StreamingResult = struct {
-        d3d_resource: ?*d3d12.ID3D12Resource,
-        map: [*]u8,
+        resource: ?*d3d12.ID3D12Resource,
+        map: []u8,
         offset: u32,
     };
 
@@ -715,7 +717,7 @@ pub const D3D12CommandBuffer = struct {
             self.upload_buffer = resource;
 
             var map: ?*anyopaque = null;
-            const hr_map = resource.?.ID3D12Resource_Map(0, null, &map);
+            const hr_map = resource.ID3D12Resource_Map(0, null, &map);
             if (!d3dcommon.checkHResult(hr_map)) return gpu.CommandBuffer.Error.CommandBufferMapForUploadFailed;
 
             self.upload_map = @ptrCast(map);
@@ -726,7 +728,7 @@ pub const D3D12CommandBuffer = struct {
         self.upload_next_offset = @intCast(
             gpu.util.alignUp(
                 offset + size,
-                gpu.limits.min_uniform_buffer_offset_alignment,
+                gpu.Limits.min_uniform_buffer_offset_alignment,
             ),
         );
 
@@ -991,9 +993,9 @@ pub const D3D12CommandEncoder = struct {
         self.barrier_enforcer.flush(command_list);
 
         command_list.ID3D12GraphicsCommandList_CopyBufferRegion(
-            buffer.buffer.buffer,
+            buffer.buffer.resource,
             offset,
-            stream.d3d_resource,
+            stream.resource,
             stream.offset,
             data.len,
         );
@@ -1002,18 +1004,17 @@ pub const D3D12CommandEncoder = struct {
     pub fn writeTexture(
         self: *D3D12CommandEncoder,
         destination: *const gpu.ImageCopyTexture,
-        data: [*]const u8,
-        data_size: usize,
+        data: []const u8,
         data_layout: *const gpu.Texture.DataLayout,
         write_size_raw: *const gpu.Extent3D,
     ) !void {
         const command_list = self.command_buffer.command_list.?;
         const destination_texture: *D3D12Texture = @ptrCast(@alignCast(destination.texture));
 
-        const stream = try self.command_buffer.upload(data_size);
-        @memcpy(stream.map[0..data_size], data[0..data_size]);
+        const stream = try self.command_buffer.upload(data.len);
+        @memcpy(stream.map[0..data.len], data[0..data.len]);
 
-        try self.barrier_enforcer.transition(&destination_texture.resource, .COPY_DEST);
+        try self.barrier_enforcer.transition(&destination_texture.resource.?, .COPY_DEST);
         self.barrier_enforcer.flush(command_list);
 
         const write_size = gpu.util.calcExtent(
@@ -1033,7 +1034,7 @@ pub const D3D12CommandEncoder = struct {
 
         command_list.ID3D12GraphicsCommandList_CopyTextureRegion(
             &.{
-                .pResource = destination_texture.resource.d3d_resource,
+                .pResource = destination_texture.resource.?.resource,
                 .Type = .SUBRESOURCE_INDEX,
                 .Anonymous = .{
                     .SubresourceIndex = destination_subresource_index,
@@ -1043,7 +1044,7 @@ pub const D3D12CommandEncoder = struct {
             destination_origin.y,
             destination_origin.z,
             &.{
-                .pResource = stream.d3d_resource,
+                .pResource = stream.resource.?,
                 .Type = .PLACED_FOOTPRINT,
                 .Anonymous = .{
                     .PlacedFootprint = .{
@@ -1471,7 +1472,7 @@ pub const D3D12StreamingPool = struct {
             var resource = try self.device.createD3dBuffer(.{ .map_write = true }, upload_page_size);
             errdefer resource.deinit();
 
-            try self.free_buffers.append(allocator, resource.d3d_resource);
+            try self.free_buffers.append(allocator, resource.resource.?);
         }
 
         // Result
@@ -1974,6 +1975,40 @@ pub fn queueSubmit(queue: *gpu.Queue, command_buffers: []const *gpu.CommandBuffe
     try D3D12Queue.submit(@ptrCast(@alignCast(queue)), command_buffers);
 }
 
+pub fn queueWriteBuffer(
+    queue: *gpu.Queue,
+    buffer: *gpu.Buffer,
+    offset: u64,
+    data: []const u8,
+) gpu.Queue.Error!void {
+    std.debug.print("writing buffer...\n", .{});
+    D3D12Queue.writeBuffer(
+        @ptrCast(@alignCast(queue)),
+        @ptrCast(@alignCast(buffer)),
+        offset,
+        data,
+    ) catch
+        return gpu.Queue.Error.QueueFailure;
+}
+
+pub fn queueWriteTexture(
+    queue: *gpu.Queue,
+    dst: *const gpu.ImageCopyTexture,
+    data: []const u8,
+    layout: *const gpu.Texture.DataLayout,
+    write_size: *const gpu.Extent3D,
+) gpu.Queue.Error!void {
+    std.debug.print("writing texture...\n", .{});
+    D3D12Queue.writeTexture(
+        @ptrCast(@alignCast(queue)),
+        dst,
+        data,
+        layout,
+        write_size,
+    ) catch
+        return gpu.Queue.Error.QueueFailure;
+}
+
 pub const D3D12Queue = struct {
     device: *D3D12Device,
     command_queue: ?*d3d12.ID3D12CommandQueue = null,
@@ -2070,6 +2105,32 @@ pub const D3D12Queue = struct {
         }
 
         self.signal() catch return gpu.Queue.Error.QueueFailedToSubmit;
+    }
+
+    pub fn writeBuffer(
+        self: *D3D12Queue,
+        buffer: *D3D12Buffer,
+        offset: u64,
+        data: []const u8,
+    ) !void {
+        const encoder = try self.getCommandEncoder();
+        try encoder.writeBuffer(buffer, offset, data);
+    }
+
+    pub fn writeTexture(
+        self: *D3D12Queue,
+        dst: *const gpu.ImageCopyTexture,
+        data: []const u8,
+        layout: *const gpu.Texture.DataLayout,
+        write_size: *const gpu.Extent3D,
+    ) !void {
+        const encoder = try self.getCommandEncoder();
+        try encoder.writeTexture(
+            dst,
+            data,
+            layout,
+            write_size,
+        );
     }
 
     // internal
