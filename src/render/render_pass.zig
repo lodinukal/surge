@@ -12,7 +12,7 @@ pub const Descriptor = struct {
 };
 
 pub const ColourAttachment = struct {
-    view: ?*gpu.TextureView = null,
+    view: ?*const gpu.TextureView = null,
     resolve_target: ?*gpu.TextureView = null,
     load_op: gpu.LoadOp = .undefined,
     store_op: gpu.StoreOp = .undefined,
@@ -20,7 +20,7 @@ pub const ColourAttachment = struct {
 };
 
 pub const DepthStencilAttachment = struct {
-    view: *gpu.TextureView,
+    view: *const gpu.TextureView,
     depth_load_op: gpu.LoadOp = .undefined,
     depth_store_op: gpu.StoreOp = .undefined,
     depth_clear_value: f32 = 0,
