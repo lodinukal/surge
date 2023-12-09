@@ -37,6 +37,10 @@ pub const Device = opaque {
         return try impl.deviceCreatePipelineLayout(self, descriptor);
     }
 
+    pub inline fn createRenderPipeline(self: *Device, descriptor: *const gpu.RenderPipeline.Descriptor) !*gpu.RenderPipeline {
+        return try impl.deviceCreateRenderPipeline(self, descriptor);
+    }
+
     pub inline fn createBuffer(self: *Device, descriptor: *const gpu.Buffer.Descriptor) !*gpu.Buffer {
         return try impl.deviceCreateBuffer(self, descriptor);
     }
@@ -47,6 +51,10 @@ pub const Device = opaque {
 
     pub inline fn createSampler(self: *Device, descriptor: *const gpu.Sampler.Descriptor) !*gpu.Sampler {
         return try impl.deviceCreateSampler(self, descriptor);
+    }
+
+    pub inline fn createShaderModule(self: *Device, descriptor: *const gpu.ShaderModule.Descriptor) !*gpu.ShaderModule {
+        return try impl.deviceCreateShaderModule(self, descriptor);
     }
 
     pub inline fn createSwapChain(self: *Device, surface: ?*gpu.Surface, descriptor: *const gpu.SwapChain.Descriptor) !*gpu.SwapChain {

@@ -6,7 +6,7 @@ const impl = gpu.impl;
 pub const Descriptor = struct {
     label: ?[]const u8 = null,
     colour_attachments: ?[]const ColourAttachment = null,
-    depth_stencil_attachment: ?DepthStencilAttachment = null,
+    depth_stencil_attachment: ?*const DepthStencilAttachment = null,
     query_set: ?*gpu.QuerySet = null,
     timestamp_writes: ?[]const TimestampWrite = null,
 };
@@ -53,15 +53,15 @@ pub const Encoder = opaque {
         impl.renderPassEncoderDraw(
             self,
             vertex_count,
-            instance_count orelse 1,
-            first_vertex orelse 0,
-            first_instance orelse 0,
+            instance_count,
+            first_vertex,
+            first_instance,
         );
     }
 
     pub inline fn drawIndexed(
         self: *Encoder,
-        index_count: u32,
+        index_count: usize,
         instance_count: ?u32,
         first_index: ?u32,
         base_vertex: ?i32,
@@ -70,10 +70,10 @@ pub const Encoder = opaque {
         impl.renderPassEncoderDrawIndexed(
             self,
             index_count,
-            instance_count orelse 1,
-            first_index orelse 0,
-            base_vertex orelse 0,
-            first_instance orelse 0,
+            instance_count,
+            first_index,
+            base_vertex,
+            first_instance,
         );
     }
 
@@ -165,8 +165,8 @@ pub const Encoder = opaque {
         format: gpu.IndexFormat,
         offset: ?u64,
         size: ?u64,
-    ) void {
-        impl.renderPassEncoderSetIndexBuffer(
+    ) !void {
+        try impl.renderPassEncoderSetIndexBuffer(
             self,
             buffer,
             format,
@@ -178,8 +178,8 @@ pub const Encoder = opaque {
     pub inline fn setPipeline(
         self: *Encoder,
         pipeline: *gpu.RenderPipeline,
-    ) void {
-        impl.renderPassEncoderSetPipeline(
+    ) !void {
+        try impl.renderPassEncoderSetPipeline(
             self,
             pipeline,
         );
@@ -191,8 +191,8 @@ pub const Encoder = opaque {
         y: u32,
         width: u32,
         height: u32,
-    ) void {
-        impl.renderPassEncoderSetScissorRect(
+    ) !void {
+        try impl.renderPassEncoderSetScissorRect(
             self,
             x,
             y,
@@ -215,10 +215,10 @@ pub const Encoder = opaque {
         self: *Encoder,
         slot: u32,
         buffer: *gpu.Buffer,
-        offset: u64,
-        size: u64,
-    ) void {
-        impl.renderPassEncoderSetVertexBuffer(
+        offset: ?u64,
+        size: ?u64,
+    ) !void {
+        try impl.renderPassEncoderSetVertexBuffer(
             self,
             slot,
             buffer,
@@ -235,8 +235,8 @@ pub const Encoder = opaque {
         height: f32,
         min_depth: f32,
         max_depth: f32,
-    ) void {
-        impl.renderPassEncoderSetViewport(
+    ) !void {
+        try impl.renderPassEncoderSetViewport(
             self,
             x,
             y,

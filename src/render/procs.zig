@@ -20,6 +20,10 @@ pub const Procs = struct {
     // CommandBuffer
     commandBufferDestroy: *const fn (command_buffer: *gpu.CommandBuffer) void,
     // CommandEncoder
+    commandEncoderBeginRenderPass: *const fn (
+        command_encoder: *gpu.CommandEncoder,
+        desc: *const gpu.RenderPass.Descriptor,
+    ) gpu.RenderPass.Encoder.Error!*gpu.RenderPass.Encoder,
     commandEncoderFinish: *const fn (
         command_encoder: *gpu.CommandEncoder,
         desc: *const gpu.CommandBuffer.Descriptor,
@@ -31,9 +35,11 @@ pub const Procs = struct {
     deviceCreateBindGroup: *const fn (device: *gpu.Device, desc: *const gpu.BindGroup.Descriptor) gpu.BindGroup.Error!*gpu.BindGroup,
     deviceCreateBindGroupLayout: *const fn (device: *gpu.Device, desc: *const gpu.BindGroupLayout.Descriptor) gpu.BindGroupLayout.Error!*gpu.BindGroupLayout,
     deviceCreatePipelineLayout: *const fn (device: *gpu.Device, desc: *const gpu.PipelineLayout.Descriptor) gpu.PipelineLayout.Error!*gpu.PipelineLayout,
+    deviceCreateRenderPipeline: *const fn (device: *gpu.Device, desc: *const gpu.RenderPipeline.Descriptor) gpu.RenderPipeline.Error!*gpu.RenderPipeline,
     deviceCreateBuffer: *const fn (device: *gpu.Device, desc: *const gpu.Buffer.Descriptor) gpu.Buffer.Error!*gpu.Buffer,
     deviceCreateCommandEncoder: *const fn (device: *gpu.Device, desc: *const gpu.CommandEncoder.Descriptor) gpu.CommandEncoder.Error!*gpu.CommandEncoder,
     deviceCreateSampler: *const fn (device: *gpu.Device, desc: *const gpu.Sampler.Descriptor) gpu.Sampler.Error!*gpu.Sampler,
+    deviceCreateShaderModule: *const fn (device: *gpu.Device, desc: *const gpu.ShaderModule.Descriptor) gpu.ShaderModule.Error!*gpu.ShaderModule,
     deviceCreateSwapChain: *const fn (
         device: *gpu.Device,
         surface: ?*gpu.Surface,
@@ -169,12 +175,15 @@ pub const Procs = struct {
     ) void,
     renderPassEncoderDestroy: *const fn (renderPassEncoder: *gpu.RenderPass.Encoder) void,
     // RenderPipeline
+    renderPipelineDestroy: *const fn (renderPipeline: *gpu.RenderPipeline) void,
     // Sampler
     samplerDestroy: *const fn (sampler: *gpu.Sampler) void,
     // ShaderModule
+    shaderModuleDestroy: *const fn (shaderModule: *gpu.ShaderModule) void,
     // Surface
     surfaceDestroy: *const fn (surface: *gpu.Surface) void,
     // SwapChain
+    swapChainGetIndex: *const fn (swapchain: *gpu.SwapChain) u32,
     swapChainGetCurrentTexture: *const fn (swapchain: *gpu.SwapChain) ?*const gpu.Texture,
     swapChainGetCurrentTextureView: *const fn (swapchain: *gpu.SwapChain) ?*const gpu.TextureView,
     swapChainGetTextureViews: *const fn (swapchain: *gpu.SwapChain, views: *[3]?*const gpu.TextureView) u32,

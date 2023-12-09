@@ -44,9 +44,9 @@ pub const Queue = @import("queue.zig").Queue;
 pub const RenderBundle = opaque {};
 pub const RenderBundleEncoder = opaque {};
 pub const RenderPass = @import("render_pass.zig");
-pub const RenderPipeline = opaque {};
+pub const RenderPipeline = @import("render_pipeline.zig").RenderPipeline;
 pub const Sampler = @import("sampler.zig").Sampler;
-pub const ShaderModule = opaque {};
+pub const ShaderModule = @import("shader_module.zig").ShaderModule;
 pub const Surface = @import("surface.zig").Surface;
 pub const SwapChain = @import("swap_chain.zig").SwapChain;
 pub const Texture = @import("texture.zig").Texture;
@@ -158,19 +158,6 @@ pub const CompareFunction = enum(u32) {
     equal = 0x00000006,
     not_equal = 0x00000007,
     always = 0x00000008,
-};
-
-pub const CompilationInfoRequestStatus = enum(u32) {
-    success = 0x00000000,
-    err = 0x00000001,
-    device_lost = 0x00000002,
-    unknown = 0x00000003,
-};
-
-pub const CompilationMessageType = enum(u32) {
-    err = 0x00000000,
-    warning = 0x00000001,
-    info = 0x00000002,
 };
 
 pub const ComputePassTimestampLocation = enum(u32) {
@@ -626,18 +613,6 @@ pub const Origin3D = struct {
     z: u32 = 0,
 };
 
-pub const CompilationMessage = struct {
-    message: ?[]const u8 = null,
-    type: CompilationMessageType,
-    line_num: u64,
-    line_pos: u64,
-    offset: u64,
-    length: u64,
-    utf16_line_pos: u64,
-    utf16_offset: u64,
-    utf16_length: u64,
-};
-
 pub const ConstantEntry = struct {
     key: [*:0]const u8,
     value: f64,
@@ -660,22 +635,12 @@ pub const MultisampleState = struct {
     alpha_to_coverage_enabled: bool = false,
 };
 
-pub const PrimitiveDepthClipControl = struct {
-    chain: ChainedStruct = .{ .next = null, .s_type = .primitive_depth_clip_control },
-    unclipped_depth: bool = false,
-};
-
 pub const PrimitiveState = struct {
-    pub const NextInChain = union {
-        generic: ?*const ChainedStruct,
-        primitive_depth_clip_control: *const PrimitiveDepthClipControl,
-    };
-
-    next_in_chain: NextInChain = .{ .generic = null },
     topology: PrimitiveTopology = .triangle_list,
     strip_index_format: IndexFormat = .undefined,
     front_face: FrontFace = .ccw,
     cull_mode: CullMode = .none,
+    unclipped_depth: bool = false,
 };
 
 pub const RenderPassDescriptorMaxDrawCount = struct {
@@ -696,7 +661,30 @@ pub const StorageTextureBindingLayout = struct {
     view_dimension: TextureView.Dimension = .dimension_undefined,
 };
 
+pub const Semantic = enum(u8) {
+    undefined = 0,
+    position = 1,
+    normal = 2,
+    tangent = 3,
+    bitangent = 4,
+    color0 = 5,
+    color1 = 6,
+    color2 = 7,
+    color3 = 8,
+    indices = 9,
+    weight = 10,
+    texcoord0 = 11,
+    texcoord1 = 12,
+    texcoord2 = 13,
+    texcoord3 = 14,
+    texcoord4 = 15,
+    texcoord5 = 16,
+    texcoord6 = 17,
+};
+
 pub const VertexAttribute = struct {
+    name: ?[]const u8 = null,
+    semantic: Semantic = .undefined,
     format: VertexFormat,
     offset: u64,
     shader_location: u32,
@@ -705,19 +693,6 @@ pub const VertexAttribute = struct {
 pub const BlendState = struct {
     colour: BlendComponent = .{},
     alpha: BlendComponent = .{},
-};
-
-pub const CompilationInfo = struct {
-    message_count: usize,
-    messages: ?[*]const CompilationMessage = null,
-
-    /// Helper to get messages as a slice.
-    pub fn getMessages(info: CompilationInfo) ?[]const CompilationMessage {
-        if (info.messages) |messages| {
-            return messages[0..info.message_count];
-        }
-        return null;
-    }
 };
 
 pub const DepthStencilState = struct {
@@ -793,7 +768,13 @@ pub const VertexBufferLayout = struct {
                         @compileError("missing `." ++ field.name ++ " = .{shader_location, format},");
                     const shader_location = field_data.@"0";
                     const format = field_data.@"1";
+                    const semantic: Semantic = if (@hasField(@TypeOf(field_data), "2"))
+                        field_data.@"2"
+                    else
+                        .undefined;
                     attributes[i] = .{
+                        .name = field.name,
+                        .semantic = semantic,
                         .format = format,
                         .offset = @offsetOf(T, field.name),
                         .shader_location = shader_location,

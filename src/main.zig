@@ -88,15 +88,16 @@ const Context = struct {
             const frame_start = std.time.nanoTimestamp();
 
             if (self.resized) |size| {
-                try self.render.swapchain.resize(size);
+                try self.render.resize(size);
             }
-            try self.render.swapchain.present();
+
+            try self.render.draw();
+            try self.render.present();
 
             const frame_end = std.time.nanoTimestamp();
 
             const frame_time = frame_end - frame_start;
-            _ = frame_time;
-            // std.debug.print("frame time: {d:1}\n", .{1000.0 / @as(f64, @floatFromInt(frame_time))});
+            std.debug.print("frame time: {d:1}\n", .{std.time.ns_per_s / @as(f64, @floatFromInt(frame_time))});
 
             std.time.sleep(if (self.window.isFocused()) focused_sleep else unfocused_sleep);
         }

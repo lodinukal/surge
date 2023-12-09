@@ -81,6 +81,20 @@ pub inline fn commandBufferDestroy(command_buffer: *gpu.CommandBuffer) void {
 }
 
 // CommandEncoder
+pub inline fn commandEncoderBeginRenderPass(
+    command_encoder: *gpu.CommandEncoder,
+    desc: *const gpu.RenderPass.Descriptor,
+) gpu.RenderPass.Encoder.Error!*gpu.RenderPass.Encoder {
+    return procs.Procs.loaded_procs.?.commandEncoderBeginRenderPass(command_encoder, desc);
+}
+
+pub inline fn commandEncoderFinish(
+    command_encoder: *gpu.CommandEncoder,
+    desc: ?*const gpu.CommandBuffer.Descriptor,
+) gpu.CommandBuffer.Error!*gpu.CommandBuffer {
+    return procs.Procs.loaded_procs.?.commandEncoderFinish(command_encoder, desc orelse &.{});
+}
+
 pub inline fn commandEncoderDestroy(command_encoder: *gpu.CommandEncoder) void {
     return procs.Procs.loaded_procs.?.commandEncoderDestroy(command_encoder);
 }
@@ -98,6 +112,10 @@ pub inline fn deviceCreatePipelineLayout(device: *gpu.Device, desc: *const gpu.P
     return procs.Procs.loaded_procs.?.deviceCreatePipelineLayout(device, desc);
 }
 
+pub inline fn deviceCreateRenderPipeline(device: *gpu.Device, desc: *const gpu.RenderPipeline.Descriptor) gpu.RenderPipeline.Error!*gpu.RenderPipeline {
+    return procs.Procs.loaded_procs.?.deviceCreateRenderPipeline(device, desc);
+}
+
 pub inline fn deviceCreateBuffer(device: *gpu.Device, desc: *const gpu.Buffer.Descriptor) gpu.Buffer.Error!*gpu.Buffer {
     return procs.Procs.loaded_procs.?.deviceCreateBuffer(device, desc);
 }
@@ -108,6 +126,10 @@ pub inline fn deviceCreateCommandEncoder(device: *gpu.Device, desc: *const gpu.C
 
 pub inline fn deviceCreateSampler(device: *gpu.Device, desc: *const gpu.Sampler.Descriptor) gpu.Sampler.Error!*gpu.Sampler {
     return procs.Procs.loaded_procs.?.deviceCreateSampler(device, desc);
+}
+
+pub inline fn deviceCreateShaderModule(device: *gpu.Device, desc: *const gpu.ShaderModule.Descriptor) gpu.ShaderModule.Error!*gpu.ShaderModule {
+    return procs.Procs.loaded_procs.?.deviceCreateShaderModule(device, desc);
 }
 
 pub inline fn deviceCreateSwapChain(
@@ -221,34 +243,34 @@ pub inline fn queueWriteTexture(
 pub inline fn renderPassEncoderDraw(
     render_pass_encoder: *gpu.RenderPass.Encoder,
     vertex_count: u32,
-    instance_count: u32,
-    first_vertex: u32,
-    first_instance: u32,
+    instance_count: ?u32,
+    first_vertex: ?u32,
+    first_instance: ?u32,
 ) void {
     return procs.Procs.loaded_procs.?.renderPassEncoderDraw(
         render_pass_encoder,
         vertex_count,
-        instance_count,
-        first_vertex,
-        first_instance,
+        instance_count orelse 1,
+        first_vertex orelse 0,
+        first_instance orelse 0,
     );
 }
 
 pub inline fn renderPassEncoderDrawIndexed(
     render_pass_encoder: *gpu.RenderPass.Encoder,
-    index_count: u32,
-    instance_count: u32,
-    first_index: u32,
-    base_vertex: i32,
-    first_instance: u32,
+    index_count: usize,
+    instance_count: ?u32,
+    first_index: ?u32,
+    base_vertex: ?i32,
+    first_instance: ?u32,
 ) void {
     return procs.Procs.loaded_procs.?.renderPassEncoderDrawIndexed(
         render_pass_encoder,
-        index_count,
-        instance_count,
-        first_index,
-        base_vertex,
-        first_instance,
+        @intCast(index_count),
+        instance_count orelse 1,
+        first_index orelse 0,
+        base_vertex orelse 0,
+        first_instance orelse 0,
     );
 }
 
@@ -335,8 +357,8 @@ pub inline fn renderPassEncoderSetIndexBuffer(
     format: gpu.IndexFormat,
     offset: ?u64,
     size: ?u64,
-) void {
-    return procs.Procs.loaded_procs.?.renderPassEncoderSetIndexBuffer(
+) !void {
+    try procs.Procs.loaded_procs.?.renderPassEncoderSetIndexBuffer(
         render_pass_encoder,
         buffer,
         format,
@@ -348,7 +370,7 @@ pub inline fn renderPassEncoderSetIndexBuffer(
 pub inline fn renderPassEncoderSetPipeline(
     render_pass_encoder: *gpu.RenderPass.Encoder,
     pipeline: *gpu.RenderPipeline,
-) void {
+) !void {
     return procs.Procs.loaded_procs.?.renderPassEncoderSetPipeline(render_pass_encoder, pipeline);
 }
 
@@ -358,8 +380,8 @@ pub inline fn renderPassEncoderSetScissorRect(
     y: u32,
     width: u32,
     height: u32,
-) void {
-    return procs.Procs.loaded_procs.?.renderPassEncoderSetScissorRect(
+) !void {
+    try procs.Procs.loaded_procs.?.renderPassEncoderSetScissorRect(
         render_pass_encoder,
         x,
         y,
@@ -379,15 +401,15 @@ pub inline fn renderPassEncoderSetVertexBuffer(
     render_pass_encoder: *gpu.RenderPass.Encoder,
     slot: u32,
     buffer: *gpu.Buffer,
-    offset: u64,
-    size: u64,
-) void {
-    return procs.Procs.loaded_procs.?.renderPassEncoderSetVertexBuffer(
+    offset: ?u64,
+    size: ?u64,
+) !void {
+    try procs.Procs.loaded_procs.?.renderPassEncoderSetVertexBuffer(
         render_pass_encoder,
         slot,
         buffer,
-        offset,
-        size,
+        offset orelse 0,
+        size orelse gpu.whole_size,
     );
 }
 
@@ -399,8 +421,8 @@ pub inline fn renderPassEncoderSetViewport(
     height: f32,
     min_depth: f32,
     max_depth: f32,
-) void {
-    return procs.Procs.loaded_procs.?.renderPassEncoderSetViewport(
+) !void {
+    try procs.Procs.loaded_procs.?.renderPassEncoderSetViewport(
         render_pass_encoder,
         x,
         y,
@@ -427,9 +449,19 @@ pub inline fn renderPassEncoderDestroy(render_pass_encoder: *gpu.RenderPass.Enco
     return procs.Procs.loaded_procs.?.renderPassEncoderDestroy(render_pass_encoder);
 }
 
+// RenderPipeline
+pub inline fn renderPipelineDestroy(render_pipeline: *gpu.RenderPipeline) void {
+    return procs.Procs.loaded_procs.?.renderPipelineDestroy(render_pipeline);
+}
+
 // Sampler
 pub inline fn samplerDestroy(sampler: *gpu.Sampler) void {
     return procs.Procs.loaded_procs.?.samplerDestroy(sampler);
+}
+
+// ShaderModule
+pub inline fn shaderModuleDestroy(shader_module: *gpu.ShaderModule) void {
+    return procs.Procs.loaded_procs.?.shaderModuleDestroy(shader_module);
 }
 
 // Surface
@@ -438,6 +470,10 @@ pub inline fn surfaceDestroy(surface: *gpu.Surface) void {
 }
 
 // SwapChain
+pub inline fn swapChainGetIndex(swap_chain: *gpu.SwapChain) u32 {
+    return procs.Procs.loaded_procs.?.swapChainGetIndex(swap_chain);
+}
+
 pub inline fn swapChainGetCurrentTexture(swap_chain: *gpu.SwapChain) ?*gpu.Texture {
     return procs.Procs.loaded_procs.?.swapChainGetCurrentTexture(swap_chain);
 }

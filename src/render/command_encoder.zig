@@ -11,6 +11,17 @@ pub const CommandEncoder = opaque {
         label: ?[]const u8 = null,
     };
 
+    pub inline fn beginRenderPass(self: *CommandEncoder, desc: *const gpu.RenderPass.Descriptor) !*gpu.RenderPass.Encoder {
+        return impl.commandEncoderBeginRenderPass(self, desc);
+    }
+
+    pub inline fn finish(
+        self: *CommandEncoder,
+        desc: ?*const gpu.CommandBuffer.Descriptor,
+    ) !*gpu.CommandBuffer {
+        return impl.commandEncoderFinish(self, desc);
+    }
+
     pub inline fn destroy(self: *CommandEncoder) void {
         impl.commandEncoderDestroy(self);
     }

@@ -7,6 +7,7 @@ const d3d = win32.graphics.direct3d;
 const d3d12 = win32.graphics.direct3d12;
 const dxgi = win32.graphics.dxgi;
 const hlsl = win32.graphics.hlsl;
+const dxc = d3d.dxc;
 
 const general_heap_size = 1024;
 const general_block_size = 16;
@@ -21,6 +22,8 @@ const max_back_buffer_count = 3;
 
 const TRUE = win32.foundation.TRUE;
 const FALSE = win32.foundation.FALSE;
+
+const winappimpl = @import("../../app/platform/windows.zig");
 
 const d3dcommon = @import("../d3d/common.zig");
 
@@ -43,6 +46,7 @@ pub const procs: gpu.procs.Procs = .{
     // CommandBuffer
     .commandBufferDestroy = commandBufferDestroy,
     // CommandEncoder
+    .commandEncoderBeginRenderPass = commandEncoderBeginRenderPass,
     .commandEncoderFinish = commandEncoderFinish,
     .commandEncoderDestroy = commandEncoderDestroy,
     // ComputePassEncoder
@@ -51,9 +55,11 @@ pub const procs: gpu.procs.Procs = .{
     .deviceCreateBindGroup = deviceCreateBindGroup,
     .deviceCreateBindGroupLayout = deviceCreateBindGroupLayout,
     .deviceCreatePipelineLayout = deviceCreatePipelineLayout,
+    .deviceCreateRenderPipeline = deviceCreateRenderPipeline,
     .deviceCreateBuffer = deviceCreateBuffer,
     .deviceCreateCommandEncoder = deviceCreateCommandEncoder,
     .deviceCreateSampler = deviceCreateSampler,
+    .deviceCreateShaderModule = deviceCreateShaderModule,
     .deviceCreateSwapChain = deviceCreateSwapChain,
     .deviceCreateTexture = deviceCreateTexture,
     .deviceGetQueue = deviceGetQueue,
@@ -97,12 +103,15 @@ pub const procs: gpu.procs.Procs = .{
     .renderPassEncoderWriteTimestamp = renderPassEncoderWriteTimestamp,
     .renderPassEncoderDestroy = renderPassEncoderDestroy,
     // RenderPipeline
+    .renderPipelineDestroy = renderPipelineDestroy,
     // Sampler
     .samplerDestroy = samplerDestroy,
     // ShaderModule
+    .shaderModuleDestroy = shaderModuleDestroy,
     // Surface
     .surfaceDestroy = surfaceDestroy,
     // SwapChain
+    .swapChainGetIndex = swapChainGetIndex,
     .swapChainGetCurrentTexture = swapChainGetCurrentTexture,
     .swapChainGetCurrentTextureView = swapChainGetCurrentTextureView,
     .swapChainGetTextureViews = swapChainGetTextureViews,
@@ -130,7 +139,6 @@ export fn getProcs() *const gpu.procs.Procs {
 
 // BindGroup
 pub fn bindGroupDestroy(bind_group: *gpu.BindGroup) void {
-    std.debug.print("destroying bind group...\n", .{});
     D3D12BindGroup.destroy(@alignCast(@ptrCast(bind_group)));
 }
 
@@ -386,7 +394,6 @@ pub const D3D12BindGroup = struct {
 
 // BindGroupLayout
 pub fn bindGroupLayoutDestroy(bind_group_layout: *gpu.BindGroupLayout) void {
-    std.debug.print("destroying bind group layout...\n", .{});
     D3D12BindGroupLayout.destroy(@alignCast(@ptrCast(bind_group_layout)));
 }
 
@@ -512,27 +519,22 @@ pub fn bufferGetUsage(buffer: *gpu.Buffer) gpu.Buffer.UsageFlags {
 }
 
 pub fn bufferMap(buffer: *gpu.Buffer) gpu.Buffer.Error!void {
-    std.debug.print("mapping buffer...\n", .{});
     return D3D12Buffer.map(@ptrCast(@alignCast(buffer))) catch return gpu.Buffer.Error.BufferMapFailed;
 }
 
 pub fn bufferUnmap(buffer: *gpu.Buffer) void {
-    std.debug.print("unmapping buffer...\n", .{});
     D3D12Buffer.unmap(@ptrCast(@alignCast(buffer)));
 }
 
 pub fn bufferGetMappedRange(buffer: *gpu.Buffer, offset: usize, size: ?usize) gpu.Buffer.Error![]u8 {
-    std.debug.print("getting mapped range...\n", .{});
     return D3D12Buffer.getMappedRange(@ptrCast(@alignCast(buffer)), offset, size, true);
 }
 
 pub fn bufferGetMappedRangeConst(buffer: *gpu.Buffer, offset: usize, size: ?usize) gpu.Buffer.Error![]const u8 {
-    std.debug.print("getting mapped range const...\n", .{});
     return D3D12Buffer.getMappedRange(@ptrCast(@alignCast(buffer)), offset, size, false);
 }
 
 pub fn bufferDestroy(buffer: *gpu.Buffer) void {
-    std.debug.print("destroying buffer...\n", .{});
     D3D12Buffer.destroy(@alignCast(@ptrCast(buffer)));
 }
 
@@ -658,7 +660,6 @@ pub const D3D12Buffer = struct {
 
 // CommandBuffer
 pub fn commandBufferDestroy(command_buffer: *gpu.CommandBuffer) void {
-    std.debug.print("destroying command buffer...\n", .{});
     D3D12CommandBuffer.destroy(@alignCast(@ptrCast(command_buffer)));
 }
 
@@ -707,6 +708,8 @@ pub const D3D12CommandBuffer = struct {
     }
 
     pub fn destroy(self: *D3D12CommandBuffer) void {
+        // unsubmitted CommandBuffer
+        if (self.command_list) |cl| self.device.command_pool.destroyCommandList(cl);
         allocator.destroy(self);
     }
 
@@ -765,22 +768,27 @@ pub const D3D12CommandBuffer = struct {
 };
 
 // CommandEncoder
+pub fn commandEncoderBeginRenderPass(
+    command_encoder: *gpu.CommandEncoder,
+    desc: *const gpu.RenderPass.Descriptor,
+) gpu.RenderPass.Encoder.Error!*gpu.RenderPass.Encoder {
+    return @ptrCast(try D3D12CommandEncoder.beginRenderPass(@ptrCast(@alignCast(command_encoder)), desc));
+}
+
 pub fn commandEncoderFinish(
     command_encoder: *gpu.CommandEncoder,
     desc: *const gpu.CommandBuffer.Descriptor,
 ) gpu.CommandBuffer.Error!*gpu.CommandBuffer {
-    std.debug.print("finishing command encoder...\n", .{});
     return @ptrCast(try D3D12CommandEncoder.finish(@ptrCast(@alignCast(command_encoder)), desc));
 }
 
 pub fn commandEncoderDestroy(command_encoder: *gpu.CommandEncoder) void {
-    std.debug.print("destroying command encoder...\n", .{});
     D3D12CommandEncoder.destroy(@alignCast(@ptrCast(command_encoder)));
 }
 
 pub const D3D12CommandEncoder = struct {
     device: *D3D12Device,
-    command_buffer: *D3D12CommandBuffer,
+    command_buffer: ?*D3D12CommandBuffer = null,
     barrier_enforcer: D3D12BarrierEnforcer = .{},
 
     pub fn create(device: *D3D12Device, desc: *const gpu.CommandEncoder.Descriptor) gpu.CommandEncoder.Error!*D3D12CommandEncoder {
@@ -803,15 +811,16 @@ pub const D3D12CommandEncoder = struct {
     }
 
     pub fn destroy(self: *D3D12CommandEncoder) void {
+        if (self.command_buffer) |cb| cb.destroy();
+
         self.barrier_enforcer.deinit();
-        self.command_buffer.destroy();
         allocator.destroy(self);
     }
 
     // pub fn beginComputePass(self: *D3D12CommandEncoder, desc: *const gpu.ComputePassDescriptor) gpu.Compute
 
     pub fn beginRenderPass(self: *D3D12CommandEncoder, desc: *const gpu.RenderPass.Descriptor) !*D3D12RenderPassEncoder {
-        try self.barrier_enforcer.endPass();
+        self.barrier_enforcer.endPass() catch return gpu.RenderPass.Encoder.Error.RenderPassEncoderFailedToEnd;
         return D3D12RenderPassEncoder.create(self, desc);
     }
 
@@ -823,7 +832,7 @@ pub const D3D12CommandEncoder = struct {
         dst_offset: u64,
         size: u64,
     ) !void {
-        const command_list = self.command_buffer.command_list.?;
+        const command_list = self.command_buffer.?.command_list.?;
 
         try self.barrier_enforcer.transition(&src.buffer, src.buffer.read_state);
         try self.barrier_enforcer.transition(&dst.buffer, .COPY_DEST);
@@ -844,7 +853,7 @@ pub const D3D12CommandEncoder = struct {
         dst: *const gpu.ImageCopyTexture,
         copy_size_raw: *const gpu.Extent3D,
     ) !void {
-        const command_list = self.command_buffer.command_list.?;
+        const command_list = self.command_buffer.?.command_list.?;
         const source_buffer: *D3D12Buffer = @ptrCast(@alignCast(src.buffer));
         const destination_texture: *D3D12Texture = @ptrCast(@alignCast(dst.texture));
 
@@ -904,7 +913,7 @@ pub const D3D12CommandEncoder = struct {
         dst: *const gpu.ImageCopyTexture,
         copy_size_raw: *const gpu.Extent3D,
     ) !void {
-        const command_list = self.command_buffer.command_list;
+        const command_list = self.command_buffer.?.command_list;
         const source_texture: *D3D12Texture = @ptrCast(@alignCast(src.texture));
         const destination_texture: *D3D12Texture = @ptrCast(@alignCast(dst.texture));
 
@@ -968,7 +977,7 @@ pub const D3D12CommandEncoder = struct {
     pub fn finish(self: *D3D12CommandEncoder, desc: *const gpu.CommandBuffer.Descriptor) gpu.CommandBuffer.Error!*D3D12CommandBuffer {
         _ = desc;
 
-        const command_list = self.command_buffer.command_list.?;
+        const command_list = self.command_buffer.?.command_list.?;
 
         self.barrier_enforcer.endPass() catch return gpu.CommandBuffer.Error.CommandBufferFailedToCreate;
         self.barrier_enforcer.flush(command_list);
@@ -976,7 +985,9 @@ pub const D3D12CommandEncoder = struct {
         const hr_close = command_list.ID3D12GraphicsCommandList_Close();
         if (!d3dcommon.checkHResult(hr_close)) return gpu.CommandBuffer.Error.CommandBufferFailedToCreate;
 
-        return self.command_buffer;
+        const ret = self.command_buffer.?;
+        self.command_buffer = null;
+        return ret;
     }
 
     pub fn writeBuffer(
@@ -985,9 +996,9 @@ pub const D3D12CommandEncoder = struct {
         offset: u64,
         data: []const u8,
     ) !void {
-        const command_list = self.command_buffer.command_list.?;
+        const command_list = self.command_buffer.?.command_list.?;
 
-        const stream = try self.command_buffer.upload(data.len);
+        const stream = try self.command_buffer.?.upload(data.len);
         @memcpy(stream.map[0..data.len], data);
 
         try self.barrier_enforcer.transition(&buffer.buffer, .COPY_DEST);
@@ -1009,10 +1020,10 @@ pub const D3D12CommandEncoder = struct {
         data_layout: *const gpu.Texture.DataLayout,
         write_size_raw: *const gpu.Extent3D,
     ) !void {
-        const command_list = self.command_buffer.command_list.?;
+        const command_list = self.command_buffer.?.command_list.?;
         const destination_texture: *D3D12Texture = @ptrCast(@alignCast(destination.texture));
 
-        const stream = try self.command_buffer.upload(data.len);
+        const stream = try self.command_buffer.?.upload(data.len);
         @memcpy(stream.map[0..data.len], data[0..data.len]);
 
         try self.barrier_enforcer.transition(&destination_texture.resource.?, .COPY_DEST);
@@ -1157,7 +1168,6 @@ pub fn deviceCreateBindGroup(
     device: *gpu.Device,
     desc: *const gpu.BindGroup.Descriptor,
 ) gpu.BindGroup.Error!*gpu.BindGroup {
-    std.debug.print("creating bind group...\n", .{});
     return @ptrCast(try D3D12BindGroup.create(@ptrCast(@alignCast(device)), desc));
 }
 
@@ -1165,7 +1175,6 @@ pub fn deviceCreateBindGroupLayout(
     device: *gpu.Device,
     desc: *const gpu.BindGroupLayout.Descriptor,
 ) gpu.BindGroupLayout.Error!*gpu.BindGroupLayout {
-    std.debug.print("creating bind group layout...\n", .{});
     return @ptrCast(try D3D12BindGroupLayout.create(@ptrCast(@alignCast(device)), desc));
 }
 
@@ -1173,15 +1182,20 @@ pub fn deviceCreatePipelineLayout(
     device: *gpu.Device,
     desc: *const gpu.PipelineLayout.Descriptor,
 ) gpu.PipelineLayout.Error!*gpu.PipelineLayout {
-    std.debug.print("creating pipeline layout...\n", .{});
     return @ptrCast(try D3D12PipelineLayout.create(@ptrCast(@alignCast(device)), desc));
+}
+
+pub fn deviceCreateRenderPipeline(
+    device: *gpu.Device,
+    desc: *const gpu.RenderPipeline.Descriptor,
+) gpu.RenderPipeline.Error!*gpu.RenderPipeline {
+    return @ptrCast(try D3D12RenderPipeline.create(@ptrCast(@alignCast(device)), desc));
 }
 
 pub fn deviceCreateBuffer(
     device: *gpu.Device,
     desc: *const gpu.Buffer.Descriptor,
 ) gpu.Buffer.Error!*gpu.Buffer {
-    std.debug.print("creating buffer...\n", .{});
     return @ptrCast(try D3D12Buffer.create(@ptrCast(@alignCast(device)), desc));
 }
 
@@ -1189,7 +1203,6 @@ pub fn deviceCreateCommandEncoder(
     device: *gpu.Device,
     desc: *const gpu.CommandEncoder.Descriptor,
 ) gpu.CommandEncoder.Error!*gpu.CommandEncoder {
-    std.debug.print("creating command encoder...\n", .{});
     return @ptrCast(try D3D12CommandEncoder.create(@ptrCast(@alignCast(device)), desc));
 }
 
@@ -1197,8 +1210,14 @@ pub fn deviceCreateSampler(
     device: *gpu.Device,
     desc: *const gpu.Sampler.Descriptor,
 ) gpu.Sampler.Error!*gpu.Sampler {
-    std.debug.print("creating sampler...\n", .{});
     return @ptrCast(try D3D12Sampler.create(@ptrCast(@alignCast(device)), desc));
+}
+
+pub fn deviceCreateShaderModule(
+    device: *gpu.Device,
+    desc: *const gpu.ShaderModule.Descriptor,
+) gpu.ShaderModule.Error!*gpu.ShaderModule {
+    return @ptrCast(try D3D12ShaderModule.create(@ptrCast(@alignCast(device)), desc));
 }
 
 pub fn deviceCreateSwapChain(
@@ -1206,7 +1225,6 @@ pub fn deviceCreateSwapChain(
     surface: ?*gpu.Surface,
     desc: *const gpu.SwapChain.Descriptor,
 ) gpu.SwapChain.Error!*gpu.SwapChain {
-    std.debug.print("creating swap chain...\n", .{});
     return @ptrCast(try D3D12SwapChain.create(@ptrCast(@alignCast(device)), @ptrCast(@alignCast(surface.?)), desc));
 }
 
@@ -1214,17 +1232,14 @@ pub fn deviceCreateTexture(
     device: *gpu.Device,
     desc: *const gpu.Texture.Descriptor,
 ) gpu.Texture.Error!*gpu.Texture {
-    std.debug.print("creating texture...\n", .{});
     return @ptrCast(try D3D12Texture.create(@ptrCast(@alignCast(device)), desc));
 }
 
 pub fn deviceGetQueue(device: *gpu.Device) *gpu.Queue {
-    std.debug.print("getting queue...\n", .{});
     return D3D12Device.getQueue(@ptrCast(@alignCast(device)));
 }
 
 pub fn deviceDestroy(device: *gpu.Device) void {
-    std.debug.print("destroying device...\n", .{});
     D3D12Device.destroy(@alignCast(@ptrCast(device)));
 }
 
@@ -1243,6 +1258,9 @@ pub const D3D12Device = struct {
     command_pool: D3D12CommandPool = undefined,
     streaming_pool: D3D12StreamingPool = undefined,
     resource_pool: D3D12ResourcePool = undefined,
+
+    shader_compiler: ?*D3D12ShaderCompiler = null,
+    shader_arena: std.heap.ArenaAllocator = undefined,
 
     pub fn create(physical_device: *D3D12PhysicalDevice, desc: *const gpu.Device.Descriptor) gpu.Device.Error!*D3D12Device {
         const queue = allocator.create(D3D12Queue) catch return gpu.Device.Error.DeviceFailedToCreate;
@@ -1351,6 +1369,12 @@ pub const D3D12Device = struct {
         self.streaming_pool = D3D12StreamingPool.create(self);
         self.resource_pool = D3D12ResourcePool.create(self);
 
+        // TODO: conditionally enable the shader compiler through options
+
+        self.shader_arena = std.heap.ArenaAllocator.init(allocator);
+        self.shader_compiler = D3D12ShaderCompiler.create(self.shader_arena.allocator()) catch
+            return gpu.Device.Error.DeviceFailedToCreate;
+
         return self;
     }
 
@@ -1359,6 +1383,11 @@ pub const D3D12Device = struct {
             cb(.destroyed, "device destroyed");
         }
         _ = self.queue.waitUntil(self.queue.fence_value);
+
+        if (self.shader_compiler) |sc| {
+            sc.destroy();
+            self.shader_arena.deinit();
+        }
 
         self.command_pool.deinit();
         self.streaming_pool.deinit();
@@ -1541,7 +1570,8 @@ pub const D3D12DescriptorHeap = struct {
                 out_handle: *d3d12.D3D12_GPU_DESCRIPTOR_HANDLE,
             ) callconv(.Win64) d3d12.D3D12_GPU_DESCRIPTOR_HANDLE) = @ptrCast(heap.?.vtable.GetGPUDescriptorHandleForHeapStart);
 
-            gpu_handle = getGpuDescriptorHandleForHeapStart(heap.?, &gpu_handle);
+            const alt = getGpuDescriptorHandleForHeapStart(heap.?, &gpu_handle);
+            _ = alt;
         } else {
             gpu_handle = .{ .ptr = 0 };
         }
@@ -1610,7 +1640,6 @@ pub const D3D12Resource = struct {
 
 // Instance
 pub fn createInstance(alloc: std.mem.Allocator, desc: *const gpu.Instance.Descriptor) gpu.Instance.Error!*gpu.Instance {
-    std.debug.print("creating instance...\n", .{});
     return @ptrCast(D3D12Instance.create(alloc, desc) catch
         return gpu.Instance.Error.InstanceFailedToCreate);
 }
@@ -1619,7 +1648,6 @@ pub fn instanceCreateSurface(
     instance: *gpu.Instance,
     desc: *const gpu.Surface.Descriptor,
 ) gpu.Surface.Error!*gpu.Surface {
-    std.debug.print("creating surface...\n", .{});
     return @ptrCast(try D3D12Surface.create(@ptrCast(@alignCast(instance)), desc));
 }
 
@@ -1627,12 +1655,10 @@ pub fn instanceRequestPhysicalDevice(
     instance: *gpu.Instance,
     options: *const gpu.PhysicalDevice.Options,
 ) gpu.PhysicalDevice.Error!*gpu.PhysicalDevice {
-    std.debug.print("requesting physical_device...\n", .{});
     return @ptrCast(try D3D12PhysicalDevice.create(@ptrCast(@alignCast(instance)), options));
 }
 
 pub fn instanceDestroy(instance: *gpu.Instance) void {
-    std.debug.print("destroying instance...\n", .{});
     D3D12Instance.destroy(@alignCast(@ptrCast(instance)));
 }
 
@@ -1691,7 +1717,6 @@ pub fn physicalDeviceCreateDevice(
     physical_device: *gpu.PhysicalDevice,
     desc: *const gpu.Device.Descriptor,
 ) gpu.Device.Error!*gpu.Device {
-    std.debug.print("creating device...\n", .{});
     return @ptrCast(try D3D12Device.create(@ptrCast(@alignCast(physical_device)), desc));
 }
 
@@ -1700,7 +1725,6 @@ pub fn physicalDeviceGetProperties(physical_device: *gpu.PhysicalDevice, out_pro
 }
 
 pub fn physicalDeviceDestroy(physical_device: *gpu.PhysicalDevice) void {
-    std.debug.print("destroying physical_device...\n", .{});
     D3D12PhysicalDevice.destroy(@alignCast(@ptrCast(physical_device)));
 }
 
@@ -1759,7 +1783,6 @@ pub const D3D12PhysicalDevice = struct {
 
 // PipelineLayout
 pub fn pipelineLayoutDestroy(pipeline_layout: *gpu.PipelineLayout) void {
-    std.debug.print("destroying pipeline_layout...\n", .{});
     D3D12PipelineLayout.destroy(@alignCast(@ptrCast(pipeline_layout)));
 }
 
@@ -1931,7 +1954,7 @@ pub const D3D12PipelineLayout = struct {
         );
         if (opt_errors) |errors| {
             const message: [*:0]const u8 = @ptrCast(errors.ID3DBlob_GetBufferPointer().?);
-            std.debug.print("{s}\n", .{message});
+            std.log.err("D3D12SerializeRootSignature failed: {s}", .{message});
             d3dcommon.releaseIUnknown(d3d.ID3DBlob, &opt_errors);
         }
         if (winapi.zig.FAILED(hr)) {
@@ -1972,7 +1995,6 @@ pub const D3D12PipelineLayout = struct {
 // QuerySet
 // Queue
 pub fn queueSubmit(queue: *gpu.Queue, command_buffers: []const *gpu.CommandBuffer) gpu.Queue.Error!void {
-    std.debug.print("submitting queue...\n", .{});
     try D3D12Queue.submit(@ptrCast(@alignCast(queue)), command_buffers);
 }
 
@@ -1982,7 +2004,6 @@ pub fn queueWriteBuffer(
     offset: u64,
     data: []const u8,
 ) gpu.Queue.Error!void {
-    std.debug.print("writing buffer...\n", .{});
     D3D12Queue.writeBuffer(
         @ptrCast(@alignCast(queue)),
         @ptrCast(@alignCast(buffer)),
@@ -1999,7 +2020,6 @@ pub fn queueWriteTexture(
     layout: *const gpu.Texture.DataLayout,
     write_size: *const gpu.Extent3D,
 ) gpu.Queue.Error!void {
-    std.debug.print("writing texture...\n", .{});
     D3D12Queue.writeTexture(
         @ptrCast(@alignCast(queue)),
         dst,
@@ -2086,8 +2106,10 @@ pub const D3D12Queue = struct {
 
         if (self.current_command_encoder) |ce| {
             const command_buffer = ce.finish(&.{}) catch return gpu.Queue.Error.QueueFailedToSubmit;
+            defer ce.destroy();
+            // give it back so we can clean it up
+            ce.command_buffer = command_buffer;
             command_lists.appendAssumeCapacity(command_buffer.command_list.?);
-            ce.destroy();
             self.current_command_encoder = null;
         }
 
@@ -2101,9 +2123,9 @@ pub const D3D12Queue = struct {
             @ptrCast(command_lists.items.ptr),
         );
 
-        for (command_lists.items) |cl| {
-            self.device.command_pool.destroyCommandList(cl);
-        }
+        // for (command_lists.items) |cl| {
+        //     self.device.command_pool.destroyCommandList(cl);
+        // }
 
         self.signal() catch return gpu.Queue.Error.QueueFailedToSubmit;
     }
@@ -2164,9 +2186,8 @@ pub const D3D12Queue = struct {
             return ce;
         }
 
-        const ce = try D3D12CommandEncoder.create(self.device, &.{});
-        self.current_command_encoder = ce;
-        return ce;
+        self.current_command_encoder = try D3D12CommandEncoder.create(self.device, &.{});
+        return self.current_command_encoder.?;
     }
 };
 
@@ -2196,6 +2217,7 @@ pub const D3D12CommandPool = struct {
         for (self.free_command_lists.items) |command_list| {
             var proxy: ?*d3d12.ID3D12GraphicsCommandList = command_list;
             d3dcommon.releaseIUnknown(d3d12.ID3D12GraphicsCommandList, &proxy);
+            // _ = command_list.IUnknown_Release();
         }
 
         self.free_allocators.deinit(allocator);
@@ -2314,7 +2336,6 @@ pub fn renderPassEncoderDraw(
     first_vertex: u32,
     first_instance: u32,
 ) void {
-    std.debug.print("drawing...\n", .{});
     D3D12RenderPassEncoder.draw(
         @ptrCast(@alignCast(render_pass_encoder)),
         vertex_count,
@@ -2332,7 +2353,6 @@ pub fn renderPassEncoderDrawIndexed(
     base_vertex: i32,
     first_instance: u32,
 ) void {
-    std.debug.print("drawing indexed...\n", .{});
     D3D12RenderPassEncoder.drawIndexed(
         @ptrCast(@alignCast(render_pass_encoder)),
         index_count,
@@ -2351,7 +2371,7 @@ pub fn renderPassEncoderDrawIndexedIndirect(
     _ = render_pass_encoder;
     _ = indirect_buffer;
     _ = indirect_offset;
-    std.debug.print("drawing indexed indirect...\n", .{});
+
     // TODO: DrawIndexedIndirect
     // D3D12RenderPassEncoder.drawIndexedIndirect(
     //     @ptrCast(@alignCast(render_pass_encoder)),
@@ -2368,7 +2388,7 @@ pub fn renderPassEncoderDrawIndirect(
     _ = render_pass_encoder;
     _ = indirect_buffer;
     _ = indirect_offset;
-    std.debug.print("drawing indirect...\n", .{});
+
     // TODO: DrawIndirect
     // D3D12RenderPassEncoder.drawIndirect(
     //     @ptrCast(@alignCast(render_pass_encoder)),
@@ -2378,7 +2398,6 @@ pub fn renderPassEncoderDrawIndirect(
 }
 
 pub fn renderPassEncoderEnd(render_pass_encoder: *gpu.RenderPass.Encoder) gpu.RenderPass.Encoder.Error!void {
-    std.debug.print("ending render_pass...\n", .{});
     try D3D12RenderPassEncoder.end(@ptrCast(@alignCast(render_pass_encoder)));
 }
 
@@ -2388,7 +2407,7 @@ pub fn renderPassEncoderExecuteBundles(
 ) void {
     _ = render_pass_encoder;
     _ = bundles;
-    std.debug.print("executing bundles...\n", .{});
+
     // TODO: ExecuteBundles
 }
 
@@ -2396,21 +2415,20 @@ pub fn renderPassEncoderInsertDebugMarker(
     render_pass_encoder: *gpu.RenderPass.Encoder,
     label: []const u8,
 ) void {
+    _ = label;
     _ = render_pass_encoder;
-    std.debug.print("inserting debug marker...: {s}\n", .{label});
 }
 
 pub fn renderPassEncoderPopDebugGroup(render_pass_encoder: *gpu.RenderPass.Encoder) void {
     _ = render_pass_encoder;
-    std.debug.print("popping debug group...\n", .{});
 }
 
 pub fn renderPassEncoderPushDebugGroup(
     render_pass_encoder: *gpu.RenderPass.Encoder,
     label: []const u8,
 ) void {
+    _ = label;
     _ = render_pass_encoder;
-    std.debug.print("pushing debug group...: {s}\n", .{label});
 }
 
 pub fn renderPassEncoderSetBindGroup(
@@ -2419,7 +2437,6 @@ pub fn renderPassEncoderSetBindGroup(
     bind_group: *gpu.BindGroup,
     dynamic_offsets: ?[]const u32,
 ) void {
-    std.debug.print("setting bind_group...\n", .{});
     D3D12RenderPassEncoder.setBindGroup(
         @ptrCast(@alignCast(render_pass_encoder)),
         index,
@@ -2434,7 +2451,7 @@ pub fn renderPassEncoderSetBlendConstant(
 ) void {
     _ = render_pass_encoder;
     _ = colour;
-    std.debug.print("setting blend constant...\n", .{});
+
     // TODO: SetBlendConstant
     // D3D12RenderPassEncoder.setBlendConstant(
     //     @ptrCast(@alignCast(render_pass_encoder)),
@@ -2449,7 +2466,6 @@ pub fn renderPassEncoderSetIndexBuffer(
     offset: u64,
     size: u64,
 ) gpu.RenderPass.Encoder.Error!void {
-    std.debug.print("setting index buffer...\n", .{});
     try D3D12RenderPassEncoder.setIndexBuffer(
         @ptrCast(@alignCast(render_pass_encoder)),
         @ptrCast(@alignCast(buffer)),
@@ -2463,7 +2479,6 @@ pub fn renderPassEncoderSetPipeline(
     render_pass_encoder: *gpu.RenderPass.Encoder,
     pipeline: *gpu.RenderPipeline,
 ) gpu.RenderPass.Encoder.Error!void {
-    std.debug.print("setting pipeline...\n", .{});
     try D3D12RenderPassEncoder.setPipeline(
         @ptrCast(@alignCast(render_pass_encoder)),
         @ptrCast(@alignCast(pipeline)),
@@ -2477,7 +2492,6 @@ pub fn renderPassEncoderSetScissorRect(
     width: u32,
     height: u32,
 ) gpu.RenderPass.Encoder.Error!void {
-    std.debug.print("setting scissor rect...\n", .{});
     try D3D12RenderPassEncoder.setScissorRect(
         @ptrCast(@alignCast(render_pass_encoder)),
         x,
@@ -2493,7 +2507,7 @@ pub fn renderPassEncoderSetStencilReference(
 ) void {
     _ = render_pass_encoder;
     _ = reference;
-    std.debug.print("setting stencil reference...\n", .{});
+
     // TODO: SetStencilReference
     // D3D12RenderPassEncoder.setStencilReference(
     //     @ptrCast(@alignCast(render_pass_encoder)),
@@ -2508,7 +2522,6 @@ pub fn renderPassEncoderSetVertexBuffer(
     offset: u64,
     size: u64,
 ) gpu.RenderPass.Encoder.Error!void {
-    std.debug.print("setting vertex buffer...\n", .{});
     try D3D12RenderPassEncoder.setVertexBuffer(
         @ptrCast(@alignCast(render_pass_encoder)),
         slot,
@@ -2527,7 +2540,6 @@ pub fn renderPassEncoderSetViewport(
     min_depth: f32,
     max_depth: f32,
 ) gpu.RenderPass.Encoder.Error!void {
-    std.debug.print("setting viewport...\n", .{});
     try D3D12RenderPassEncoder.setViewport(
         @ptrCast(@alignCast(render_pass_encoder)),
         x,
@@ -2547,12 +2559,11 @@ pub fn renderPassEncoderWriteTimestamp(
     _ = render_pass_encoder;
     _ = query_set;
     _ = query_index;
-    std.debug.print("writing timestamp...\n", .{});
+
     // TODO: WriteTimestamp
 }
 
 pub fn renderPassEncoderDestroy(render_pass_encoder: *gpu.RenderPass.Encoder) void {
-    std.debug.print("destroying render_pass_encoder...\n", .{});
     D3D12RenderPassEncoder.destroy(@alignCast(@ptrCast(render_pass_encoder)));
 }
 
@@ -2567,7 +2578,7 @@ pub const D3D12RenderPassEncoder = struct {
     vertex_strides: []u32 = undefined,
 
     pub fn create(self: *D3D12CommandEncoder, desc: *const gpu.RenderPass.Descriptor) !*D3D12RenderPassEncoder {
-        const command_list = self.command_buffer.command_list.?;
+        const command_list = self.command_buffer.?.command_list.?;
 
         var width: u32 = 0;
         var height: u32 = 0;
@@ -2575,16 +2586,24 @@ pub const D3D12RenderPassEncoder = struct {
             gpu.RenderPass.ColourAttachment,
             gpu.Limits.max_colour_attachments,
         ) = .{};
-        var rtv_handles = try self.command_buffer.allocateRtvDescriptors(desc.colour_attachment_count);
+        var rtv_handles = self.command_buffer.?.allocateRtvDescriptors(if (desc.colour_attachments) |ca|
+            ca.len
+        else
+            0) catch
+            return gpu.RenderPass.Encoder.Error.RenderPassEncoderFailedToCreate;
         const descriptor_size = self.device.rtv_heap.descriptor_size;
 
         var rtv_handle = rtv_handles;
         for (desc.colour_attachments orelse &.{}) |attach| {
             if (attach.view) |view_raw| {
-                const view: *D3D12TextureView = @ptrCast(@alignCast(view_raw));
+                const view: *const D3D12TextureView = @ptrCast(@alignCast(view_raw));
                 const texture = view.texture;
 
-                try self.barrier_enforcer.transition(&texture.resource, d3d12.D3D12_RESOURCE_STATE_RENDER_TARGET);
+                self.barrier_enforcer.transition(
+                    &texture.resource.?,
+                    d3d12.D3D12_RESOURCE_STATE_RENDER_TARGET,
+                ) catch
+                    return gpu.RenderPass.Encoder.Error.RenderPassEncoderFailedToCreate;
 
                 width = view.width();
                 height = view.height();
@@ -2592,7 +2611,7 @@ pub const D3D12RenderPassEncoder = struct {
 
                 // TODO - rtvDesc()
                 self.device.device.?.ID3D12Device_CreateRenderTargetView(
-                    texture.resource.d3d_resource,
+                    texture.resource.?.resource,
                     null,
                     rtv_handle,
                 );
@@ -2600,9 +2619,9 @@ pub const D3D12RenderPassEncoder = struct {
                 self.device.device.?.ID3D12Device_CreateRenderTargetView(
                     null,
                     &.{
-                        .Format = d3d12.DXGI_FORMAT_R8G8B8A8_UNORM,
-                        .ViewDimension = d3d12.D3D12_RTV_DIMENSION_TEXTURE2D,
-                        .unnamed_0 = .{ .Texture2D = .{ .MipSlice = 0, .PlaneSlice = 0 } },
+                        .Format = .R8G8B8A8_UNORM,
+                        .ViewDimension = .TEXTURE2D,
+                        .Anonymous = .{ .Texture2D = .{ .MipSlice = 0, .PlaneSlice = 0 } },
                     },
                     rtv_handle,
                 );
@@ -2614,19 +2633,24 @@ pub const D3D12RenderPassEncoder = struct {
         var dsv_handle: d3d12.D3D12_CPU_DESCRIPTOR_HANDLE = .{ .ptr = 0 };
 
         if (desc.depth_stencil_attachment) |attach| {
-            const view: *D3D12TextureView = @ptrCast(@alignCast(attach.view));
+            const view: *const D3D12TextureView = @alignCast(@ptrCast(attach.view));
             const texture = view.texture;
 
-            try self.barrier_enforcer.transition(&texture.resource, d3d12.D3D12_RESOURCE_STATE_DEPTH_WRITE);
+            self.barrier_enforcer.transition(
+                &texture.resource.?,
+                d3d12.D3D12_RESOURCE_STATE_DEPTH_WRITE,
+            ) catch
+                return gpu.RenderPass.Encoder.Error.RenderPassEncoderFailedToCreate;
 
             width = view.width();
             height = view.height();
             depth_attachment = attach.*;
 
-            dsv_handle = try self.command_buffer.allocateDsvDescriptor();
+            dsv_handle = self.command_buffer.?.allocateDsvDescriptor() catch
+                return gpu.RenderPass.Encoder.Error.RenderPassEncoderFailedToCreate;
 
             self.device.device.?.ID3D12Device_CreateDepthStencilView(
-                texture.resource.d3d_resource,
+                texture.resource.?.resource,
                 null,
                 dsv_handle,
             );
@@ -2644,7 +2668,7 @@ pub const D3D12RenderPassEncoder = struct {
         rtv_handle = rtv_handles;
         for (desc.colour_attachments orelse &.{}) |attach| {
             if (attach.load_op == .clear) {
-                const clear_colour = [4]f32{
+                var clear_colour = [4]f32{
                     @floatCast(attach.clear_value.r),
                     @floatCast(attach.clear_value.g),
                     @floatCast(attach.clear_value.b),
@@ -2662,21 +2686,19 @@ pub const D3D12RenderPassEncoder = struct {
         }
 
         if (desc.depth_stencil_attachment) |attach| {
-            var clear_flags: d3d12.D3D12_CLEAR_FLAGS = 0;
+            const clear_flags = d3d12.D3D12_CLEAR_FLAGS.initFlags(.{
+                .DEPTH = if (attach.depth_load_op == .clear) 1 else 0,
+                .STENCIL = if (attach.stencil_load_op == .clear) 1 else 0,
+            });
 
-            if (attach.depth_load_op == .clear)
-                clear_flags |= d3d12.D3D12_CLEAR_FLAG_DEPTH;
-            if (attach.stencil_load_op == .clear)
-                clear_flags |= d3d12.D3D12_CLEAR_FLAG_STENCIL;
-
-            if (clear_flags != 0) {
+            if (@intFromEnum(clear_flags) != 0) {
                 command_list.ID3D12GraphicsCommandList_ClearDepthStencilView(
                     dsv_handle,
                     clear_flags,
                     attach.depth_clear_value,
                     @intCast(attach.stencil_clear_value),
                     0,
-                    null,
+                    undefined,
                 );
             }
         }
@@ -2689,18 +2711,19 @@ pub const D3D12RenderPassEncoder = struct {
             .MinDepth = 0,
             .MaxDepth = 1,
         };
-        const scissor_rect = d3d12.D3D12_RECT{
+        const scissor_rect = win32.foundation.RECT{
             .left = 0,
             .top = 0,
             .right = @intCast(width),
             .bottom = @intCast(height),
         };
 
-        command_list.ID3D12GraphicsCommandList_RSSetViewports(1, &viewport);
-        command_list.ID3D12GraphicsCommandList_RSSetScissorRects(1, &scissor_rect);
+        command_list.ID3D12GraphicsCommandList_RSSetViewports(1, @ptrCast(&viewport));
+        command_list.ID3D12GraphicsCommandList_RSSetScissorRects(1, @ptrCast(&scissor_rect));
 
         // Result
-        const encoder = try allocator.create(D3D12RenderPassEncoder);
+        const encoder = allocator.create(D3D12RenderPassEncoder) catch
+            return gpu.RenderPass.Encoder.Error.RenderPassEncoderFailedToCreate;
         encoder.* = .{
             .command_list = command_list,
             .colour_attachments = colour_attachments,
@@ -2900,25 +2923,22 @@ pub const D3D12RenderPassEncoder = struct {
     }
 
     pub fn setPipeline(encoder: *D3D12RenderPassEncoder, pipeline: *D3D12RenderPipeline) !void {
-        _ = pipeline;
-
         const command_list = encoder.command_list.?;
-        _ = command_list;
 
-        // encoder.group_parameter_indices = pipeline.layout.group_parameter_indices.slice();
-        // encoder.vertex_strides = pipeline.vertex_strides.slice();
+        encoder.group_parameter_indices = pipeline.layout.group_parameter_indices.slice();
+        encoder.vertex_strides = pipeline.vertex_strides.slice();
 
-        // command_list.ID3D12GraphicsCommandList_SetGraphicsRootSignature(
-        //     pipeline.layout.root_signature,
-        // );
+        command_list.ID3D12GraphicsCommandList_SetGraphicsRootSignature(
+            pipeline.layout.root_signature,
+        );
 
-        // command_list.ID3D12GraphicsCommandList_SetPipelineState(
-        //     pipeline.d3d_pipeline,
-        // );
+        command_list.ID3D12GraphicsCommandList_SetPipelineState(
+            pipeline.pipeline,
+        );
 
-        // command_list.ID3D12GraphicsCommandList_IASetPrimitiveTopology(
-        //     pipeline.topology,
-        // );
+        command_list.ID3D12GraphicsCommandList_IASetPrimitiveTopology(
+            pipeline.topology,
+        );
     }
 
     pub fn setScissorRect(encoder: *D3D12RenderPassEncoder, x: u32, y: u32, width: u32, height: u32) !void {
@@ -2937,9 +2957,11 @@ pub const D3D12RenderPassEncoder = struct {
     pub fn setVertexBuffer(encoder: *D3D12RenderPassEncoder, slot: u32, buffer: *D3D12Buffer, offset: u64, size: u64) !void {
         const d3d_resource = buffer.buffer.resource.?;
 
+        const d3d_size: u32 = @intCast(if (size == gpu.whole_size) buffer.size - offset else size);
+
         var view = &encoder.vertex_buffer_views[slot];
         view.BufferLocation = d3d_resource.ID3D12Resource_GetGPUVirtualAddress() + offset;
-        view.SizeInBytes = @intCast(size);
+        view.SizeInBytes = @intCast(d3d_size);
         // StrideInBytes deferred until draw()
 
         encoder.vertex_apply_count = @max(encoder.vertex_apply_count, slot + 1);
@@ -2990,13 +3012,353 @@ pub const D3D12RenderPassEncoder = struct {
 };
 
 // RenderPipeline
+pub fn renderPipelineDestroy(pipeline: *gpu.RenderPipeline) void {
+    D3D12RenderPipeline.destroy(@alignCast(@ptrCast(pipeline)));
+}
+
 pub const D3D12RenderPipeline = struct {
+    device: *D3D12Device,
+    pipeline: ?*d3d12.ID3D12PipelineState = null,
     layout: *D3D12PipelineLayout,
+    topology: d3d.D3D_PRIMITIVE_TOPOLOGY,
+    vertex_strides: std.BoundedArray(u32, gpu.Limits.max_vertex_buffers),
+
+    pub fn create(device: *D3D12Device, desc: *const gpu.RenderPipeline.Descriptor) !*D3D12RenderPipeline {
+        const self = allocator.create(D3D12RenderPipeline) catch return gpu.RenderPipeline.Error.RenderPipelineFailedToCreate;
+        try self.init(device, desc);
+        return self;
+    }
+
+    pub fn destroy(self: *D3D12RenderPipeline) void {
+        self.deinit();
+        allocator.destroy(self);
+    }
+
+    pub fn init(
+        self: *D3D12RenderPipeline,
+        device: *D3D12Device,
+        desc: *const gpu.RenderPipeline.Descriptor,
+    ) gpu.RenderPipeline.Error!void {
+        var scratch = common.ScratchSpace(4096){};
+        const temp_allocator = scratch.init().allocator();
+        _ = temp_allocator;
+
+        var vertex_unit: D3D12ShaderModule.Unit = .{};
+        defer vertex_unit.deinit();
+        const vertex_module: *D3D12ShaderModule = @ptrCast(@alignCast(desc.vertex.module));
+        vertex_module.compile(&vertex_unit, desc.vertex.entry_point, "vs_6_0") catch |err| {
+            std.log.err("failed to compile vertex shader: {s}\nwhy: {s}", .{
+                @errorName(err),
+                vertex_unit.err.?,
+            });
+
+            return gpu.RenderPipeline.Error.RenderPipelineFailedToCreate;
+        };
+
+        var pixel_unit: D3D12ShaderModule.Unit = .{};
+        defer pixel_unit.deinit();
+        if (desc.fragment) |pixel| {
+            const pixel_module: *D3D12ShaderModule = @ptrCast(@alignCast(pixel.module));
+            pixel_module.compile(&pixel_unit, pixel.entry_point, "ps_6_0") catch |err| {
+                std.log.err("failed to compile pixel shader: {s}\nwhy: {s}", .{
+                    @errorName(err),
+                    pixel_unit.err.?,
+                });
+
+                return gpu.RenderPipeline.Error.RenderPipelineFailedToCreate;
+            };
+        }
+
+        var input_elements = std.BoundedArray(
+            d3d12.D3D12_INPUT_ELEMENT_DESC,
+            gpu.Limits.max_vertex_buffers,
+        ){};
+        var vertex_strides = std.BoundedArray(
+            u32,
+            gpu.Limits.max_vertex_buffers,
+        ){};
+        for (desc.vertex.buffers orelse &.{}, 0..) |buffer, slot| {
+            for (buffer.attributes orelse &.{}) |attr| {
+                input_elements.appendAssumeCapacity(d3d12.D3D12_INPUT_ELEMENT_DESC{
+                    // instead of using semantics, our shaders should use use custom locations
+                    // LOC(0), LOC1, LOC2, etc.
+                    .SemanticName = "LOC",
+                    .SemanticIndex = @intCast(attr.shader_location),
+                    .Format = d3dcommon.dxgiFormatForVertex(attr.format),
+                    .InputSlot = @intCast(slot),
+                    .AlignedByteOffset = @intCast(attr.offset),
+                    .InputSlotClass = switch (buffer.step_mode) {
+                        .vertex => .VERTEX_DATA,
+                        .instance => .INSTANCE_DATA,
+                        .vertex_buffer_not_used => undefined,
+                    },
+                    .InstanceDataStepRate = if (buffer.step_mode == .instance) 1 else 0,
+                });
+            }
+            vertex_strides.appendAssumeCapacity(@intCast(buffer.array_stride));
+        }
+
+        var num_render_targets: usize = 0;
+        var rtv_formats = [_]dxgi.common.DXGI_FORMAT{.UNKNOWN} ** gpu.Limits.max_colour_attachments;
+
+        if (desc.fragment) |pixel| {
+            if (pixel.targets) |targets| {
+                num_render_targets = targets.len;
+                for (targets, 0..) |target, i| {
+                    rtv_formats[i] = d3dcommon.dxgiFormatForTexture(target.format);
+                }
+            }
+        }
+
+        const layout: *D3D12PipelineLayout = @ptrCast(@alignCast(desc.layout.?));
+
+        var pipeline: ?*d3d12.ID3D12PipelineState = null;
+        const pipeline_hr = device.device.?.ID3D12Device_CreateGraphicsPipelineState(
+            &d3d12.D3D12_GRAPHICS_PIPELINE_STATE_DESC{
+                .pRootSignature = layout.root_signature,
+                .VS = vertex_unit.getD3d12ShaderBytecode(),
+                .PS = pixel_unit.getD3d12ShaderBytecode(),
+                .DS = no_bytecode,
+                .HS = no_bytecode,
+                .GS = no_bytecode,
+                .StreamOutput = .{
+                    .pSODeclaration = undefined,
+                    .NumEntries = 0,
+                    .pBufferStrides = undefined,
+                    .NumStrides = 0,
+                    .RasterizedStream = 0,
+                },
+                .BlendState = d3d12BlendDesc(desc),
+                .SampleMask = desc.multisample.mask,
+                .RasterizerState = d3d12RasteriserDesc(desc),
+                .DepthStencilState = if (desc.depth_stencil) |ds| .{
+                    .DepthEnable = if (ds.depth_compare != .always or ds.depth_write_enabled == true) TRUE else FALSE,
+                    .DepthWriteMask = if (ds.depth_write_enabled == true) .ALL else .ZERO,
+                    .DepthFunc = d3d12ComparisonFunc(ds.depth_compare),
+                    .StencilEnable = if (stencilEnable(ds.stencil_front) or stencilEnable(ds.stencil_back)) TRUE else FALSE,
+                    .StencilReadMask = @intCast(ds.stencil_read_mask & 0xff),
+                    .StencilWriteMask = @intCast(ds.stencil_write_mask & 0xff),
+                    .FrontFace = d3d12DepthStencilOpDesc(ds.stencil_front),
+                    .BackFace = d3d12DepthStencilOpDesc(ds.stencil_back),
+                } else .{
+                    .DepthEnable = FALSE,
+                    .DepthWriteMask = .ZERO,
+                    .DepthFunc = .LESS,
+                    .StencilEnable = FALSE,
+                    .StencilReadMask = 0xff,
+                    .StencilWriteMask = 0xff,
+                    .FrontFace = d3d12DepthStencilOpDesc(null),
+                    .BackFace = d3d12DepthStencilOpDesc(null),
+                },
+                .InputLayout = .{
+                    .NumElements = @intCast(input_elements.len),
+                    .pInputElementDescs = &input_elements.buffer,
+                },
+                .IBStripCutValue = switch (desc.primitive.strip_index_format) {
+                    .undefined => .DISABLED,
+                    .uint16 => .@"0xFFFF",
+                    .uint32 => .@"0xFFFFFFFF",
+                },
+                .PrimitiveTopologyType = switch (desc.primitive.topology) {
+                    .point_list => .POINT,
+                    .line_list, .line_strip => .LINE,
+                    .triangle_list, .triangle_strip => .TRIANGLE,
+                },
+                .NumRenderTargets = @intCast(num_render_targets),
+                .RTVFormats = rtv_formats,
+                .DSVFormat = if (desc.depth_stencil) |ds| d3dcommon.dxgiFormatForTexture(ds.format) else .UNKNOWN,
+                .SampleDesc = .{
+                    .Count = desc.multisample.count,
+                    .Quality = 0,
+                },
+                .NodeMask = 0,
+                .CachedPSO = .{
+                    .pCachedBlob = null,
+                    .CachedBlobSizeInBytes = 0,
+                },
+                .Flags = .NONE,
+            },
+            d3d12.IID_ID3D12PipelineState,
+            @ptrCast(&pipeline),
+        );
+        if (!d3dcommon.checkHResult(pipeline_hr)) {
+            return gpu.RenderPipeline.Error.RenderPipelineFailedToCreate;
+        }
+        errdefer d3dcommon.releaseIUnknown(d3d12.ID3D12PipelineState, &pipeline);
+
+        self.* = .{
+            .device = device,
+            .pipeline = pipeline,
+            .layout = layout,
+            .topology = switch (desc.primitive.topology) {
+                .point_list => ._PRIMITIVE_TOPOLOGY_POINTLIST,
+                .line_list => ._PRIMITIVE_TOPOLOGY_LINELIST,
+                .line_strip => ._PRIMITIVE_TOPOLOGY_LINESTRIP,
+                .triangle_list => ._PRIMITIVE_TOPOLOGY_TRIANGLELIST,
+                .triangle_strip => ._PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
+            },
+            .vertex_strides = vertex_strides,
+        };
+    }
+
+    pub fn deinit(self: *D3D12RenderPipeline) void {
+        d3dcommon.releaseIUnknown(d3d12.ID3D12PipelineState, &self.pipeline);
+    }
+
+    const no_bytecode = d3d12.D3D12_SHADER_BYTECODE{
+        .BytecodeLength = 0,
+        .pShaderBytecode = null,
+    };
 };
+
+fn d3d12BlendDesc(desc: *const gpu.RenderPipeline.Descriptor) d3d12.D3D12_BLEND_DESC {
+    var d3d12_targets = [_]d3d12.D3D12_RENDER_TARGET_BLEND_DESC{d3d12RenderTargetBlendDesc(null)} ** 8;
+    if (desc.fragment) |frag| {
+        for (frag.targets orelse &.{}, 0..) |target, i| {
+            d3d12_targets[i] = d3d12RenderTargetBlendDesc(target);
+        }
+    }
+
+    return .{
+        .AlphaToCoverageEnable = if (desc.multisample.alpha_to_coverage_enabled == true) TRUE else FALSE,
+        .IndependentBlendEnable = TRUE,
+        .RenderTarget = d3d12_targets,
+    };
+}
+
+fn d3d12RenderTargetBlendDesc(opt_target: ?gpu.ColourTargetState) d3d12.D3D12_RENDER_TARGET_BLEND_DESC {
+    var desc = d3d12.D3D12_RENDER_TARGET_BLEND_DESC{
+        .BlendEnable = FALSE,
+        .LogicOpEnable = FALSE,
+        .SrcBlend = d3d12.D3D12_BLEND_ONE,
+        .DestBlend = d3d12.D3D12_BLEND_ZERO,
+        .BlendOp = d3d12.D3D12_BLEND_OP_ADD,
+        .SrcBlendAlpha = d3d12.D3D12_BLEND_ONE,
+        .DestBlendAlpha = d3d12.D3D12_BLEND_ZERO,
+        .BlendOpAlpha = d3d12.D3D12_BLEND_OP_ADD,
+        .LogicOp = d3d12.D3D12_LOGIC_OP_NOOP,
+        .RenderTargetWriteMask = 0xf,
+    };
+    if (opt_target) |target| {
+        desc.RenderTargetWriteMask = d3d12RenderTargetWriteMask(target.write_mask);
+        if (target.blend) |blend| {
+            desc.BlendEnable = TRUE;
+            desc.SrcBlend = d3d12Blend(blend.colour.src_factor);
+            desc.DestBlend = d3d12Blend(blend.colour.dst_factor);
+            desc.BlendOp = d3d12BlendOp(blend.colour.operation);
+            desc.SrcBlendAlpha = d3d12Blend(blend.alpha.src_factor);
+            desc.DestBlendAlpha = d3d12Blend(blend.alpha.dst_factor);
+            desc.BlendOpAlpha = d3d12BlendOp(blend.alpha.operation);
+        }
+    }
+
+    return desc;
+}
+
+fn d3d12RenderTargetWriteMask(mask: gpu.ColourWriteMaskFlags) u8 {
+    var write: u32 = 0;
+    if (mask.red)
+        write |= @intFromEnum(d3d12.D3D12_COLOR_WRITE_ENABLE_RED);
+    if (mask.green)
+        write |= @intFromEnum(d3d12.D3D12_COLOR_WRITE_ENABLE_GREEN);
+    if (mask.blue)
+        write |= @intFromEnum(d3d12.D3D12_COLOR_WRITE_ENABLE_BLUE);
+    if (mask.alpha)
+        write |= @intFromEnum(d3d12.D3D12_COLOR_WRITE_ENABLE_ALPHA);
+    return @truncate(write);
+}
+
+fn d3d12Blend(factor: gpu.BlendFactor) d3d12.D3D12_BLEND {
+    return switch (factor) {
+        .zero => .ZERO,
+        .one => .ONE,
+        .src => .SRC_COLOR,
+        .one_minus_src => .INV_SRC_COLOR,
+        .src_alpha => .SRC_ALPHA,
+        .one_minus_src_alpha => .INV_SRC_ALPHA,
+        .dst => .DEST_COLOR,
+        .one_minus_dst => .INV_DEST_COLOR,
+        .dst_alpha => .DEST_ALPHA,
+        .one_minus_dst_alpha => .INV_DEST_ALPHA,
+        .src_alpha_saturated => .SRC_ALPHA_SAT,
+        .constant => .BLEND_FACTOR,
+        .one_minus_constant => .INV_BLEND_FACTOR,
+        .src1 => .SRC1_COLOR,
+        .one_minus_src1 => .INV_SRC1_COLOR,
+        .src1_alpha => .SRC1_ALPHA,
+        .one_minus_src1_alpha => .INV_SRC1_ALPHA,
+    };
+}
+
+fn d3d12BlendOp(op: gpu.BlendOperation) d3d12.D3D12_BLEND_OP {
+    return switch (op) {
+        .add => .ADD,
+        .subtract => .SUBTRACT,
+        .reverse_subtract => .REV_SUBTRACT,
+        .min => .MIN,
+        .max => .MAX,
+    };
+}
+
+fn d3d12RasteriserDesc(desc: *const gpu.RenderPipeline.Descriptor) d3d12.D3D12_RASTERIZER_DESC {
+    return .{
+        .FillMode = d3d12.D3D12_FILL_MODE_SOLID,
+        .CullMode = switch (desc.primitive.cull_mode) {
+            .none => .NONE,
+            .front => .FRONT,
+            .back => .BACK,
+        },
+        .FrontCounterClockwise = switch (desc.primitive.front_face) {
+            .ccw => TRUE,
+            .cw => FALSE,
+        },
+        .DepthBias = if (desc.depth_stencil) |ds| ds.depth_bias else 0,
+        .DepthBiasClamp = if (desc.depth_stencil) |ds| ds.depth_bias_clamp else 0.0,
+        .SlopeScaledDepthBias = if (desc.depth_stencil) |ds| ds.depth_bias_slope_scale else 0.0,
+        .DepthClipEnable = if (desc.primitive.unclipped_depth == false) TRUE else FALSE,
+        .MultisampleEnable = if (desc.multisample.count > 1) TRUE else FALSE,
+        .AntialiasedLineEnable = FALSE,
+        .ForcedSampleCount = 0,
+        .ConservativeRaster = .FF,
+    };
+}
+
+fn stencilEnable(stencil: gpu.StencilFaceState) bool {
+    return stencil.compare != .always or
+        stencil.fail_op != .keep or
+        stencil.depth_fail_op != .keep or
+        stencil.pass_op != .keep;
+}
+
+fn d3d12DepthStencilOpDesc(opt_stencil: ?gpu.StencilFaceState) d3d12.D3D12_DEPTH_STENCILOP_DESC {
+    return if (opt_stencil) |stencil| .{
+        .StencilFailOp = d3d12StencilOp(stencil.fail_op),
+        .StencilDepthFailOp = d3d12StencilOp(stencil.depth_fail_op),
+        .StencilPassOp = d3d12StencilOp(stencil.pass_op),
+        .StencilFunc = d3d12ComparisonFunc(stencil.compare),
+    } else .{
+        .StencilFailOp = .KEEP,
+        .StencilDepthFailOp = .KEEP,
+        .StencilPassOp = .KEEP,
+        .StencilFunc = .ALWAYS,
+    };
+}
+
+fn d3d12StencilOp(op: gpu.StencilOperation) d3d12.D3D12_STENCIL_OP {
+    return switch (op) {
+        .keep => .KEEP,
+        .zero => .ZERO,
+        .replace => .REPLACE,
+        .invert => .INVERT,
+        .increment_clamp => .INCR_SAT,
+        .decrement_clamp => .DECR_SAT,
+        .increment_wrap => .INCR,
+        .decrement_wrap => .DECR,
+    };
+}
 
 // Sampler
 pub fn samplerDestroy(sampler: *gpu.Sampler) void {
-    std.debug.print("destroying sampler...\n", .{});
     D3D12Sampler.destroy(@alignCast(@ptrCast(sampler)));
 }
 
@@ -3090,9 +3452,248 @@ pub fn d3d12ComparisonFunc(func: gpu.CompareFunction) d3d12.D3D12_COMPARISON_FUN
 }
 
 // ShaderModule
+pub fn shaderModuleDestroy(module: *gpu.ShaderModule) void {
+    D3D12ShaderModule.destroy(@alignCast(@ptrCast(module)));
+}
+
+pub const D3D12ShaderModule = struct {
+    device: *D3D12Device,
+    code: []const u8,
+
+    pub const Unit = struct {
+        err: ?[]const u8 = null,
+        bytecode: ?[]const u8 = null,
+
+        pub fn deinit(self: *Unit) void {
+            if (self.err) |err| allocator.free(err);
+            if (self.bytecode) |bytecode| allocator.free(bytecode);
+        }
+
+        pub fn getD3d12ShaderBytecode(self: *Unit) d3d12.D3D12_SHADER_BYTECODE {
+            return if (self.bytecode) |bc| .{
+                .pShaderBytecode = @ptrCast(bc),
+                .BytecodeLength = @intCast(bc.len),
+            } else .{
+                .pShaderBytecode = null,
+                .BytecodeLength = 0,
+            };
+        }
+    };
+
+    pub fn create(
+        device: *D3D12Device,
+        desc: *const gpu.ShaderModule.Descriptor,
+    ) gpu.ShaderModule.Error!*D3D12ShaderModule {
+        if (desc.source_type != .hlsl) return gpu.ShaderModule.Error.ShaderModuleUnsupportedSource;
+        const self = allocator.create(D3D12ShaderModule) catch
+            return gpu.ShaderModule.Error.ShaderModuleFailedToCreate;
+        self.* = .{
+            .device = device,
+            .code = desc.code,
+        };
+        return self;
+    }
+
+    pub fn destroy(self: *D3D12ShaderModule) void {
+        allocator.destroy(self);
+    }
+
+    // internal
+    pub fn compile(self: *D3D12ShaderModule, unit: *Unit, entry: []const u8, target: []const u8) !void {
+        const compile_result = try self.device.shader_compiler.?.compile(&D3D12ShaderCompiler.Options{
+            .entry = entry,
+            .target = target,
+            .hlsl = self.code,
+        });
+        defer {
+            var proxy: ?*dxc.IDxcResult = null;
+            d3dcommon.releaseIUnknown(dxc.IDxcResult, &proxy);
+        }
+
+        var errors: ?*dxc.IDxcBlobUtf8 = null;
+        const hr = compile_result.IDxcResult_GetOutput(
+            dxc.DXC_OUT_KIND.ERRORS,
+            dxc.IID_IDxcBlobUtf8,
+            @ptrCast(&errors),
+            null,
+        );
+        if (!d3dcommon.checkHResult(hr)) return gpu.ShaderModule.Error.ShaderModuleFailedToCompile;
+
+        if (errors) |errs| {
+            defer d3dcommon.releaseIUnknown(dxc.IDxcBlobUtf8, &errors);
+            const error_len = errs.IDxcBlobUtf8_GetStringLength();
+            if (error_len > 0) {
+                unit.err = try allocator.dupe(u8, @ptrCast(errs.IDxcBlobUtf8_GetStringPointer().?[0..error_len]));
+                return gpu.ShaderModule.Error.ShaderModuleFailedToCompile;
+            }
+        }
+
+        var bytecode: ?*dxc.IDxcBlob = null;
+        const bytecode_hr = compile_result.IDxcResult_GetOutput(
+            dxc.DXC_OUT_KIND.OBJECT,
+            dxc.IID_IDxcBlob,
+            @ptrCast(&bytecode),
+            null,
+        );
+        if (!d3dcommon.checkHResult(bytecode_hr)) return gpu.ShaderModule.Error.ShaderModuleFailedToCompile;
+
+        if (bytecode) |bc| {
+            defer d3dcommon.releaseIUnknown(dxc.IDxcBlob, &bytecode);
+
+            const bytecode_len = bc.IDxcBlob_GetBufferSize();
+            if (bytecode_len > 0) {
+                unit.bytecode = try allocator.dupe(u8, @as(
+                    [*]u8,
+                    @ptrCast(bc.IDxcBlob_GetBufferPointer().?),
+                )[0..bytecode_len]);
+            }
+        }
+    }
+};
+
+pub const D3D12ShaderCompiler = struct {
+    lib: ?std.DynLib = null,
+    createInstance: ?dxc.DxcCreateInstanceProc = null,
+
+    compiler: ?*dxc.IDxcCompiler3 = null,
+    utils: ?*dxc.IDxcUtils = null,
+    com_allocator: ?*winappimpl.ComAllocator = null,
+
+    pub fn create(child_allocator: std.mem.Allocator) !*D3D12ShaderCompiler {
+        const self = try allocator.create(D3D12ShaderCompiler);
+        try self.init(child_allocator);
+        return self;
+    }
+
+    pub fn destroy(self: *D3D12ShaderCompiler) void {
+        self.deinit();
+        allocator.destroy(self);
+    }
+
+    pub fn init(self: *D3D12ShaderCompiler, child_allocator: std.mem.Allocator) !void {
+        self.* = .{};
+
+        if (self.com_allocator == null) {
+            self.com_allocator = try winappimpl.ComAllocator.create(allocator, child_allocator);
+        }
+
+        if (self.lib == null) {
+            self.lib = try std.DynLib.open("dxcompiler.dll");
+            self.createInstance = self.lib.?.lookup(
+                dxc.DxcCreateInstanceProc,
+                "DxcCreateInstance",
+            ).?;
+        }
+
+        if (self.utils == null) {
+            const hr = self.createInstance.?(
+                // self.com_allocator.?.getCom(),
+                &dxc.CLSID_DxcLibrary,
+                dxc.IID_IDxcUtils,
+                @ptrCast(&self.utils),
+            );
+            if (!d3dcommon.checkHResult(hr)) return error.FailedToCreateShaderCompiler;
+        }
+
+        if (self.compiler == null) {
+            const hr = self.createInstance.?(
+                // self.com_allocator.?.getCom(),
+                &dxc.CLSID_DxcCompiler,
+                dxc.IID_IDxcCompiler3,
+                @ptrCast(&self.compiler),
+            );
+            if (!d3dcommon.checkHResult(hr)) return error.FailedToCreateShaderCompiler;
+        }
+    }
+
+    pub fn deinit(self: *D3D12ShaderCompiler) void {
+        d3dcommon.releaseIUnknown(dxc.IDxcCompiler3, &self.compiler);
+        if (self.compiler != null) std.log.warn("IDxcCompiler3 should have been destroyed", .{});
+
+        d3dcommon.releaseIUnknown(dxc.IDxcUtils, &self.utils);
+        if (self.utils != null) std.log.warn("IDxcUtils should have been destroyed", .{});
+
+        if (self.com_allocator) |ca| {
+            const count = ca.deref();
+            if (count != 0) std.log.warn("ComAllocator should have been destroyed", .{});
+            self.com_allocator = null;
+        }
+
+        if (self.lib) |*lib| {
+            lib.close();
+            self.lib = null;
+        }
+    }
+
+    pub const Options = struct {
+        entry: []const u8,
+        target: []const u8,
+        debug: bool = true,
+        defines: ?[]const []const u8 = null,
+        hlsl: []const u8,
+    };
+
+    pub fn compile(self: *D3D12ShaderCompiler, options: *const Options) !*dxc.IDxcResult {
+        var scratch = common.ScratchSpace(4096){};
+        const temp_allocator = scratch.init().allocator();
+
+        var args = std.ArrayList([]const u8).init(temp_allocator);
+        defer args.deinit();
+
+        args.append("-E") catch unreachable;
+        args.append(options.entry) catch unreachable;
+
+        args.append(
+            "-T",
+        ) catch unreachable;
+        args.append(options.target) catch unreachable;
+
+        args.append(dxc.DXC_ARG_WARNINGS_ARE_ERRORS) catch unreachable;
+        if (options.debug) {
+            args.append(dxc.DXC_ARG_DEBUG) catch unreachable;
+        }
+
+        if (options.defines) |defines| {
+            for (defines) |define| {
+                args.append("-D") catch unreachable;
+                args.append(define) catch unreachable;
+            }
+        }
+
+        var source_buffer: dxc.DxcBuffer = undefined;
+        source_buffer.Ptr = @ptrCast(options.hlsl.ptr);
+        source_buffer.Size = @intCast(options.hlsl.len);
+        source_buffer.Encoding = @intFromEnum(dxc.DXC_CP_ACP);
+
+        var converted_args = std.ArrayList(
+            [*:0]align(1) const u16,
+        ).initCapacity(
+            temp_allocator,
+            args.items.len,
+        ) catch unreachable;
+
+        for (args.items) |arg| {
+            if (winappimpl.convertToUtf16WithAllocator(temp_allocator, arg)) |utf16|
+                converted_args.append(@ptrCast(@alignCast(utf16))) catch unreachable;
+        }
+
+        var result: ?*dxc.IDxcResult = null;
+        const compile_hr = self.compiler.?.IDxcCompiler3_Compile(
+            &source_buffer,
+            converted_args.items.ptr,
+            @intCast(converted_args.items.len),
+            null,
+            dxc.IID_IDxcResult,
+            @ptrCast(&result),
+        );
+        if (!d3dcommon.checkHResult(compile_hr)) return gpu.ShaderModule.Error.ShaderModuleFailedToCompile;
+
+        return result.?;
+    }
+};
+
 // Surface
 pub fn surfaceDestroy(surface: *gpu.Surface) void {
-    std.debug.print("destroying surface...\n", .{});
     D3D12Surface.destroy(@alignCast(@ptrCast(surface)));
 }
 
@@ -3114,17 +3715,19 @@ pub const D3D12Surface = struct {
 };
 
 // SwapChain
+pub fn swapChainGetIndex(swapchain: *gpu.SwapChain) u32 {
+    return D3D12SwapChain.getCurrentIndex(@ptrCast(@alignCast(swapchain)));
+}
+
 pub fn swapChainGetCurrentTexture(
     swapchain: *gpu.SwapChain,
 ) *const gpu.Texture {
-    std.debug.print("getting swapchain texture...\n", .{});
     return @ptrCast(@alignCast(D3D12SwapChain.getCurrentTexture(@ptrCast(@alignCast(swapchain)))));
 }
 
 pub fn swapChainGetCurrentTextureView(
     swapchain: *gpu.SwapChain,
 ) *const gpu.TextureView {
-    std.debug.print("getting swapchain texture view...\n", .{});
     return @ptrCast(@alignCast(D3D12SwapChain.getCurrentTextureView(@ptrCast(@alignCast(swapchain)))));
 }
 
@@ -3132,7 +3735,6 @@ pub fn swapChainGetTextureViews(
     swapchain: *gpu.SwapChain,
     views: *[3]?*const gpu.TextureView,
 ) u32 {
-    std.debug.print("getting swapchain texture views...\n", .{});
     return D3D12SwapChain.getTextureViews(@ptrCast(@alignCast(
         swapchain,
     )), @ptrCast(
@@ -3152,7 +3754,6 @@ pub fn swapChainResize(
 }
 
 pub fn swapChainDestroy(swapchain: *gpu.SwapChain) void {
-    std.debug.print("destroying swapchain...\n", .{});
     D3D12SwapChain.destroy(@alignCast(@ptrCast(swapchain)));
 }
 
@@ -3281,6 +3882,11 @@ pub const D3D12SwapChain = struct {
         self.current_index = index;
     }
 
+    pub fn getCurrentIndex(self: *D3D12SwapChain) u32 {
+        self.waitAndUpdateBackBufferIndex();
+        return self.current_index;
+    }
+
     pub fn getCurrentTexture(self: *D3D12SwapChain) *const D3D12Texture {
         self.waitAndUpdateBackBufferIndex();
         return &self.textures[self.current_index];
@@ -3336,11 +3942,11 @@ pub fn textureCreateView(
     texture: *gpu.Texture,
     desc: *const gpu.TextureView.Descriptor,
 ) gpu.TextureView.Error!*gpu.TextureView {
-    return @ptrCast(@alignCast(try D3D12Texture.createView(@ptrCast(@alignCast(texture)), desc)));
+    const got = try D3D12Texture.createView(@ptrCast(@alignCast(texture)), desc);
+    return @ptrCast(@alignCast(got));
 }
 
 pub fn textureDestroy(texture: *gpu.Texture) void {
-    std.debug.print("destroying texture...\n", .{});
     D3D12Texture.destroy(@alignCast(@ptrCast(texture)));
 }
 
@@ -3523,7 +4129,6 @@ pub const D3D12Texture = struct {
 
 // TextureView
 pub fn textureViewDestroy(texture_view: *gpu.TextureView) void {
-    std.debug.print("destroying texture view...\n", .{});
     D3D12TextureView.destroy(@alignCast(@ptrCast(texture_view)));
 }
 

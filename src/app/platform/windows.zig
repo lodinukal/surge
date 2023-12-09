@@ -1769,3 +1769,175 @@ const RegKey = struct {
 
     // omitted binary registry keys
 };
+
+// ComAllocator
+
+const IID_ComMalloc_Value = winapi.zig.Guid.initString("1EA387B1-717E-4403-9815-576541858162");
+pub const IID_ComMalloc = &IID_ComMalloc_Value;
+pub const ExternAllocator = extern struct {
+    ptr: *anyopaque,
+    vtable: *align(@alignOf(std.mem.Allocator.VTable)) const anyopaque,
+
+    pub inline fn fromStdAllocator(al: std.mem.Allocator) ExternAllocator {
+        return .{
+            .ptr = @ptrCast(al.ptr),
+            .vtable = @ptrCast(al.vtable),
+        };
+    }
+
+    pub inline fn toStdAllocator(self: ExternAllocator) std.mem.Allocator {
+        return .{
+            .ptr = @ptrCast(self.ptr),
+            .vtable = @ptrCast(self.vtable),
+        };
+    }
+};
+pub const ComAllocator = extern struct {
+    pub const vtable = win32.system.com.IMalloc.VTable{
+        .Alloc = ComAllocator.Alloc,
+        .Realloc = ComAllocator.Realloc,
+        .Free = ComAllocator.Free,
+        .GetSize = ComAllocator.GetSize,
+        .DidAlloc = ComAllocator.DidAlloc,
+        .HeapMinimize = ComAllocator.HeapMinimize,
+        .base = .{
+            .AddRef = ComAllocator.AddRef,
+            .Release = ComAllocator.Release,
+            .QueryInterface = ComAllocator.QueryInterface,
+        },
+    };
+    vtable: *const win32.system.com.IMalloc.VTable,
+    parent_allocator: ExternAllocator,
+    allocator: ExternAllocator,
+    count: u32 = 0,
+
+    fn stdAllocator(self: *const ComAllocator) std.mem.Allocator {
+        return self.allocator.toStdAllocator();
+    }
+
+    pub fn create(al: std.mem.Allocator, child_allocator: std.mem.Allocator) !*ComAllocator {
+        const self = try al.create(ComAllocator);
+        self.* = .{
+            .vtable = &vtable,
+            .allocator = ExternAllocator.fromStdAllocator(child_allocator),
+            .parent_allocator = ExternAllocator.fromStdAllocator(al),
+        };
+        _ = self.getCom().IUnknown_AddRef();
+        return self;
+    }
+
+    pub fn deref(self: *ComAllocator) u32 {
+        return self.getCom().IUnknown_Release();
+    }
+
+    pub fn getCom(self: *const ComAllocator) *win32.system.com.IMalloc {
+        return @ptrCast(@constCast(self));
+    }
+
+    pub fn QueryInterface(
+        this: *const win32.system.com.IUnknown,
+        guid: ?*const winapi.zig.Guid,
+        opopv: ?*?*anyopaque,
+    ) callconv(.C) win32.foundation.HRESULT {
+        if (guid != null and std.mem.indexOfDiff(u8, &IID_ComMalloc.Bytes, &guid.?.Bytes) != null and
+            std.mem.indexOfDiff(u8, &win32.system.com.IID_IUnknown.Bytes, &guid.?.Bytes) != null)
+        {
+            if (opopv) |ppv| {
+                ppv.* = null;
+            }
+            return win32.foundation.E_NOINTERFACE;
+        }
+        if (opopv) |ppv| {
+            ppv.* = @ptrCast(@constCast(this));
+        }
+        return win32.foundation.S_OK;
+    }
+
+    pub fn AddRef(this: *const win32.system.com.IUnknown) callconv(.C) u32 {
+        const self: *ComAllocator = @ptrCast(@constCast(this));
+        self.count += 1;
+        return self.count;
+    }
+
+    pub fn Release(this: *const win32.system.com.IUnknown) callconv(.C) u32 {
+        const self: *ComAllocator = @ptrCast(@constCast(this));
+        self.count -= 1;
+
+        if (self.count == 0) {
+            self.parent_allocator.toStdAllocator().destroy(self);
+            return 0;
+        }
+
+        return self.count;
+    }
+
+    fn allocatorPointerFromClient(pv: *anyopaque) []u8 {
+        const original_ptr: [*]u8 = @ptrFromInt(@intFromPtr(pv) - 8);
+        const original_size = std.mem.readInt(usize, @ptrCast(original_ptr[0..8]), .little);
+        return original_ptr[0 .. original_size + 8];
+    }
+
+    fn clientPointerFromAllocator(pv: []u8) *anyopaque {
+        std.mem.writeInt(usize, pv[0..8], pv.len - 8, .little);
+        return @ptrFromInt(@intFromPtr(pv.ptr) + 8);
+    }
+
+    pub fn Alloc(
+        this: *const win32.system.com.IMalloc,
+        cb: usize,
+    ) callconv(.C) ?*anyopaque {
+        const self: *const ComAllocator = @ptrCast(this);
+        // add a usize to the front of the allocation to store the size
+        const mem = self.stdAllocator().alloc(u8, cb + 8) catch return null;
+        return clientPointerFromAllocator(mem);
+    }
+
+    pub fn Realloc(
+        this: *const win32.system.com.IMalloc,
+        pv: ?*anyopaque,
+        cb: usize,
+    ) callconv(.C) ?*anyopaque {
+        const self: *const ComAllocator = @ptrCast(this);
+
+        if (pv == null) {
+            return self.getCom().IMalloc_Alloc(cb);
+        }
+
+        const original = allocatorPointerFromClient(pv.?);
+
+        const mem = self.stdAllocator().realloc(original, cb + 8) catch return null;
+        return clientPointerFromAllocator(mem);
+    }
+
+    pub fn Free(
+        this: *const win32.system.com.IMalloc,
+        pv: ?*anyopaque,
+    ) callconv(.C) void {
+        const self: *const ComAllocator = @ptrCast(this);
+        if (pv) |v|
+            self.stdAllocator().free(allocatorPointerFromClient(v));
+    }
+
+    pub fn GetSize(
+        this: *const win32.system.com.IMalloc,
+        pv: ?*anyopaque,
+    ) callconv(.C) usize {
+        const self: *const ComAllocator = @ptrCast(this);
+        _ = self;
+        if (pv == null) return 0;
+        return allocatorPointerFromClient(pv.?).len;
+    }
+
+    pub fn DidAlloc(
+        this: *const win32.system.com.IMalloc,
+        pv: ?*anyopaque,
+    ) callconv(.C) i32 {
+        _ = this;
+        _ = pv;
+        return -1;
+    }
+
+    pub fn HeapMinimize(this: *const win32.system.com.IMalloc) callconv(.C) void {
+        _ = this;
+    }
+};

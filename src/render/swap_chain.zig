@@ -25,6 +25,10 @@ pub const SwapChain = opaque {
         present_mode: PresentMode,
     };
 
+    pub inline fn getIndex(self: *SwapChain) u32 {
+        return impl.swapChainGetIndex(self);
+    }
+
     pub inline fn getCurrentTexture(self: *SwapChain) ?*gpu.Texture {
         return try impl.swapChainGetCurrentTexture(self);
     }

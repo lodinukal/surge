@@ -3,7 +3,7 @@ const std = @import("std");
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
 // runner.
-pub fn build(b: *std.Build) void {
+pub fn build(b: *std.Build) !void {
     // Standard target options allows the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
     // means any target is allowed, and the default is native. Other options
@@ -169,7 +169,6 @@ fn buildD3d11(
     const win32_dep = b.dependency("win32", .{});
     const win32_module = win32_dep.module("zigwin32");
     d3d11.addModule("win32", win32_module);
-    // b.linkSystemLibraryName("Imm32");
 }
 
 fn buildD3d12(
@@ -179,10 +178,9 @@ fn buildD3d12(
 ) void {
     const src = "src/render/d3d12/main.zig";
     const name = "render_d3d12";
-    const d3d11 = buildBackend(b, name, src, target, optimize);
+    const d3d12 = buildBackend(b, name, src, target, optimize);
 
     const win32_dep = b.dependency("win32", .{});
     const win32_module = win32_dep.module("zigwin32");
-    d3d11.addModule("win32", win32_module);
-    // b.linkSystemLibraryName("Imm32");
+    d3d12.addModule("win32", win32_module);
 }

@@ -97,7 +97,10 @@ physical_device: *gpu.PhysicalDevice = undefined,
 device: *gpu.Device = undefined,
 queue: *gpu.Queue = undefined,
 
+mutex: std.Thread.Mutex = .{},
+
 swapchain: *gpu.SwapChain = undefined,
+swapchain_size: [2]u32 = .{ 800, 600 },
 swapchain_format: gpu.Texture.Format = .undefined,
 views: [3]?*const gpu.TextureView = .{ null, null, null },
 view_count: usize = 0,
@@ -116,12 +119,14 @@ uniforms: Uniforms = .{},
 
 pipeline_layout: ?*gpu.PipelineLayout = null,
 
+bind_group_layout: ?*gpu.BindGroupLayout = null,
+bind_group: ?*gpu.BindGroup = null,
+
 render_pipeline: ?*gpu.RenderPipeline = null,
 
 render_passes: [3]RenderPass = .{ .{}, .{}, .{} },
 
-bind_group_layout: ?*gpu.BindGroupLayout = null,
-bind_group: ?*gpu.BindGroup = null,
+command_buffers: [3]?*gpu.CommandBuffer = .{ null, null, null },
 
 pub fn load(self: *RenderContext, allocator: std.mem.Allocator, window: *app.window.Window) !void {
     if (gpu.loadBackend(.d3d12) == false) return;
@@ -145,7 +150,7 @@ pub fn load(self: *RenderContext, allocator: std.mem.Allocator, window: *app.win
     const swapchain = try device.createSwapChain(surface, &.{
         .height = 600,
         .width = 800,
-        .present_mode = .mailbox,
+        .present_mode = .immediate,
         .format = .bgra8_unorm,
         .usage = .{
             .render_attachment = true,
@@ -174,13 +179,32 @@ pub fn deinit(self: *RenderContext) void {
     self.instance.destroy();
 }
 
+pub fn resize(self: *RenderContext, size: [2]u32) !void {
+    _ = self;
+    _ = size;
+
+    // self.swapchain_size = size;
+    // try self.swapchain.resize(size);
+
+    // self.cleanupRenderPasses();
+    // try self.setupAllPasses();
+
+    // try self.rebuildCommandBuffers();
+}
+
+pub fn present(self: *RenderContext) !void {
+    try self.swapchain.present();
+}
+
 fn loadResources(self: *RenderContext) !void {
     try self.loadViews();
     try self.prepareVertexAndIndexBuffers();
     try self.setupPipelineLayout();
     try self.prepareUniformBuffers();
+    try self.setupBindGroups();
     try self.setupAllPasses();
     try self.preparePipelines();
+    try self.prepareCommandBuffers();
 }
 
 fn cleanResources(self: *RenderContext) void {
@@ -193,9 +217,10 @@ fn cleanResources(self: *RenderContext) void {
     if (self.uniform_buffer) |b| b.destroy();
     if (self.pipeline_layout) |pl| pl.destroy();
 
-    for (0..self.view_count) |i| {
-        self.render_passes[i].deinit();
-    }
+    if (self.render_pipeline) |rp| rp.destroy();
+
+    self.cleanupRenderPasses();
+    self.cleanupCommandBuffers();
 }
 
 fn loadViews(self: *RenderContext) !void {
@@ -291,9 +316,9 @@ fn setupAllPasses(self: *RenderContext) !void {
             .load_op = .clear,
             .store_op = .store,
             .clear_value = .{
-                .r = 0.1,
-                .g = 0.2,
-                .b = 0.3,
+                .r = 0.0,
+                .g = 0.0,
+                .b = 0.0,
                 .a = 1.0,
             },
         };
@@ -303,8 +328,14 @@ fn setupAllPasses(self: *RenderContext) !void {
         render_pass.descriptor = gpu.RenderPass.Descriptor{
             .label = "rp!",
             .colour_attachments = &render_pass.colour_attachments,
-            .depth_stencil_attachment = render_pass.depth.attachment_desc,
+            .depth_stencil_attachment = &render_pass.depth.attachment_desc,
         };
+    }
+}
+
+fn cleanupRenderPasses(self: *RenderContext) void {
+    for (0..self.view_count) |i| {
+        self.render_passes[i].deinit();
     }
 }
 
@@ -333,39 +364,96 @@ fn updateUniformBuffers(self: *RenderContext) !void {
 }
 
 fn preparePipelines(self: *RenderContext) !void {
-    const primitive_state_desc = gpu.PrimitiveState{
+    const primitive_state = gpu.PrimitiveState{
         .topology = .triangle_list,
         .front_face = .ccw,
         .cull_mode = .none,
     };
-    _ = primitive_state_desc;
 
     const blend_state = createBlendState(true);
-    const colour_target_state_desc = gpu.ColourTargetState{
+    const colour_target_state = gpu.ColourTargetState{
         .format = self.swapchain_format,
         .blend = &blend_state,
         .write_mask = gpu.ColourWriteMaskFlags.all,
     };
-    _ = colour_target_state_desc;
 
-    const depth_stencil_state_desc = createDepthStencilState(&.{
+    const depth_stencil_state = createDepthStencilState(&.{
         .format = .depth24_plus_stencil8,
         .depth_write_enabled = true,
     });
-    _ = depth_stencil_state_desc;
 
     const triangle_vertex_buffer_layout = gpu.VertexBufferLayout.fromStruct(
         Vertex,
         .{
+            // .position = .{ 0, .float32x4, "SV_POSITION" },
+            // .colour = .{ 0, .float32x4, "COLOR" },
             .position = .{ 0, .float32x4 },
             .colour = .{ 1, .float32x4 },
         },
     );
-    std.debug.print("{}\n", .{triangle_vertex_buffer_layout});
 
-    // TODO: Shaders!
-    // const vertex_state_desc = wgpu
+    const shader_module = try self.device.createShaderModule(&gpu.ShaderModule.Descriptor{
+        .label = "trishader!",
+        .code = hlsl_shader,
+        .source_type = .hlsl,
+    });
+    defer shader_module.destroy();
+
+    const vertex_state = gpu.VertexState{
+        .module = shader_module,
+        .entry_point = "vs_main",
+        .buffers = &.{
+            triangle_vertex_buffer_layout,
+        },
+    };
+
+    const fragment_state = gpu.FragmentState{ .module = shader_module, .entry_point = "ps_main", .targets = &.{
+        colour_target_state,
+    } };
+
+    const multisample_state = gpu.MultisampleState{};
+
+    const pipeline_desc = gpu.RenderPipeline.Descriptor{
+        .label = "rp!",
+        .layout = self.pipeline_layout.?,
+        .primitive = primitive_state,
+        .vertex = vertex_state,
+        .fragment = &fragment_state,
+        .depth_stencil = &depth_stencil_state,
+        .multisample = multisample_state,
+    };
+
+    self.render_pipeline = try self.device.createRenderPipeline(&pipeline_desc);
 }
+
+const hlsl_shader =
+    \\ struct InputVS
+    \\{
+    \\    float2 position : LOC0;
+    \\    float3 color : LOC1;
+    \\};
+    \\
+    \\struct OutputVS
+    \\{
+    \\    float4 position : SV_Position;
+    \\    float3 color : COLOR;
+    \\};
+    \\
+    \\// Vertex shader main function
+    \\OutputVS vs_main(InputVS inp)
+    \\{
+    \\    OutputVS outp;
+    \\    outp.position = float4(inp.position, 0, 1);
+    \\    outp.color = inp.color;
+    \\    return outp;
+    \\}
+    \\
+    \\// Pixel shader main function
+    \\float4 ps_main(OutputVS inp) : SV_Target
+    \\{
+    \\    return float4(inp.color, 1);
+    \\};
+;
 
 fn createBlendState(blendable: bool) gpu.BlendState {
     var blend_component_desc = gpu.BlendComponent{
@@ -411,4 +499,79 @@ fn createDepthStencilState(options: *const DepthStencilStateOptions) gpu.DepthSt
         .depth_bias_slope_scale = 0.0,
         .depth_bias_clamp = 0.0,
     };
+}
+
+fn prepareCommandBuffers(self: *RenderContext) !void {
+    self.mutex.lock();
+    defer self.mutex.unlock();
+
+    for (0..self.view_count) |i| {
+        const command_encoder = try self.device.createCommandEncoder(&.{
+            .label = "ce!",
+        });
+        defer command_encoder.destroy();
+
+        const render_pass_encoder = try command_encoder.beginRenderPass(
+            &self.render_passes[i].descriptor,
+        );
+        defer render_pass_encoder.destroy();
+
+        try render_pass_encoder.setPipeline(self.render_pipeline.?);
+        render_pass_encoder.setBindGroup(0, self.bind_group.?, null);
+        try render_pass_encoder.setViewport(
+            0.0,
+            0.0,
+            @floatFromInt(self.swapchain_size[0]),
+            @floatFromInt(self.swapchain_size[1]),
+            0.0,
+            1.1,
+        );
+        try render_pass_encoder.setScissorRect(
+            0,
+            0,
+            self.swapchain_size[0],
+            self.swapchain_size[1],
+        );
+        try render_pass_encoder.setVertexBuffer(
+            0,
+            self.vertex_buffer.?,
+            null,
+            null,
+        );
+        try render_pass_encoder.setIndexBuffer(
+            self.index_buffer.?,
+            .uint16,
+            null,
+            null,
+        );
+
+        render_pass_encoder.drawIndexed(
+            self.index_count,
+            null,
+            null,
+            null,
+            null,
+        );
+
+        try render_pass_encoder.end();
+        self.command_buffers[i] = try command_encoder.finish(null);
+    }
+}
+
+fn cleanupCommandBuffers(self: *RenderContext) void {
+    for (0..self.view_count) |i| {
+        if (self.command_buffers[i]) |cb| cb.destroy();
+    }
+}
+
+fn rebuildCommandBuffers(self: *RenderContext) !void {
+    self.cleanupCommandBuffers();
+    try self.prepareCommandBuffers();
+}
+
+pub fn draw(self: *RenderContext) !void {
+    const current_index = self.swapchain.getIndex();
+    try self.queue.submit(&.{
+        self.command_buffers[current_index].?,
+    });
 }

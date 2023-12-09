@@ -280,3 +280,39 @@ pub fn dxgiFormatIsTypeless(format: dxgi.common.DXGI_FORMAT) bool {
         else => false,
     };
 }
+
+pub fn dxgiFormatForVertex(format: gpu.VertexFormat) dxgi.common.DXGI_FORMAT {
+    return switch (format) {
+        .undefined => unreachable,
+        .uint8x2 => .R8G8_UINT,
+        .uint8x4 => .R8G8B8A8_UINT,
+        .sint8x2 => .R8G8_SINT,
+        .sint8x4 => .R8G8B8A8_SINT,
+        .unorm8x2 => .R8G8_UNORM,
+        .unorm8x4 => .R8G8B8A8_UNORM,
+        .snorm8x2 => .R8G8_SNORM,
+        .snorm8x4 => .R8G8B8A8_SNORM,
+        .uint16x2 => .R16G16_UINT,
+        .uint16x4 => .R16G16B16A16_UINT,
+        .sint16x2 => .R16G16_SINT,
+        .sint16x4 => .R16G16B16A16_SINT,
+        .unorm16x2 => .R16G16_UNORM,
+        .unorm16x4 => .R16G16B16A16_UNORM,
+        .snorm16x2 => .R16G16_SNORM,
+        .snorm16x4 => .R16G16B16A16_SNORM,
+        .float16x2 => .R16G16_FLOAT,
+        .float16x4 => .R16G16B16A16_FLOAT,
+        .float32 => .R32_FLOAT,
+        .float32x2 => .R32G32_FLOAT,
+        .float32x3 => .R32G32B32_FLOAT,
+        .float32x4 => .R32G32B32A32_FLOAT,
+        .uint32 => .R32_UINT,
+        .uint32x2 => .R32G32_UINT,
+        .uint32x3 => .R32G32B32_UINT,
+        .uint32x4 => .R32G32B32A32_UINT,
+        .sint32 => .R32_SINT,
+        .sint32x2 => .R32G32_SINT,
+        .sint32x3 => .R32G32B32_SINT,
+        .sint32x4 => .R32G32B32A32_SINT,
+    };
+}
