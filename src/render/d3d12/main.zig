@@ -137,6 +137,23 @@ export fn getProcs() *const gpu.procs.Procs {
     return &procs;
 }
 
+fn setDebugName(comptime T: type, child: ?*T, name: []const u8) void {
+    if (child) |c| {
+        var scratch = common.ScratchSpace(2048){};
+        const temp_allocator = scratch.allocator();
+
+        const wide_name = winappimpl.convertToUtf16WithAllocator(
+            temp_allocator,
+            name,
+        ) orelse
+            winapi.zig.L("?");
+
+        const hr = c.ID3D12Object_SetName(@ptrCast(wide_name));
+        if (!d3dcommon.checkHResult(hr))
+            std.debug.panic("Failed to set debug name for D3D12 object: {s}", .{name});
+    }
+}
+
 // BindGroup
 pub fn bindGroupDestroy(bind_group: *gpu.BindGroup) void {
     D3D12BindGroup.destroy(@alignCast(@ptrCast(bind_group)));
@@ -596,6 +613,10 @@ pub const D3D12Buffer = struct {
             ) else null,
         };
 
+        if (desc.label) |name| {
+            self.setLabel(name);
+        }
+
         return self;
     }
 
@@ -656,6 +677,19 @@ pub const D3D12Buffer = struct {
 
         if (self.mapped) |m| return m[offset .. offset + use_size] else return gpu.Buffer.Error.BufferNotMapped;
     }
+
+    pub fn setLabel(self: *D3D12Buffer, name: []const u8) void {
+        setDebugName(d3d12.ID3D12Resource, self.buffer.resource, name);
+        if (self.staging_buffer) |sb| {
+            var scratch = common.ScratchSpace(2048){};
+            const temp_allocator = scratch.allocator();
+            sb.setLabel(std.fmt.allocPrint(
+                temp_allocator,
+                "{s}_staging",
+                .{name},
+            ) catch "?_staging");
+        }
+    }
 };
 
 // CommandBuffer
@@ -704,12 +738,14 @@ pub const D3D12CommandBuffer = struct {
             .command_allocator = command_allocator,
             .command_list = command_list,
         };
+
         return self;
     }
 
     pub fn destroy(self: *D3D12CommandBuffer) void {
         // unsubmitted CommandBuffer
         if (self.command_list) |cl| self.device.command_pool.destroyCommandList(cl);
+        if (self.command_allocator) |ca| self.device.command_pool.destroyCommandAllocator(ca);
         allocator.destroy(self);
     }
 
@@ -765,6 +801,32 @@ pub const D3D12CommandBuffer = struct {
 
         return dsv_heap.cpuDescriptor(allocation);
     }
+
+    pub fn setLabel(self: *D3D12CommandBuffer, name: []const u8) void {
+        var scratch = common.ScratchSpace(2048){};
+        const temp_allocator = scratch.allocator();
+
+        const command_allocator_name = std.fmt.allocPrint(
+            temp_allocator,
+            "{s}_command_allocator",
+            .{name},
+        ) catch "commandbuffer_command_allocator";
+        setDebugName(d3d12.ID3D12CommandAllocator, self.command_allocator, command_allocator_name);
+
+        const command_list_name = std.fmt.allocPrint(
+            temp_allocator,
+            "{s}_command_list",
+            .{name},
+        ) catch "commandbuffer_command_list";
+        setDebugName(d3d12.ID3D12GraphicsCommandList, self.command_list, command_list_name);
+
+        const upload_buffer_name = std.fmt.allocPrint(
+            temp_allocator,
+            "{s}_upload_buffer",
+            .{name},
+        ) catch "commandbuffer_upload_buffer";
+        setDebugName(d3d12.ID3D12Resource, self.upload_buffer, upload_buffer_name);
+    }
 };
 
 // CommandEncoder
@@ -792,8 +854,6 @@ pub const D3D12CommandEncoder = struct {
     barrier_enforcer: D3D12BarrierEnforcer = .{},
 
     pub fn create(device: *D3D12Device, desc: *const gpu.CommandEncoder.Descriptor) gpu.CommandEncoder.Error!*D3D12CommandEncoder {
-        _ = desc;
-
         const command_buffer = D3D12CommandBuffer.create(device) catch
             return gpu.CommandEncoder.Error.CommandEncoderFailedToCreate;
 
@@ -806,6 +866,10 @@ pub const D3D12CommandEncoder = struct {
         };
 
         self.barrier_enforcer.create(device);
+
+        if (desc.label) |name| {
+            self.setLabel(name);
+        }
 
         return self;
     }
@@ -975,8 +1039,6 @@ pub const D3D12CommandEncoder = struct {
     }
 
     pub fn finish(self: *D3D12CommandEncoder, desc: *const gpu.CommandBuffer.Descriptor) gpu.CommandBuffer.Error!*D3D12CommandBuffer {
-        _ = desc;
-
         const command_list = self.command_buffer.?.command_list.?;
 
         self.barrier_enforcer.endPass() catch return gpu.CommandBuffer.Error.CommandBufferFailedToCreate;
@@ -986,6 +1048,10 @@ pub const D3D12CommandEncoder = struct {
         if (!d3dcommon.checkHResult(hr_close)) return gpu.CommandBuffer.Error.CommandBufferFailedToCreate;
 
         const ret = self.command_buffer.?;
+        if (desc.label) |name| {
+            ret.setLabel(name);
+        }
+
         self.command_buffer = null;
         return ret;
     }
@@ -1073,6 +1139,10 @@ pub const D3D12CommandEncoder = struct {
             },
             null,
         );
+    }
+
+    pub fn setLabel(self: *D3D12CommandEncoder, name: []const u8) void {
+        self.command_buffer.?.setLabel(name);
     }
 };
 
@@ -1707,8 +1777,22 @@ pub const D3D12Instance = struct {
 
     pub fn destroy(self: *D3D12Instance) void {
         d3dcommon.releaseIUnknown(dxgi.IDXGIFactory6, &self.factory);
+
+        if (self.debug) self.reportLiveObjects();
+
         d3dcommon.releaseIUnknown(d3d12.ID3D12Debug, &self.debug_layer);
         allocator.destroy(self);
+    }
+
+    fn reportLiveObjects(self: *D3D12Instance) void {
+        _ = self;
+
+        var dxgi_debug: ?*dxgi.IDXGIDebug = null;
+        if (winapi.zig.SUCCEEDED(dxgi.DXGIGetDebugInterface1(0, dxgi.IID_IDXGIDebug, @ptrCast(&dxgi_debug)))) {
+            defer d3dcommon.releaseIUnknown(dxgi.IDXGIDebug, &dxgi_debug);
+            std.log.warn("live objects!", .{});
+            _ = dxgi_debug.?.IDXGIDebug_ReportLiveObjects(dxgi.DXGI_DEBUG_ALL, dxgi.DXGI_DEBUG_RLO_ALL);
+        }
     }
 };
 
@@ -1980,6 +2064,11 @@ pub const D3D12PipelineLayout = struct {
             .group_layouts = group_layouts,
             .group_parameter_indices = group_parameter_indices,
         };
+
+        if (desc.label) |label| {
+            layout.setLabel(label);
+        }
+
         return layout;
     }
 
@@ -1989,6 +2078,10 @@ pub const D3D12PipelineLayout = struct {
         d3dcommon.releaseIUnknown(d3d12.ID3D12RootSignature, &root_signature);
         allocator.free(layout.group_layouts);
         allocator.destroy(layout);
+    }
+
+    pub fn setLabel(layout: *D3D12PipelineLayout, label: []const u8) void {
+        setDebugName(d3d12.ID3D12RootSignature, layout.root_signature, label);
     }
 };
 
@@ -2577,6 +2670,8 @@ pub const D3D12RenderPassEncoder = struct {
     vertex_buffer_views: [gpu.Limits.max_vertex_buffers]d3d12.D3D12_VERTEX_BUFFER_VIEW,
     vertex_strides: []u32 = undefined,
 
+    label: ?[]const u8 = null,
+
     pub fn create(self: *D3D12CommandEncoder, desc: *const gpu.RenderPass.Descriptor) !*D3D12RenderPassEncoder {
         const command_list = self.command_buffer.?.command_list.?;
 
@@ -2730,6 +2825,7 @@ pub const D3D12RenderPassEncoder = struct {
             .depth_attachment = depth_attachment,
             .barrier_enforcer = &self.barrier_enforcer,
             .vertex_buffer_views = std.mem.zeroes([gpu.Limits.max_vertex_buffers]d3d12.D3D12_VERTEX_BUFFER_VIEW),
+            .label = desc.label,
         };
         return encoder;
     }
@@ -3199,6 +3295,10 @@ pub const D3D12RenderPipeline = struct {
             },
             .vertex_strides = vertex_strides,
         };
+
+        if (desc.label) |label| {
+            self.setLabel(label);
+        }
     }
 
     pub fn deinit(self: *D3D12RenderPipeline) void {
@@ -3209,6 +3309,10 @@ pub const D3D12RenderPipeline = struct {
         .BytecodeLength = 0,
         .pShaderBytecode = null,
     };
+
+    pub fn setLabel(self: *D3D12RenderPipeline, label: []const u8) void {
+        setDebugName(d3d12.ID3D12PipelineState, self.pipeline, label);
+    }
 };
 
 fn d3d12BlendDesc(desc: *const gpu.RenderPipeline.Descriptor) d3d12.D3D12_BLEND_DESC {
