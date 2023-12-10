@@ -107,6 +107,8 @@ view_count: usize = 0,
 
 // rendering objects
 
+arena: std.heap.ArenaAllocator = undefined,
+
 vertex_buffer: ?*gpu.Buffer = null,
 vertex_count: usize = 0,
 
@@ -130,7 +132,8 @@ command_buffers: [3]?*gpu.CommandBuffer = .{ null, null, null },
 
 pub fn load(self: *RenderContext, allocator: std.mem.Allocator, window: *app.window.Window) !void {
     if (gpu.loadBackend(.d3d12) == false) return;
-    const instance = try gpu.createInstance(allocator, &.{});
+    self.arena = std.heap.ArenaAllocator.init(allocator);
+    const instance = try gpu.createInstance(self.arena.allocator(), &.{});
     errdefer instance.destroy();
 
     const surface = try instance.createSurface(&.{
@@ -166,10 +169,13 @@ pub fn load(self: *RenderContext, allocator: std.mem.Allocator, window: *app.win
     self.swapchain = swapchain;
     self.swapchain_format = .bgra8_unorm;
 
+    std.log.info("{}", .{self.arena.queryCapacity()});
+
     try self.loadResources();
 }
 
 pub fn deinit(self: *RenderContext) void {
+    std.log.info("final {}", .{self.arena.queryCapacity()});
     self.cleanResources();
 
     self.swapchain.destroy();
@@ -177,6 +183,9 @@ pub fn deinit(self: *RenderContext) void {
     self.physical_device.destroy();
     self.surface.destroy();
     self.instance.destroy();
+
+    std.log.info("hmm {}", .{self.arena.queryCapacity()});
+    self.arena.deinit();
 }
 
 pub fn resize(self: *RenderContext, size: [2]u32) !void {
@@ -198,13 +207,21 @@ pub fn present(self: *RenderContext) !void {
 
 fn loadResources(self: *RenderContext) !void {
     try self.loadViews();
+    std.log.info("views loaded {}", .{self.arena.queryCapacity()});
     try self.prepareVertexAndIndexBuffers();
+    std.log.info("buffers prepared {}", .{self.arena.queryCapacity()});
     try self.setupPipelineLayout();
+    std.log.info("pipeline layout set up {}", .{self.arena.queryCapacity()});
     try self.prepareUniformBuffers();
+    std.log.info("uniforms prepared {}", .{self.arena.queryCapacity()});
     try self.setupBindGroups();
+    std.log.info("bind groups set up {}", .{self.arena.queryCapacity()});
     try self.setupAllPasses();
+    std.log.info("passes set up {}", .{self.arena.queryCapacity()});
     try self.preparePipelines();
+    std.log.info("pipelines prepared {}", .{self.arena.queryCapacity()});
     try self.prepareCommandBuffers();
+    std.log.info("command buffers prepared {}", .{self.arena.queryCapacity()});
 }
 
 fn cleanResources(self: *RenderContext) void {

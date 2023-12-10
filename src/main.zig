@@ -97,7 +97,8 @@ const Context = struct {
             const frame_end = std.time.nanoTimestamp();
 
             const frame_time = frame_end - frame_start;
-            std.debug.print("frame time: {d:1}\n", .{std.time.ns_per_s / @as(f64, @floatFromInt(frame_time))});
+            _ = frame_time;
+            // std.debug.print("frame time: {d:1}\n", .{std.time.ns_per_s / @as(f64, @floatFromInt(frame_time))});
 
             std.time.sleep(if (self.window.isFocused()) focused_sleep else unfocused_sleep);
         }
