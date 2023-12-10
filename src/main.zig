@@ -81,9 +81,20 @@ const Context = struct {
 
         try self.render.load(self.allocator, self.window);
 
+        var buffer: [1024]u8 = .{0} ** 1024;
+        var fba = std.heap.FixedBufferAllocator.init(&buffer);
+        const temp_allocator = fba.allocator();
+
         while (self.running()) {
+            const title = try std.fmt.allocPrint(
+                temp_allocator,
+                "{} bytes",
+                .{self.render.arena.queryCapacity()},
+            );
+            defer fba.reset();
+
             try self.pumpEvents();
-            self.window.setTitle(if (self.window.isFocused()) "focused" else "not focused");
+            self.window.setTitle(title);
 
             const frame_start = std.time.nanoTimestamp();
 

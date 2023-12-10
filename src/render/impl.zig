@@ -474,11 +474,11 @@ pub inline fn swapChainGetIndex(swap_chain: *gpu.SwapChain) u32 {
     return procs.Procs.loaded_procs.?.swapChainGetIndex(swap_chain);
 }
 
-pub inline fn swapChainGetCurrentTexture(swap_chain: *gpu.SwapChain) ?*gpu.Texture {
+pub inline fn swapChainGetCurrentTexture(swap_chain: *gpu.SwapChain) ?*const gpu.Texture {
     return procs.Procs.loaded_procs.?.swapChainGetCurrentTexture(swap_chain);
 }
 
-pub inline fn swapChainGetCurrentTextureView(swap_chain: *gpu.SwapChain) ?*gpu.TextureView {
+pub inline fn swapChainGetCurrentTextureView(swap_chain: *gpu.SwapChain) ?*const gpu.TextureView {
     return procs.Procs.loaded_procs.?.swapChainGetCurrentTextureView(swap_chain);
 }
 

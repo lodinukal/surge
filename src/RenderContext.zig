@@ -15,9 +15,10 @@ pub const Vertex = struct {
 };
 
 pub const Uniforms = struct {
-    projection: math.Mat = math.identity(),
-    view: math.Mat = math.identity(),
-    model: math.Mat = math.identity(),
+    // projection: math.Mat = math.identity(),
+    // view: math.Mat = math.identity(),
+    // model: math.Mat = math.identity(),
+    rotation: f32 = 0,
 };
 
 pub const RenderPass = struct {
@@ -126,9 +127,7 @@ bind_group: ?*gpu.BindGroup = null,
 
 render_pipeline: ?*gpu.RenderPipeline = null,
 
-render_passes: [3]RenderPass = .{ .{}, .{}, .{} },
-
-command_buffers: [3]?*gpu.CommandBuffer = .{ null, null, null },
+render_pass: RenderPass = .{},
 
 pub fn load(self: *RenderContext, allocator: std.mem.Allocator, window: *app.window.Window) !void {
     if (gpu.loadBackend(.d3d12) == false) return;
@@ -153,7 +152,7 @@ pub fn load(self: *RenderContext, allocator: std.mem.Allocator, window: *app.win
     const swapchain = try device.createSwapChain(surface, &.{
         .height = 600,
         .width = 800,
-        .present_mode = .immediate,
+        .present_mode = .mailbox,
         .format = .bgra8_unorm,
         .usage = .{
             .render_attachment = true,
@@ -168,8 +167,6 @@ pub fn load(self: *RenderContext, allocator: std.mem.Allocator, window: *app.win
     self.queue = device.getQueue();
     self.swapchain = swapchain;
     self.swapchain_format = .bgra8_unorm;
-
-    std.log.info("{}", .{self.arena.queryCapacity()});
 
     try self.loadResources();
 }
@@ -195,8 +192,8 @@ pub fn resize(self: *RenderContext, size: [2]u32) !void {
     // self.swapchain_size = size;
     // try self.swapchain.resize(size);
 
-    // self.cleanupRenderPasses();
-    // try self.setupAllPasses();
+    // self.cleanupRenderPass();
+    // try self.setupPass();
 
     // try self.rebuildCommandBuffers();
 }
@@ -216,12 +213,10 @@ fn loadResources(self: *RenderContext) !void {
     std.log.info("uniforms prepared {}", .{self.arena.queryCapacity()});
     try self.setupBindGroups();
     std.log.info("bind groups set up {}", .{self.arena.queryCapacity()});
-    try self.setupAllPasses();
+    try self.setupPass();
     std.log.info("passes set up {}", .{self.arena.queryCapacity()});
     try self.preparePipelines();
     std.log.info("pipelines prepared {}", .{self.arena.queryCapacity()});
-    try self.prepareCommandBuffers();
-    std.log.info("command buffers prepared {}", .{self.arena.queryCapacity()});
 }
 
 fn cleanResources(self: *RenderContext) void {
@@ -236,8 +231,7 @@ fn cleanResources(self: *RenderContext) void {
 
     if (self.render_pipeline) |rp| rp.destroy();
 
-    self.cleanupRenderPasses();
-    self.cleanupCommandBuffers();
+    self.cleanupRenderPass();
 }
 
 fn loadViews(self: *RenderContext) !void {
@@ -323,37 +317,32 @@ fn setupBindGroups(self: *RenderContext) !void {
     });
 }
 
-fn setupAllPasses(self: *RenderContext) !void {
-    for (0..self.view_count) |i| {
-        const view = self.views[i];
-        const render_pass = &self.render_passes[i];
+fn setupPass(self: *RenderContext) !void {
+    const render_pass = &self.render_pass;
 
-        render_pass.colour_attachments[0] = gpu.RenderPass.ColourAttachment{
-            .view = view,
-            .load_op = .clear,
-            .store_op = .store,
-            .clear_value = .{
-                .r = 0.0,
-                .g = 0.0,
-                .b = 0.0,
-                .a = 1.0,
-            },
-        };
+    render_pass.colour_attachments[0] = gpu.RenderPass.ColourAttachment{
+        .view = null,
+        .load_op = .clear,
+        .store_op = .store,
+        .clear_value = .{
+            .r = 0.0,
+            .g = 0.0,
+            .b = 0.0,
+            .a = 1.0,
+        },
+    };
 
-        try render_pass.depth.init(self, .{});
+    try render_pass.depth.init(self, .{});
 
-        render_pass.descriptor = gpu.RenderPass.Descriptor{
-            .label = "rp!",
-            .colour_attachments = &render_pass.colour_attachments,
-            .depth_stencil_attachment = &render_pass.depth.attachment_desc,
-        };
-    }
+    render_pass.descriptor = gpu.RenderPass.Descriptor{
+        .label = "rp!",
+        .colour_attachments = &render_pass.colour_attachments,
+        .depth_stencil_attachment = &render_pass.depth.attachment_desc,
+    };
 }
 
-fn cleanupRenderPasses(self: *RenderContext) void {
-    for (0..self.view_count) |i| {
-        self.render_passes[i].deinit();
-    }
+fn cleanupRenderPass(self: *RenderContext) void {
+    self.render_pass.deinit();
 }
 
 fn prepareUniformBuffers(self: *RenderContext) !void {
@@ -366,7 +355,6 @@ fn prepareUniformBuffers(self: *RenderContext) !void {
 }
 
 fn updateUniformBuffers(self: *RenderContext) !void {
-    std.debug.print("updateUniformBuffers\n", .{});
     // TODO: Make a camera
     // self.uniforms.model = math.rotateZ(math.identity(), std.time.timestamp() / 1000000000.0);
     // self.uniforms.view = math.translate(math.identity(), .{ 0.0, 0.0, -2.0 });
@@ -402,8 +390,6 @@ fn preparePipelines(self: *RenderContext) !void {
     const triangle_vertex_buffer_layout = gpu.VertexBufferLayout.fromStruct(
         Vertex,
         .{
-            // .position = .{ 0, .float32x4, "SV_POSITION" },
-            // .colour = .{ 0, .float32x4, "COLOR" },
             .position = .{ 0, .float32x4 },
             .colour = .{ 1, .float32x4 },
         },
@@ -444,7 +430,15 @@ fn preparePipelines(self: *RenderContext) !void {
 }
 
 const hlsl_shader =
-    \\ struct InputVS
+    \\
+    \\struct Uniforms
+    \\{
+    \\   float rotation;
+    \\};
+    \\
+    \\cbuffer un : register(b0) { Uniforms un; }
+    \\
+    \\struct InputVS
     \\{
     \\    float2 position : LOC0;
     \\    float3 color : LOC1;
@@ -460,7 +454,11 @@ const hlsl_shader =
     \\OutputVS vs_main(InputVS inp)
     \\{
     \\    OutputVS outp;
-    \\    outp.position = float4(inp.position, 0, 1);
+    \\    // rotate vertices around 0,0 by un.rotation degrees
+    \\    float s = sin(un.rotation);
+    \\    float c = cos(un.rotation);
+    \\    float2x2 rot = float2x2(c, -s, s, c);
+    \\    outp.position = float4(mul(rot, inp.position), 0, 1);
     \\    outp.color = inp.color;
     \\    return outp;
     \\}
@@ -518,77 +516,72 @@ fn createDepthStencilState(options: *const DepthStencilStateOptions) gpu.DepthSt
     };
 }
 
-fn prepareCommandBuffers(self: *RenderContext) !void {
+fn prepareCommandBuffer(self: *RenderContext) !*gpu.CommandBuffer {
     self.mutex.lock();
     defer self.mutex.unlock();
 
-    for (0..self.view_count) |i| {
-        const command_encoder = try self.device.createCommandEncoder(&.{
-            .label = "ce!",
-        });
-        defer command_encoder.destroy();
+    self.render_pass.colour_attachments[0].view = self.swapchain.getCurrentTextureView();
 
-        const render_pass_encoder = try command_encoder.beginRenderPass(
-            &self.render_passes[i].descriptor,
-        );
-        defer render_pass_encoder.destroy();
+    const command_encoder = try self.device.createCommandEncoder(&.{
+        .label = "ce!",
+    });
+    defer command_encoder.destroy();
 
-        try render_pass_encoder.setPipeline(self.render_pipeline.?);
-        render_pass_encoder.setBindGroup(0, self.bind_group.?, null);
-        try render_pass_encoder.setViewport(
-            0.0,
-            0.0,
-            @floatFromInt(self.swapchain_size[0]),
-            @floatFromInt(self.swapchain_size[1]),
-            0.0,
-            1.1,
-        );
-        try render_pass_encoder.setScissorRect(
-            0,
-            0,
-            self.swapchain_size[0],
-            self.swapchain_size[1],
-        );
-        try render_pass_encoder.setVertexBuffer(
-            0,
-            self.vertex_buffer.?,
-            null,
-            null,
-        );
-        try render_pass_encoder.setIndexBuffer(
-            self.index_buffer.?,
-            .uint16,
-            null,
-            null,
-        );
+    const render_pass_encoder = try command_encoder.beginRenderPass(
+        &self.render_pass.descriptor,
+    );
+    defer render_pass_encoder.destroy();
 
-        render_pass_encoder.drawIndexed(
-            self.index_count,
-            null,
-            null,
-            null,
-            null,
-        );
+    try render_pass_encoder.setPipeline(self.render_pipeline.?);
+    render_pass_encoder.setBindGroup(0, self.bind_group.?, null);
+    try render_pass_encoder.setViewport(
+        0.0,
+        0.0,
+        @floatFromInt(self.swapchain_size[0]),
+        @floatFromInt(self.swapchain_size[1]),
+        0.0,
+        1.1,
+    );
+    try render_pass_encoder.setScissorRect(
+        0,
+        0,
+        self.swapchain_size[0],
+        self.swapchain_size[1],
+    );
+    try render_pass_encoder.setVertexBuffer(
+        0,
+        self.vertex_buffer.?,
+        null,
+        null,
+    );
+    try render_pass_encoder.setIndexBuffer(
+        self.index_buffer.?,
+        .uint16,
+        null,
+        null,
+    );
 
-        try render_pass_encoder.end();
-        self.command_buffers[i] = try command_encoder.finish(null);
-    }
-}
+    render_pass_encoder.drawIndexed(
+        self.index_count,
+        null,
+        null,
+        null,
+        null,
+    );
 
-fn cleanupCommandBuffers(self: *RenderContext) void {
-    for (0..self.view_count) |i| {
-        if (self.command_buffers[i]) |cb| cb.destroy();
-    }
-}
-
-fn rebuildCommandBuffers(self: *RenderContext) !void {
-    self.cleanupCommandBuffers();
-    try self.prepareCommandBuffers();
+    try render_pass_encoder.end();
+    return try command_encoder.finish(null);
 }
 
 pub fn draw(self: *RenderContext) !void {
-    const current_index = self.swapchain.getIndex();
+    // update
+    const command_buffer = try self.prepareCommandBuffer();
+    // defer command_buffer.destroy();
+
+    self.uniforms.rotation = @mod((self.uniforms.rotation + 0.01), @as(f32, 360.0));
+    try self.updateUniformBuffers();
+
     try self.queue.submit(&.{
-        self.command_buffers[current_index].?,
+        command_buffer,
     });
 }
