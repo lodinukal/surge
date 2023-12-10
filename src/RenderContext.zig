@@ -3,6 +3,8 @@ const std = @import("std");
 const app = @import("app/app.zig");
 const math = @import("math.zig");
 
+const common = @import("core/common.zig");
+
 const gpu = @import("render/gpu.zig");
 
 const RenderContext = @This();
@@ -59,7 +61,7 @@ const DepthTexture = struct {
             .sample_count = sample_count,
             .size = .{ .width = 800, .height = 600, .depth_or_array_layers = 1 },
         };
-        self.texture = try render_ctx.device.createTexture(&texture_desc);
+        self.texture = try render_ctx.device.createTexture(render_ctx.resource_allocator, &texture_desc);
 
         const view_desc = gpu.TextureView.Descriptor{
             .format = texture_desc.format,
@@ -70,7 +72,7 @@ const DepthTexture = struct {
             .base_array_layer = 0,
             .array_layer_count = 1,
         };
-        self.view = try self.texture.?.createView(&view_desc);
+        self.view = try self.texture.?.createView(render_ctx.resource_allocator, &view_desc);
 
         self.attachment_desc = gpu.RenderPass.DepthStencilAttachment{
             .view = self.view.?,
@@ -108,7 +110,13 @@ view_count: usize = 0,
 
 // rendering objects
 
-arena: std.heap.ArenaAllocator = undefined,
+permanent_arena: std.heap.ArenaAllocator = undefined,
+resource_arena: std.heap.ArenaAllocator = undefined,
+frame_arena: std.heap.ArenaAllocator = undefined,
+
+permanent_allocator: std.mem.Allocator = undefined,
+resource_allocator: std.mem.Allocator = undefined,
+frame_allocator: std.mem.Allocator = undefined,
 
 vertex_buffer: ?*gpu.Buffer = null,
 vertex_count: usize = 0,
@@ -131,25 +139,32 @@ render_pass: RenderPass = .{},
 
 pub fn load(self: *RenderContext, allocator: std.mem.Allocator, window: *app.window.Window) !void {
     if (gpu.loadBackend(.d3d12) == false) return;
-    self.arena = std.heap.ArenaAllocator.init(allocator);
-    const instance = try gpu.createInstance(self.arena.allocator(), &.{});
+    self.permanent_arena = std.heap.ArenaAllocator.init(allocator);
+    self.resource_arena = std.heap.ArenaAllocator.init(allocator);
+    self.frame_arena = std.heap.ArenaAllocator.init(allocator);
+
+    self.permanent_allocator = self.permanent_arena.allocator();
+    self.resource_allocator = self.resource_arena.allocator();
+    self.frame_allocator = self.frame_arena.allocator();
+
+    const instance = try gpu.createInstance(self.permanent_allocator, &.{});
     errdefer instance.destroy();
 
-    const surface = try instance.createSurface(&.{
+    const surface = try instance.createSurface(self.permanent_allocator, &.{
         .native_handle = window.getNativeHandle().wnd,
         .native_handle_size = 8,
     });
     errdefer surface.destroy();
 
-    const physicalDevice = try instance.requestPhysicalDevice(&.{
+    const physicalDevice = try instance.requestPhysicalDevice(self.permanent_allocator, &.{
         .power_preference = .high_performance,
     });
     errdefer physicalDevice.destroy();
 
-    const device = try physicalDevice.createDevice(&.{ .label = "device" });
+    const device = try physicalDevice.createDevice(self.permanent_allocator, &.{ .label = "device" });
     errdefer device.destroy();
 
-    const swapchain = try device.createSwapChain(surface, &.{
+    const swapchain = try device.createSwapChain(self.permanent_allocator, surface, &.{
         .height = 600,
         .width = 800,
         .present_mode = .mailbox,
@@ -172,7 +187,7 @@ pub fn load(self: *RenderContext, allocator: std.mem.Allocator, window: *app.win
 }
 
 pub fn deinit(self: *RenderContext) void {
-    std.log.info("final {}", .{self.arena.queryCapacity()});
+    std.log.info("final {}", .{self.permanent_arena.queryCapacity()});
     self.cleanResources();
 
     self.swapchain.destroy();
@@ -181,8 +196,10 @@ pub fn deinit(self: *RenderContext) void {
     self.surface.destroy();
     self.instance.destroy();
 
-    std.log.info("hmm {}", .{self.arena.queryCapacity()});
-    self.arena.deinit();
+    std.log.info("hmm {}", .{self.permanent_arena.queryCapacity()});
+    self.permanent_arena.deinit();
+    self.resource_arena.deinit();
+    self.frame_arena.deinit();
 }
 
 pub fn resize(self: *RenderContext, size: [2]u32) !void {
@@ -204,19 +221,19 @@ pub fn present(self: *RenderContext) !void {
 
 fn loadResources(self: *RenderContext) !void {
     try self.loadViews();
-    std.log.info("views loaded {}", .{self.arena.queryCapacity()});
+    std.log.info("views loaded {}", .{self.permanent_arena.queryCapacity()});
     try self.prepareVertexAndIndexBuffers();
-    std.log.info("buffers prepared {}", .{self.arena.queryCapacity()});
+    std.log.info("buffers prepared {}", .{self.permanent_arena.queryCapacity()});
     try self.setupPipelineLayout();
-    std.log.info("pipeline layout set up {}", .{self.arena.queryCapacity()});
+    std.log.info("pipeline layout set up {}", .{self.permanent_arena.queryCapacity()});
     try self.prepareUniformBuffers();
-    std.log.info("uniforms prepared {}", .{self.arena.queryCapacity()});
+    std.log.info("uniforms prepared {}", .{self.permanent_arena.queryCapacity()});
     try self.setupBindGroups();
-    std.log.info("bind groups set up {}", .{self.arena.queryCapacity()});
+    std.log.info("bind groups set up {}", .{self.permanent_arena.queryCapacity()});
     try self.setupPass();
-    std.log.info("passes set up {}", .{self.arena.queryCapacity()});
+    std.log.info("passes set up {}", .{self.permanent_arena.queryCapacity()});
     try self.preparePipelines();
-    std.log.info("pipelines prepared {}", .{self.arena.queryCapacity()});
+    std.log.info("pipelines prepared {}", .{self.permanent_arena.queryCapacity()});
 }
 
 fn cleanResources(self: *RenderContext) void {
@@ -241,7 +258,7 @@ fn loadViews(self: *RenderContext) !void {
 fn createUploadedBuffer(self: *RenderContext, usage: gpu.Buffer.UsageFlags, comptime T: type, data: []const T) !*gpu.Buffer {
     var modified_usage = usage;
     modified_usage.copy_dst = true;
-    var buffer = try self.device.createBuffer(&.{
+    var buffer = try self.device.createBuffer(self.resource_allocator, &.{
         .usage = modified_usage,
         .size = data.len * @sizeOf(T),
     });
@@ -282,7 +299,7 @@ fn prepareVertexAndIndexBuffers(self: *RenderContext) !void {
 }
 
 fn setupPipelineLayout(self: *RenderContext) !void {
-    self.bind_group_layout = try self.device.createBindGroupLayout(&.{
+    self.bind_group_layout = try self.device.createBindGroupLayout(self.resource_allocator, &.{
         .label = "bgl!",
         .entries = &.{
             gpu.BindGroupLayout.Entry.buffer(
@@ -295,14 +312,14 @@ fn setupPipelineLayout(self: *RenderContext) !void {
         },
     });
 
-    self.pipeline_layout = try self.device.createPipelineLayout(&gpu.PipelineLayout.Descriptor{
+    self.pipeline_layout = try self.device.createPipelineLayout(self.resource_allocator, &.{
         .label = "pl!",
         .bind_group_layouts = &.{self.bind_group_layout.?},
     });
 }
 
 fn setupBindGroups(self: *RenderContext) !void {
-    self.bind_group = try self.device.createBindGroup(&gpu.BindGroup.Descriptor{
+    self.bind_group = try self.device.createBindGroup(self.resource_allocator, &gpu.BindGroup.Descriptor{
         .label = "bg!",
         .layout = self.bind_group_layout.?,
         .entries = &.{
@@ -350,8 +367,6 @@ fn prepareUniformBuffers(self: *RenderContext) !void {
         .uniform = true,
     }, Uniforms, &.{self.uniforms});
     errdefer self.uniform_buffer.?.destroy();
-
-    try self.updateUniformBuffers();
 }
 
 fn updateUniformBuffers(self: *RenderContext) !void {
@@ -395,7 +410,10 @@ fn preparePipelines(self: *RenderContext) !void {
         },
     );
 
-    const shader_module = try self.device.createShaderModule(&gpu.ShaderModule.Descriptor{
+    var scratch = common.ScratchSpace(4096){};
+    const temp_allocator = scratch.init().allocator();
+
+    const shader_module = try self.device.createShaderModule(temp_allocator, &gpu.ShaderModule.Descriptor{
         .label = "trishader!",
         .code = hlsl_shader,
         .source_type = .hlsl,
@@ -426,7 +444,7 @@ fn preparePipelines(self: *RenderContext) !void {
         .multisample = multisample_state,
     };
 
-    self.render_pipeline = try self.device.createRenderPipeline(&pipeline_desc);
+    self.render_pipeline = try self.device.createRenderPipeline(self.resource_allocator, &pipeline_desc);
 }
 
 const hlsl_shader =
@@ -522,12 +540,13 @@ fn prepareCommandBuffer(self: *RenderContext) !*gpu.CommandBuffer {
 
     self.render_pass.colour_attachments[0].view = self.swapchain.getCurrentTextureView();
 
-    const command_encoder = try self.device.createCommandEncoder(&.{
+    const command_encoder = try self.device.createCommandEncoder(self.frame_allocator, &.{
         .label = "ce!",
     });
     defer command_encoder.destroy();
 
     const render_pass_encoder = try command_encoder.beginRenderPass(
+        self.frame_allocator,
         &self.render_pass.descriptor,
     );
     defer render_pass_encoder.destroy();
@@ -584,4 +603,6 @@ pub fn draw(self: *RenderContext) !void {
     try self.queue.submit(&.{
         command_buffer,
     });
+
+    _ = self.frame_arena.reset(.retain_capacity);
 }

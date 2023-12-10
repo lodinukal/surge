@@ -86,10 +86,18 @@ const Context = struct {
         const temp_allocator = fba.allocator();
 
         while (self.running()) {
+            const frame = self.render.frame_arena.queryCapacity();
+            const resource = self.render.resource_arena.queryCapacity();
+            const permanent = self.render.permanent_arena.queryCapacity();
             const title = try std.fmt.allocPrint(
                 temp_allocator,
-                "{} bytes",
-                .{self.render.arena.queryCapacity()},
+                "{};{};{};{}",
+                .{
+                    frame,
+                    resource,
+                    permanent,
+                    frame + resource + permanent,
+                },
             );
             defer fba.reset();
 
@@ -156,12 +164,11 @@ pub fn main() !void {
 
     // std.debug.print("mem: {}\n", .{arena.queryCapacity()});
 
-    var start = std.time.timestamp();
     while (context.running()) {
-        if (std.time.timestamp() - start > 100) {
-            start = std.time.timestamp();
-            context.window.setVisible(!context.window.isVisible());
-        }
+        // if (std.time.timestamp() - start > 100) {
+        //     start = std.time.timestamp();
+        //     context.window.setVisible(!context.window.isVisible());
+        // }
         std.time.sleep(std.time.ns_per_s);
     }
 

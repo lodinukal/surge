@@ -1774,24 +1774,7 @@ const RegKey = struct {
 
 const IID_ComMalloc_Value = winapi.zig.Guid.initString("1EA387B1-717E-4403-9815-576541858162");
 pub const IID_ComMalloc = &IID_ComMalloc_Value;
-pub const ExternAllocator = extern struct {
-    ptr: *anyopaque,
-    vtable: *align(@alignOf(std.mem.Allocator.VTable)) const anyopaque,
-
-    pub inline fn fromStdAllocator(al: std.mem.Allocator) ExternAllocator {
-        return .{
-            .ptr = @ptrCast(al.ptr),
-            .vtable = @ptrCast(al.vtable),
-        };
-    }
-
-    pub inline fn toStdAllocator(self: ExternAllocator) std.mem.Allocator {
-        return .{
-            .ptr = @ptrCast(self.ptr),
-            .vtable = @ptrCast(self.vtable),
-        };
-    }
-};
+const ExternAllocator = @import("../../core/common.zig").ExternAllocator;
 pub const ComAllocator = extern struct {
     pub const vtable = win32.system.com.IMalloc.VTable{
         .Alloc = ComAllocator.Alloc,
@@ -1812,15 +1795,15 @@ pub const ComAllocator = extern struct {
     count: u32 = 0,
 
     fn stdAllocator(self: *const ComAllocator) std.mem.Allocator {
-        return self.allocator.toStdAllocator();
+        return self.allocator.toStd();
     }
 
     pub fn create(al: std.mem.Allocator, child_allocator: std.mem.Allocator) !*ComAllocator {
         const self = try al.create(ComAllocator);
         self.* = .{
             .vtable = &vtable,
-            .allocator = ExternAllocator.fromStdAllocator(child_allocator),
-            .parent_allocator = ExternAllocator.fromStdAllocator(al),
+            .allocator = ExternAllocator.fromStd(child_allocator),
+            .parent_allocator = ExternAllocator.fromStd(al),
         };
         _ = self.getCom().IUnknown_AddRef();
         return self;
@@ -1864,7 +1847,7 @@ pub const ComAllocator = extern struct {
         self.count -= 1;
 
         if (self.count == 0) {
-            self.parent_allocator.toStdAllocator().destroy(self);
+            self.parent_allocator.toStd().destroy(self);
             return 0;
         }
 

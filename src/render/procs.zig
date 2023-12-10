@@ -22,6 +22,7 @@ pub const Procs = struct {
     // CommandEncoder
     commandEncoderBeginRenderPass: *const fn (
         command_encoder: *gpu.CommandEncoder,
+        allocator: std.mem.Allocator,
         desc: *const gpu.RenderPass.Descriptor,
     ) gpu.RenderPass.Encoder.Error!*gpu.RenderPass.Encoder,
     commandEncoderFinish: *const fn (
@@ -32,29 +33,34 @@ pub const Procs = struct {
     // ComputePassEncoder
     // ComputePipeline
     // Device
-    deviceCreateBindGroup: *const fn (device: *gpu.Device, desc: *const gpu.BindGroup.Descriptor) gpu.BindGroup.Error!*gpu.BindGroup,
-    deviceCreateBindGroupLayout: *const fn (device: *gpu.Device, desc: *const gpu.BindGroupLayout.Descriptor) gpu.BindGroupLayout.Error!*gpu.BindGroupLayout,
-    deviceCreatePipelineLayout: *const fn (device: *gpu.Device, desc: *const gpu.PipelineLayout.Descriptor) gpu.PipelineLayout.Error!*gpu.PipelineLayout,
-    deviceCreateRenderPipeline: *const fn (device: *gpu.Device, desc: *const gpu.RenderPipeline.Descriptor) gpu.RenderPipeline.Error!*gpu.RenderPipeline,
-    deviceCreateBuffer: *const fn (device: *gpu.Device, desc: *const gpu.Buffer.Descriptor) gpu.Buffer.Error!*gpu.Buffer,
-    deviceCreateCommandEncoder: *const fn (device: *gpu.Device, desc: *const gpu.CommandEncoder.Descriptor) gpu.CommandEncoder.Error!*gpu.CommandEncoder,
-    deviceCreateSampler: *const fn (device: *gpu.Device, desc: *const gpu.Sampler.Descriptor) gpu.Sampler.Error!*gpu.Sampler,
-    deviceCreateShaderModule: *const fn (device: *gpu.Device, desc: *const gpu.ShaderModule.Descriptor) gpu.ShaderModule.Error!*gpu.ShaderModule,
+    deviceCreateBindGroup: *const fn (device: *gpu.Device, allocator: std.mem.Allocator, desc: *const gpu.BindGroup.Descriptor) gpu.BindGroup.Error!*gpu.BindGroup,
+    deviceCreateBindGroupLayout: *const fn (device: *gpu.Device, allocator: std.mem.Allocator, desc: *const gpu.BindGroupLayout.Descriptor) gpu.BindGroupLayout.Error!*gpu.BindGroupLayout,
+    deviceCreatePipelineLayout: *const fn (device: *gpu.Device, allocator: std.mem.Allocator, desc: *const gpu.PipelineLayout.Descriptor) gpu.PipelineLayout.Error!*gpu.PipelineLayout,
+    deviceCreateRenderPipeline: *const fn (device: *gpu.Device, allocator: std.mem.Allocator, desc: *const gpu.RenderPipeline.Descriptor) gpu.RenderPipeline.Error!*gpu.RenderPipeline,
+    deviceCreateBuffer: *const fn (device: *gpu.Device, allocator: std.mem.Allocator, desc: *const gpu.Buffer.Descriptor) gpu.Buffer.Error!*gpu.Buffer,
+    deviceCreateCommandEncoder: *const fn (device: *gpu.Device, allocator: std.mem.Allocator, desc: *const gpu.CommandEncoder.Descriptor) gpu.CommandEncoder.Error!*gpu.CommandEncoder,
+    deviceCreateSampler: *const fn (device: *gpu.Device, allocator: std.mem.Allocator, desc: *const gpu.Sampler.Descriptor) gpu.Sampler.Error!*gpu.Sampler,
+    deviceCreateShaderModule: *const fn (device: *gpu.Device, allocator: std.mem.Allocator, desc: *const gpu.ShaderModule.Descriptor) gpu.ShaderModule.Error!*gpu.ShaderModule,
     deviceCreateSwapChain: *const fn (
         device: *gpu.Device,
+        allocator: std.mem.Allocator,
         surface: ?*gpu.Surface,
         desc: *const gpu.SwapChain.Descriptor,
     ) gpu.SwapChain.Error!*gpu.SwapChain,
-    deviceCreateTexture: *const fn (device: *gpu.Device, desc: *const gpu.Texture.Descriptor) gpu.Texture.Error!*gpu.Texture,
+    deviceCreateTexture: *const fn (
+        device: *gpu.Device,
+        allocator: std.mem.Allocator,
+        desc: *const gpu.Texture.Descriptor,
+    ) gpu.Texture.Error!*gpu.Texture,
     deviceGetQueue: *const fn (device: *gpu.Device) *gpu.Queue,
     deviceDestroy: *const fn (device: *gpu.Device) void,
     // Instance
     createInstance: *const fn (allocator: std.mem.Allocator, desc: *const gpu.Instance.Descriptor) gpu.Instance.Error!*gpu.Instance,
-    instanceCreateSurface: *const fn (instance: *gpu.Instance, desc: *const gpu.Surface.Descriptor) gpu.Surface.Error!*gpu.Surface,
-    instanceRequestPhysicalDevice: *const fn (instance: *gpu.Instance, options: *const gpu.PhysicalDevice.Options) gpu.PhysicalDevice.Error!*gpu.PhysicalDevice,
+    instanceCreateSurface: *const fn (instance: *gpu.Instance, allocator: std.mem.Allocator, desc: *const gpu.Surface.Descriptor) gpu.Surface.Error!*gpu.Surface,
+    instanceRequestPhysicalDevice: *const fn (instance: *gpu.Instance, allocator: std.mem.Allocator, options: *const gpu.PhysicalDevice.Options) gpu.PhysicalDevice.Error!*gpu.PhysicalDevice,
     instanceDestroy: *const fn (instance: *gpu.Instance) void,
     // PhysicalDevice
-    physicalDeviceCreateDevice: *const fn (physicalDevice: *gpu.PhysicalDevice, desc: *const gpu.Device.Descriptor) gpu.Device.Error!*gpu.Device,
+    physicalDeviceCreateDevice: *const fn (physicalDevice: *gpu.PhysicalDevice, allocator: std.mem.Allocator, desc: *const gpu.Device.Descriptor) gpu.Device.Error!*gpu.Device,
     physicalDeviceGetProperties: *const fn (physicalDevice: *gpu.PhysicalDevice, out_props: *gpu.PhysicalDevice.Properties) bool,
     physicalDeviceDestroy: *const fn (physicalDevice: *gpu.PhysicalDevice) void,
     // PipelineLayout
@@ -191,7 +197,7 @@ pub const Procs = struct {
     swapChainResize: *const fn (swapchain: *gpu.SwapChain, size: [2]u32) gpu.SwapChain.Error!void,
     swapChainDestroy: *const fn (swapchain: *gpu.SwapChain) void,
     // Texture
-    textureCreateView: *const fn (texture: *gpu.Texture, descriptor: *const gpu.TextureView.Descriptor) gpu.TextureView.Error!*gpu.TextureView,
+    textureCreateView: *const fn (texture: *gpu.Texture, allocator: std.mem.Allocator, descriptor: *const gpu.TextureView.Descriptor) gpu.TextureView.Error!*gpu.TextureView,
     textureDestroy: *const fn (texture: *gpu.Texture) void,
     textureGetFormat: *const fn (texture: *gpu.Texture) gpu.Texture.Format,
     textureGetDepthOrArrayLayers: *const fn (texture: *gpu.Texture) u32,

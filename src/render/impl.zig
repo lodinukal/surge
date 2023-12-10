@@ -83,9 +83,10 @@ pub inline fn commandBufferDestroy(command_buffer: *gpu.CommandBuffer) void {
 // CommandEncoder
 pub inline fn commandEncoderBeginRenderPass(
     command_encoder: *gpu.CommandEncoder,
+    allocator: std.mem.Allocator,
     desc: *const gpu.RenderPass.Descriptor,
 ) gpu.RenderPass.Encoder.Error!*gpu.RenderPass.Encoder {
-    return procs.Procs.loaded_procs.?.commandEncoderBeginRenderPass(command_encoder, desc);
+    return procs.Procs.loaded_procs.?.commandEncoderBeginRenderPass(command_encoder, allocator, desc);
 }
 
 pub inline fn commandEncoderFinish(
@@ -100,51 +101,85 @@ pub inline fn commandEncoderDestroy(command_encoder: *gpu.CommandEncoder) void {
 }
 
 // Device
-pub inline fn deviceCreateBindGroup(device: *gpu.Device, desc: *const gpu.BindGroup.Descriptor) gpu.BindGroup.Error!*gpu.BindGroup {
-    return procs.Procs.loaded_procs.?.deviceCreateBindGroup(device, desc);
+pub inline fn deviceCreateBindGroup(
+    device: *gpu.Device,
+    allocator: std.mem.Allocator,
+    desc: *const gpu.BindGroup.Descriptor,
+) gpu.BindGroup.Error!*gpu.BindGroup {
+    return procs.Procs.loaded_procs.?.deviceCreateBindGroup(device, allocator, desc);
 }
 
-pub inline fn deviceCreateBindGroupLayout(device: *gpu.Device, desc: *const gpu.BindGroupLayout.Descriptor) gpu.BindGroupLayout.Error!*gpu.BindGroupLayout {
-    return procs.Procs.loaded_procs.?.deviceCreateBindGroupLayout(device, desc);
+pub inline fn deviceCreateBindGroupLayout(
+    device: *gpu.Device,
+    allocator: std.mem.Allocator,
+    desc: *const gpu.BindGroupLayout.Descriptor,
+) gpu.BindGroupLayout.Error!*gpu.BindGroupLayout {
+    return procs.Procs.loaded_procs.?.deviceCreateBindGroupLayout(device, allocator, desc);
 }
 
-pub inline fn deviceCreatePipelineLayout(device: *gpu.Device, desc: *const gpu.PipelineLayout.Descriptor) gpu.PipelineLayout.Error!*gpu.PipelineLayout {
-    return procs.Procs.loaded_procs.?.deviceCreatePipelineLayout(device, desc);
+pub inline fn deviceCreatePipelineLayout(
+    device: *gpu.Device,
+    allocator: std.mem.Allocator,
+    desc: *const gpu.PipelineLayout.Descriptor,
+) gpu.PipelineLayout.Error!*gpu.PipelineLayout {
+    return procs.Procs.loaded_procs.?.deviceCreatePipelineLayout(device, allocator, desc);
 }
 
-pub inline fn deviceCreateRenderPipeline(device: *gpu.Device, desc: *const gpu.RenderPipeline.Descriptor) gpu.RenderPipeline.Error!*gpu.RenderPipeline {
-    return procs.Procs.loaded_procs.?.deviceCreateRenderPipeline(device, desc);
+pub inline fn deviceCreateRenderPipeline(
+    device: *gpu.Device,
+    allocator: std.mem.Allocator,
+    desc: *const gpu.RenderPipeline.Descriptor,
+) gpu.RenderPipeline.Error!*gpu.RenderPipeline {
+    return procs.Procs.loaded_procs.?.deviceCreateRenderPipeline(device, allocator, desc);
 }
 
-pub inline fn deviceCreateBuffer(device: *gpu.Device, desc: *const gpu.Buffer.Descriptor) gpu.Buffer.Error!*gpu.Buffer {
-    return procs.Procs.loaded_procs.?.deviceCreateBuffer(device, desc);
+pub inline fn deviceCreateBuffer(
+    device: *gpu.Device,
+    allocator: std.mem.Allocator,
+    desc: *const gpu.Buffer.Descriptor,
+) gpu.Buffer.Error!*gpu.Buffer {
+    return procs.Procs.loaded_procs.?.deviceCreateBuffer(device, allocator, desc);
 }
 
-pub inline fn deviceCreateCommandEncoder(device: *gpu.Device, desc: *const gpu.CommandEncoder.Descriptor) gpu.CommandEncoder.Error!*gpu.CommandEncoder {
-    return procs.Procs.loaded_procs.?.deviceCreateCommandEncoder(device, desc);
+pub inline fn deviceCreateCommandEncoder(
+    device: *gpu.Device,
+    allocator: std.mem.Allocator,
+    desc: *const gpu.CommandEncoder.Descriptor,
+) gpu.CommandEncoder.Error!*gpu.CommandEncoder {
+    return procs.Procs.loaded_procs.?.deviceCreateCommandEncoder(device, allocator, desc);
 }
 
-pub inline fn deviceCreateSampler(device: *gpu.Device, desc: *const gpu.Sampler.Descriptor) gpu.Sampler.Error!*gpu.Sampler {
-    return procs.Procs.loaded_procs.?.deviceCreateSampler(device, desc);
+pub inline fn deviceCreateSampler(
+    device: *gpu.Device,
+    allocator: std.mem.Allocator,
+    desc: *const gpu.Sampler.Descriptor,
+) gpu.Sampler.Error!*gpu.Sampler {
+    return procs.Procs.loaded_procs.?.deviceCreateSampler(device, allocator, desc);
 }
 
-pub inline fn deviceCreateShaderModule(device: *gpu.Device, desc: *const gpu.ShaderModule.Descriptor) gpu.ShaderModule.Error!*gpu.ShaderModule {
-    return procs.Procs.loaded_procs.?.deviceCreateShaderModule(device, desc);
+pub inline fn deviceCreateShaderModule(
+    device: *gpu.Device,
+    allocator: std.mem.Allocator,
+    desc: *const gpu.ShaderModule.Descriptor,
+) gpu.ShaderModule.Error!*gpu.ShaderModule {
+    return procs.Procs.loaded_procs.?.deviceCreateShaderModule(device, allocator, desc);
 }
 
 pub inline fn deviceCreateSwapChain(
     device: *gpu.Device,
+    allocator: std.mem.Allocator,
     surface: ?*gpu.Surface,
     desc: *const gpu.SwapChain.Descriptor,
 ) gpu.SwapChain.Error!*gpu.SwapChain {
-    return procs.Procs.loaded_procs.?.deviceCreateSwapChain(device, surface, desc);
+    return procs.Procs.loaded_procs.?.deviceCreateSwapChain(device, allocator, surface, desc);
 }
 
 pub inline fn deviceCreateTexture(
     device: *gpu.Device,
+    allocator: std.mem.Allocator,
     desc: *const gpu.Texture.Descriptor,
 ) gpu.Texture.Error!*gpu.Texture {
-    return procs.Procs.loaded_procs.?.deviceCreateTexture(device, desc);
+    return procs.Procs.loaded_procs.?.deviceCreateTexture(device, allocator, desc);
 }
 
 pub inline fn deviceGetQueue(device: *gpu.Device) *gpu.Queue {
@@ -165,16 +200,18 @@ pub inline fn createInstance(
 
 pub inline fn instanceCreateSurface(
     instance: *gpu.Instance,
+    allocator: std.mem.Allocator,
     desc: *const gpu.Surface.Descriptor,
 ) gpu.Surface.Error!*gpu.Surface {
-    return procs.Procs.loaded_procs.?.instanceCreateSurface(instance, desc);
+    return procs.Procs.loaded_procs.?.instanceCreateSurface(instance, allocator, desc);
 }
 
 pub inline fn instanceRequestPhysicalDevice(
     instance: *gpu.Instance,
+    allocator: std.mem.Allocator,
     options: *const gpu.PhysicalDevice.Options,
 ) gpu.PhysicalDevice.Error!*gpu.PhysicalDevice {
-    return procs.Procs.loaded_procs.?.instanceRequestPhysicalDevice(instance, options);
+    return procs.Procs.loaded_procs.?.instanceRequestPhysicalDevice(instance, allocator, options);
 }
 
 pub inline fn instanceDestroy(instance: *gpu.Instance) void {
@@ -182,11 +219,18 @@ pub inline fn instanceDestroy(instance: *gpu.Instance) void {
 }
 
 // PhysicalDevice
-pub inline fn physicalDeviceCreateDevice(physicalDevice: *gpu.PhysicalDevice, desc: *const gpu.Device.Descriptor) gpu.Device.Error!*gpu.Device {
-    return procs.Procs.loaded_procs.?.physicalDeviceCreateDevice(physicalDevice, desc);
+pub inline fn physicalDeviceCreateDevice(
+    physicalDevice: *gpu.PhysicalDevice,
+    allocator: std.mem.Allocator,
+    desc: *const gpu.Device.Descriptor,
+) gpu.Device.Error!*gpu.Device {
+    return procs.Procs.loaded_procs.?.physicalDeviceCreateDevice(physicalDevice, allocator, desc);
 }
 
-pub inline fn physicalDeviceGetProperties(physicalDevice: *gpu.PhysicalDevice, out_props: *gpu.PhysicalDevice.Properties) bool {
+pub inline fn physicalDeviceGetProperties(
+    physicalDevice: *gpu.PhysicalDevice,
+    out_props: *gpu.PhysicalDevice.Properties,
+) bool {
     return procs.Procs.loaded_procs.?.physicalDeviceGetProperties(physicalDevice, out_props);
 }
 
@@ -502,8 +546,16 @@ pub inline fn swapChainDestroy(swap_chain: *gpu.SwapChain) void {
 }
 
 // Texture
-pub inline fn textureCreateView(texture: *gpu.Texture, descriptor: *const gpu.TextureView.Descriptor) gpu.TextureView.Error!*gpu.TextureView {
-    return procs.Procs.loaded_procs.?.textureCreateView(texture, descriptor);
+pub inline fn textureCreateView(
+    texture: *gpu.Texture,
+    allocator: std.mem.Allocator,
+    descriptor: *const gpu.TextureView.Descriptor,
+) gpu.TextureView.Error!*gpu.TextureView {
+    return procs.Procs.loaded_procs.?.textureCreateView(
+        texture,
+        allocator,
+        descriptor,
+    );
 }
 
 pub inline fn textureDestroy(texture: *gpu.Texture) void {

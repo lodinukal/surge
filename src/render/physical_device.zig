@@ -1,3 +1,5 @@
+const std = @import("std");
+
 const gpu = @import("gpu.zig");
 const impl = gpu.impl;
 
@@ -37,8 +39,16 @@ pub const PhysicalDevice = opaque {
         vendor: Vendor,
     };
 
-    pub inline fn createDevice(self: *PhysicalDevice, desc: *const gpu.Device.Descriptor) gpu.Device.Error!*gpu.Device {
-        return impl.physicalDeviceCreateDevice(self, desc);
+    pub inline fn createDevice(
+        self: *PhysicalDevice,
+        allocator: std.mem.Allocator,
+        desc: *const gpu.Device.Descriptor,
+    ) gpu.Device.Error!*gpu.Device {
+        return impl.physicalDeviceCreateDevice(
+            self,
+            allocator,
+            desc,
+        );
     }
 
     pub inline fn getProperties(self: *PhysicalDevice, out_props: *Properties) bool {

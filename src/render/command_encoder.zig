@@ -1,3 +1,5 @@
+const std = @import("std");
+
 const gpu = @import("gpu.zig");
 const impl = gpu.impl;
 
@@ -11,8 +13,8 @@ pub const CommandEncoder = opaque {
         label: ?[]const u8 = null,
     };
 
-    pub inline fn beginRenderPass(self: *CommandEncoder, desc: *const gpu.RenderPass.Descriptor) !*gpu.RenderPass.Encoder {
-        return impl.commandEncoderBeginRenderPass(self, desc);
+    pub inline fn beginRenderPass(self: *CommandEncoder, allocator: std.mem.Allocator, desc: *const gpu.RenderPass.Descriptor) !*gpu.RenderPass.Encoder {
+        return impl.commandEncoderBeginRenderPass(self, allocator, desc);
     }
 
     pub inline fn finish(
