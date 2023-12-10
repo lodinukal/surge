@@ -283,6 +283,10 @@ pub inline fn queueWriteTexture(
     );
 }
 
+pub inline fn queueWaitIdle(queue: *gpu.Queue) gpu.Queue.Error!void {
+    return procs.Procs.loaded_procs.?.queueWaitIdle(queue);
+}
+
 // RenderPassEncoder
 pub inline fn renderPassEncoderDraw(
     render_pass_encoder: *gpu.RenderPass.Encoder,
@@ -537,8 +541,8 @@ pub inline fn swapChainPresent(swap_chain: *gpu.SwapChain) gpu.SwapChain.Error!v
     return procs.Procs.loaded_procs.?.swapChainPresent(swap_chain);
 }
 
-pub inline fn swapChainResize(swap_chain: *gpu.SwapChain, size: [2]u32) gpu.SwapChain.Error!void {
-    return procs.Procs.loaded_procs.?.swapChainResize(swap_chain, size);
+pub inline fn swapChainResize(swap_chain: *gpu.SwapChain, size: [2]u32) gpu.SwapChain.Error!bool {
+    return try procs.Procs.loaded_procs.?.swapChainResize(swap_chain, size);
 }
 
 pub inline fn swapChainDestroy(swap_chain: *gpu.SwapChain) void {

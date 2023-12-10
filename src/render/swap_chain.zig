@@ -45,7 +45,7 @@ pub const SwapChain = opaque {
         return try impl.swapChainPresent(self);
     }
 
-    pub inline fn resize(self: *SwapChain, size: [2]u32) !void {
+    pub inline fn resize(self: *SwapChain, size: [2]u32) !bool {
         return try impl.swapChainResize(self, size);
     }
 

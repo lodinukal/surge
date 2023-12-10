@@ -84,6 +84,7 @@ pub const Procs = struct {
         data_layout: *const gpu.Texture.DataLayout,
         size: *const gpu.Extent3D,
     ) gpu.Queue.Error!void,
+    queueWaitIdle: *const fn (queue: *gpu.Queue) gpu.Queue.Error!void,
     // RenderBundle
     // RenderBundleEncoder
     // RenderPassEncoder
@@ -194,7 +195,7 @@ pub const Procs = struct {
     swapChainGetCurrentTextureView: *const fn (swapchain: *gpu.SwapChain) ?*const gpu.TextureView,
     swapChainGetTextureViews: *const fn (swapchain: *gpu.SwapChain, views: *[3]?*const gpu.TextureView) u32,
     swapChainPresent: *const fn (swapchain: *gpu.SwapChain) gpu.SwapChain.Error!void,
-    swapChainResize: *const fn (swapchain: *gpu.SwapChain, size: [2]u32) gpu.SwapChain.Error!void,
+    swapChainResize: *const fn (swapchain: *gpu.SwapChain, size: [2]u32) gpu.SwapChain.Error!bool,
     swapChainDestroy: *const fn (swapchain: *gpu.SwapChain) void,
     // Texture
     textureCreateView: *const fn (texture: *gpu.Texture, allocator: std.mem.Allocator, descriptor: *const gpu.TextureView.Descriptor) gpu.TextureView.Error!*gpu.TextureView,

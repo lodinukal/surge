@@ -25,72 +25,11 @@ pub const Uniforms = struct {
 
 pub const RenderPass = struct {
     colour_attachments: [1]gpu.RenderPass.ColourAttachment = .{undefined},
-    depth: DepthTexture = .{},
+    depth_attachment: gpu.RenderPass.DepthStencilAttachment = undefined,
     descriptor: gpu.RenderPass.Descriptor = .{},
 
     pub fn deinit(self: *RenderPass) void {
-        self.depth.deinit();
-    }
-};
-
-const DepthTexture = struct {
-    texture: ?*gpu.Texture = null,
-    view: ?*gpu.TextureView = null,
-    attachment_desc: gpu.RenderPass.DepthStencilAttachment = undefined,
-
-    pub const Options = struct {
-        format: gpu.Texture.Format = .depth24_plus_stencil8,
-        sample_count: u32 = 1,
-    };
-
-    pub fn init(self: *DepthTexture, render_ctx: *RenderContext, options: Options) !void {
-        if (self.texture != null) return;
-        if (self.view != null) return;
-
-        const format: gpu.Texture.Format = options.format;
-        const sample_count = @max(1, options.sample_count);
-
-        const texture_desc = gpu.Texture.Descriptor{
-            .usage = .{
-                .render_attachment = true,
-                .copy_src = true,
-            },
-            .format = format,
-            .dimension = .dimension_2d,
-            .mip_level_count = 1,
-            .sample_count = sample_count,
-            .size = .{ .width = 800, .height = 600, .depth_or_array_layers = 1 },
-        };
-        self.texture = try render_ctx.device.createTexture(render_ctx.resource_allocator, &texture_desc);
-
-        const view_desc = gpu.TextureView.Descriptor{
-            .format = texture_desc.format,
-            .dimension = .dimension_2d,
-            .aspect = .all,
-            .base_mip_level = 0,
-            .mip_level_count = 1,
-            .base_array_layer = 0,
-            .array_layer_count = 1,
-        };
-        self.view = try self.texture.?.createView(render_ctx.resource_allocator, &view_desc);
-
-        self.attachment_desc = gpu.RenderPass.DepthStencilAttachment{
-            .view = self.view.?,
-            .depth_load_op = .clear,
-            .depth_store_op = .store,
-            .depth_clear_value = 1.0,
-            .stencil_clear_value = 0,
-        };
-
-        if (format == .depth24_plus_stencil8) {
-            self.attachment_desc.stencil_load_op = .clear;
-            self.attachment_desc.stencil_store_op = .store;
-        }
-    }
-
-    pub fn deinit(self: *DepthTexture) void {
-        if (self.texture) |t| t.destroy();
-        if (self.view) |v| v.destroy();
+        _ = self;
     }
 };
 
@@ -103,7 +42,7 @@ queue: *gpu.Queue = undefined,
 mutex: std.Thread.Mutex = .{},
 
 swapchain: *gpu.SwapChain = undefined,
-swapchain_size: [2]u32 = .{ 800, 600 },
+swapchain_size: [2]u32 = .{ 800, 800 },
 swapchain_format: gpu.Texture.Format = .undefined,
 views: [3]?*const gpu.TextureView = .{ null, null, null },
 view_count: usize = 0,
@@ -112,10 +51,12 @@ view_count: usize = 0,
 
 permanent_arena: std.heap.ArenaAllocator = undefined,
 resource_arena: std.heap.ArenaAllocator = undefined,
+swapchain_arena: std.heap.ArenaAllocator = undefined,
 frame_arena: std.heap.ArenaAllocator = undefined,
 
 permanent_allocator: std.mem.Allocator = undefined,
 resource_allocator: std.mem.Allocator = undefined,
+swapchain_allocator: std.mem.Allocator = undefined,
 frame_allocator: std.mem.Allocator = undefined,
 
 vertex_buffer: ?*gpu.Buffer = null,
@@ -128,23 +69,28 @@ uniform_buffer: ?*gpu.Buffer = null,
 uniform_count: usize = 0,
 uniforms: Uniforms = .{},
 
+depth_texture: ?*gpu.Texture = null,
+depth_texture_view: ?*gpu.TextureView = null,
+
 pipeline_layout: ?*gpu.PipelineLayout = null,
 
 bind_group_layout: ?*gpu.BindGroupLayout = null,
 bind_group: ?*gpu.BindGroup = null,
 
-render_pipeline: ?*gpu.RenderPipeline = null,
-
 render_pass: RenderPass = .{},
+
+render_pipeline: ?*gpu.RenderPipeline = null,
 
 pub fn load(self: *RenderContext, allocator: std.mem.Allocator, window: *app.window.Window) !void {
     if (gpu.loadBackend(.d3d12) == false) return;
     self.permanent_arena = std.heap.ArenaAllocator.init(allocator);
     self.resource_arena = std.heap.ArenaAllocator.init(allocator);
+    self.swapchain_arena = std.heap.ArenaAllocator.init(allocator);
     self.frame_arena = std.heap.ArenaAllocator.init(allocator);
 
     self.permanent_allocator = self.permanent_arena.allocator();
     self.resource_allocator = self.resource_arena.allocator();
+    self.swapchain_allocator = self.swapchain_arena.allocator();
     self.frame_allocator = self.frame_arena.allocator();
 
     const instance = try gpu.createInstance(self.permanent_allocator, &.{});
@@ -199,20 +145,18 @@ pub fn deinit(self: *RenderContext) void {
     std.log.info("hmm {}", .{self.permanent_arena.queryCapacity()});
     self.permanent_arena.deinit();
     self.resource_arena.deinit();
+    self.swapchain_arena.deinit();
     self.frame_arena.deinit();
 }
 
 pub fn resize(self: *RenderContext, size: [2]u32) !void {
-    _ = self;
-    _ = size;
-
-    // self.swapchain_size = size;
-    // try self.swapchain.resize(size);
-
-    // self.cleanupRenderPass();
-    // try self.setupPass();
-
-    // try self.rebuildCommandBuffers();
+    self.swapchain_size = size;
+    if (try self.swapchain.resize(size)) {
+        // we resized, recreate the depth texture
+        self.cleanupDepthTexture();
+        try self.createDepthTexture(size);
+        _ = self.swapchain_arena.reset(.retain_capacity);
+    }
 }
 
 pub fn present(self: *RenderContext) !void {
@@ -222,6 +166,7 @@ pub fn present(self: *RenderContext) !void {
 fn loadResources(self: *RenderContext) !void {
     try self.loadViews();
     std.log.info("views loaded {}", .{self.permanent_arena.queryCapacity()});
+    try self.createDepthTexture(self.swapchain_size);
     try self.prepareVertexAndIndexBuffers();
     std.log.info("buffers prepared {}", .{self.permanent_arena.queryCapacity()});
     try self.setupPipelineLayout();
@@ -230,8 +175,6 @@ fn loadResources(self: *RenderContext) !void {
     std.log.info("uniforms prepared {}", .{self.permanent_arena.queryCapacity()});
     try self.setupBindGroups();
     std.log.info("bind groups set up {}", .{self.permanent_arena.queryCapacity()});
-    try self.setupPass();
-    std.log.info("passes set up {}", .{self.permanent_arena.queryCapacity()});
     try self.preparePipelines();
     std.log.info("pipelines prepared {}", .{self.permanent_arena.queryCapacity()});
 }
@@ -249,16 +192,24 @@ fn cleanResources(self: *RenderContext) void {
     if (self.render_pipeline) |rp| rp.destroy();
 
     self.cleanupRenderPass();
+    self.cleanupDepthTexture();
 }
 
 fn loadViews(self: *RenderContext) !void {
     self.view_count = try self.swapchain.getTextureViews(&self.views);
 }
 
-fn createUploadedBuffer(self: *RenderContext, usage: gpu.Buffer.UsageFlags, comptime T: type, data: []const T) !*gpu.Buffer {
+fn createUploadedBuffer(
+    self: *RenderContext,
+    usage: gpu.Buffer.UsageFlags,
+    comptime T: type,
+    data: []const T,
+    label: ?[]const u8,
+) !*gpu.Buffer {
     var modified_usage = usage;
     modified_usage.copy_dst = true;
     var buffer = try self.device.createBuffer(self.resource_allocator, &.{
+        .label = label,
         .usage = modified_usage,
         .size = data.len * @sizeOf(T),
     });
@@ -291,11 +242,11 @@ fn prepareVertexAndIndexBuffers(self: *RenderContext) !void {
 
     self.vertex_buffer = try self.createUploadedBuffer(.{
         .vertex = true,
-    }, Vertex, &vertices);
+    }, Vertex, &vertices, "vb!");
 
     self.index_buffer = try self.createUploadedBuffer(.{
         .index = true,
-    }, u16, &indices);
+    }, u16, &indices, "ib!");
 }
 
 fn setupPipelineLayout(self: *RenderContext) !void {
@@ -334,11 +285,46 @@ fn setupBindGroups(self: *RenderContext) !void {
     });
 }
 
+fn createDepthTexture(self: *RenderContext, swapchain_size: [2]u32) !void {
+    const size = gpu.Extent3D{
+        .width = swapchain_size[0],
+        .height = swapchain_size[1],
+        .depth_or_array_layers = 1,
+    };
+    const descriptor = gpu.Texture.Descriptor{
+        .size = size,
+        .usage = .{
+            .render_attachment = true,
+            .texture_binding = true,
+        },
+        .format = .depth24_plus_stencil8,
+        .dimension = .dimension_2d,
+        .mip_level_count = 1,
+        .sample_count = 1,
+    };
+
+    self.depth_texture = try self.device.createTexture(
+        self.swapchain_allocator,
+        &descriptor,
+    );
+    errdefer self.depth_texture.?.destroy();
+
+    self.depth_texture_view = try self.depth_texture.?.createView(
+        self.swapchain_allocator,
+        &.{},
+    );
+}
+
+fn cleanupDepthTexture(self: *RenderContext) void {
+    if (self.depth_texture_view) |t| t.destroy();
+    if (self.depth_texture) |t| t.destroy();
+}
+
 fn setupPass(self: *RenderContext) !void {
     const render_pass = &self.render_pass;
 
     render_pass.colour_attachments[0] = gpu.RenderPass.ColourAttachment{
-        .view = null,
+        .view = self.swapchain.getCurrentTextureView(),
         .load_op = .clear,
         .store_op = .store,
         .clear_value = .{
@@ -349,12 +335,18 @@ fn setupPass(self: *RenderContext) !void {
         },
     };
 
-    try render_pass.depth.init(self, .{});
+    render_pass.depth_attachment = gpu.RenderPass.DepthStencilAttachment{
+        .view = self.depth_texture_view.?,
+        .depth_load_op = .clear,
+        .depth_store_op = .store,
+        .depth_clear_value = 1.0,
+        .stencil_clear_value = 0,
+    };
 
     render_pass.descriptor = gpu.RenderPass.Descriptor{
         .label = "rp!",
         .colour_attachments = &render_pass.colour_attachments,
-        .depth_stencil_attachment = &render_pass.depth.attachment_desc,
+        .depth_stencil_attachment = &render_pass.depth_attachment,
     };
 }
 
@@ -365,7 +357,7 @@ fn cleanupRenderPass(self: *RenderContext) void {
 fn prepareUniformBuffers(self: *RenderContext) !void {
     self.uniform_buffer = try self.createUploadedBuffer(.{
         .uniform = true,
-    }, Uniforms, &.{self.uniforms});
+    }, Uniforms, &.{self.uniforms}, "ub!");
     errdefer self.uniform_buffer.?.destroy();
 }
 
@@ -538,7 +530,7 @@ fn prepareCommandBuffer(self: *RenderContext) !*gpu.CommandBuffer {
     self.mutex.lock();
     defer self.mutex.unlock();
 
-    self.render_pass.colour_attachments[0].view = self.swapchain.getCurrentTextureView();
+    try self.setupPass();
 
     const command_encoder = try self.device.createCommandEncoder(self.frame_allocator, &.{
         .label = "ce!",

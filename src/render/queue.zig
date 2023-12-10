@@ -52,4 +52,8 @@ pub const Queue = opaque {
             size,
         );
     }
+
+    pub inline fn waitIdle(self: *Queue) !void {
+        try impl.queueWaitIdle(self);
+    }
 };

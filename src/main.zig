@@ -36,7 +36,7 @@ const Context = struct {
             .application = application,
             .window = try application.createWindow(.{
                 .title = "helloo!",
-                .size = .{ 800, 600 },
+                .size = .{ 800, 800 },
                 .visible = true,
             }),
         };

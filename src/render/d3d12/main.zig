@@ -80,6 +80,7 @@ pub const procs: gpu.procs.Procs = .{
     .queueSubmit = queueSubmit,
     .queueWriteBuffer = queueWriteBuffer,
     .queueWriteTexture = queueWriteTexture,
+    .queueWaitIdle = queueWaitIdle,
     // RenderBundle
     // RenderBundleEncoder
     // RenderPassEncoder
@@ -139,16 +140,11 @@ export fn getProcs() *const gpu.procs.Procs {
 
 fn setDebugName(comptime T: type, child: ?*T, name: []const u8) void {
     if (child) |c| {
-        var scratch = common.ScratchSpace(2048){};
-        const temp_allocator = scratch.allocator();
-
-        const wide_name = winappimpl.convertToUtf16WithAllocator(
-            temp_allocator,
-            name,
-        ) orelse
-            winapi.zig.L("?");
-
-        const hr = c.ID3D12Object_SetName(@ptrCast(wide_name));
+        const hr = c.ID3D12Object_SetPrivateData(
+            &d3d.WKPDID_D3DDebugObjectName,
+            @intCast(name.len),
+            @ptrCast(@alignCast(name)),
+        );
         if (!d3dcommon.checkHResult(hr))
             std.debug.panic("Failed to set debug name for D3D12 object: {s}", .{name});
     }
@@ -799,7 +795,7 @@ pub const D3D12CommandBuffer = struct {
         };
     }
 
-    pub fn setLabel(self: *D3D12CommandBuffer, name: []const u8) void {
+    pub inline fn setLabel(self: *D3D12CommandBuffer, name: []const u8) void {
         var scratch = common.ScratchSpace(2048){};
         const temp_allocator = scratch.allocator();
 
@@ -1155,27 +1151,31 @@ pub const D3D12CommandEncoder = struct {
 
 pub const D3D12BarrierEnforcer = struct {
     device: *D3D12Device = undefined,
-    buf: [512]u8 = undefined,
-    fba: std.heap.FixedBufferAllocator = undefined,
-    allocator: std.mem.Allocator = undefined,
+
+    buf_set: [512]u8 = .{0} ** 512,
+    fba_set: std.heap.FixedBufferAllocator = undefined,
+    allocator_set: std.mem.Allocator = undefined,
+
+    buf_barriers: [512]u8 = .{0} ** 512,
+    fba_barriers: std.heap.FixedBufferAllocator = undefined,
+    allocator_barriers: std.mem.Allocator = undefined,
+
     written_set: std.AutoArrayHashMapUnmanaged(*const D3D12Resource, d3d12.D3D12_RESOURCE_STATES) = .{},
     barriers: std.ArrayListUnmanaged(d3d12.D3D12_RESOURCE_BARRIER) = .{},
 
     pub fn init(self: *D3D12BarrierEnforcer, allocator: std.mem.Allocator, device: *D3D12Device) void {
         _ = allocator;
-        self.fba = std.heap.FixedBufferAllocator.init(&self.buf);
-        self.allocator = self.fba.allocator();
+        self.fba_set = std.heap.FixedBufferAllocator.init(&self.buf_set);
+        self.allocator_set = self.fba_set.allocator();
+
+        self.fba_barriers = std.heap.FixedBufferAllocator.init(&self.buf_barriers);
+        self.allocator_barriers = self.fba_barriers.allocator();
+
         self.device = device;
     }
 
     pub fn deinit(self: *D3D12BarrierEnforcer) void {
-        self.fba.reset();
-    }
-
-    fn reset(self: *D3D12BarrierEnforcer) void {
-        self.written_set.clearAndFree(self.allocator);
-        self.barriers.clearAndFree(self.allocator);
-        _ = self.fba.reset();
+        _ = self;
     }
 
     pub fn transition(self: *D3D12BarrierEnforcer, resource: *const D3D12Resource, new_state: d3d12.D3D12_RESOURCE_STATES) !void {
@@ -1184,7 +1184,7 @@ pub const D3D12BarrierEnforcer = struct {
         if (old_state == .UNORDERED_ACCESS and new_state == .UNORDERED_ACCESS) {
             try self.addUnorderedAccessBarrier(resource);
         } else if (old_state != new_state) {
-            try self.written_set.put(self.allocator, resource, new_state);
+            try self.written_set.put(self.allocator_set, resource, new_state);
             try self.addTransitionBarrier(resource, old_state, new_state);
         }
     }
@@ -1196,7 +1196,7 @@ pub const D3D12BarrierEnforcer = struct {
                 self.barriers.items.ptr,
             );
 
-            self.reset();
+            self.barriers.clearRetainingCapacity();
         }
     }
 
@@ -1224,7 +1224,7 @@ pub const D3D12BarrierEnforcer = struct {
                 },
             },
         };
-        try self.barriers.append(self.allocator, barrier);
+        try self.barriers.append(self.allocator_barriers, barrier);
     }
 
     pub fn addTransitionBarrier(
@@ -1245,7 +1245,7 @@ pub const D3D12BarrierEnforcer = struct {
                 },
             },
         };
-        try self.barriers.append(self.allocator, barrier);
+        try self.barriers.append(self.allocator_barriers, barrier);
     }
 };
 
@@ -1532,7 +1532,7 @@ pub const D3D12Device = struct {
         if (self.lost_cb) |cb| {
             cb(.destroyed, "device destroyed");
         }
-        _ = self.queue.waitUntil(self.queue.fence_value);
+        self.queue.waitIdle();
 
         if (self.shader_compiler) |sc| {
             sc.destroy();
@@ -2179,7 +2179,8 @@ pub const D3D12PipelineLayout = struct {
         };
 
         if (desc.label) |label| {
-            layout.setLabel(label);
+            const p = label;
+            layout.setLabel(p);
         }
 
         return layout;
@@ -2193,7 +2194,7 @@ pub const D3D12PipelineLayout = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn setLabel(self: *D3D12PipelineLayout, label: []const u8) void {
+    pub inline fn setLabel(self: *D3D12PipelineLayout, label: []const u8) void {
         setDebugName(d3d12.ID3D12RootSignature, self.root_signature, label);
     }
 };
@@ -2234,6 +2235,10 @@ pub fn queueWriteTexture(
         write_size,
     ) catch
         return gpu.Queue.Error.QueueFailure;
+}
+
+pub fn queueWaitIdle(queue: *gpu.Queue) gpu.Queue.Error!void {
+    D3D12Queue.waitIdle(@ptrCast(@alignCast(queue)));
 }
 
 pub const D3D12Queue = struct {
@@ -2319,7 +2324,6 @@ pub const D3D12Queue = struct {
         if (self.current_command_encoder) |ce| {
             const command_buffer = ce.finish(&.{}) catch return gpu.Queue.Error.QueueFailedToSubmit;
             defer ce.destroy();
-            std.debug.print("{}\n", .{self.fba.end_index});
             defer self.fba.reset();
             // give it back so we can clean it up
             ce.command_buffer = command_buffer;
@@ -2381,6 +2385,10 @@ pub const D3D12Queue = struct {
             self.fence_value,
         );
         if (!d3dcommon.checkHResult(hr)) return gpu.Queue.Error.QueueFailedToSubmit;
+    }
+
+    pub fn waitIdle(self: *D3D12Queue) void {
+        _ = self.waitUntil(self.fence_value);
     }
 
     pub fn waitUntil(self: *D3D12Queue, value: u64) bool {
@@ -2460,7 +2468,7 @@ pub const D3D12CommandPool = struct {
         }
 
         const command_allocator = self.free_allocators.pop();
-        _ = self.device.queue.waitUntil(self.device.queue.fence_value);
+        self.device.queue.waitIdle();
         const reset_hr = command_allocator.ID3D12CommandAllocator_Reset();
         if (!d3dcommon.checkHResult(reset_hr)) return Error.CommandPoolResetAllocatorFailed;
         return command_allocator;
@@ -3487,7 +3495,7 @@ pub const D3D12RenderPipeline = struct {
         .pShaderBytecode = null,
     };
 
-    pub fn setLabel(self: *D3D12RenderPipeline, label: []const u8) void {
+    pub inline fn setLabel(self: *D3D12RenderPipeline, label: []const u8) void {
         setDebugName(d3d12.ID3D12PipelineState, self.pipeline, label);
     }
 };
@@ -4050,8 +4058,11 @@ pub fn swapChainPresent(swapchain: *gpu.SwapChain) !void {
 pub fn swapChainResize(
     swapchain: *gpu.SwapChain,
     size: [2]u32,
-) gpu.SwapChain.Error!void {
-    D3D12SwapChain.resize(@ptrCast(@alignCast(swapchain)), size) catch {};
+) gpu.SwapChain.Error!bool {
+    return D3D12SwapChain.resize(
+        @ptrCast(@alignCast(swapchain)),
+        size,
+    );
 }
 
 pub fn swapChainDestroy(swapchain: *gpu.SwapChain) void {
@@ -4136,7 +4147,7 @@ pub const D3D12SwapChain = struct {
     pub fn destroy(self: *D3D12SwapChain) void {
         self.releaseRenderTargets();
 
-        _ = self.device.queue.waitUntil(self.device.queue.fence_value);
+        self.device.queue.waitIdle();
         d3dcommon.releaseIUnknown(dxgi.IDXGISwapChain4, &self.swapchain);
         self.allocator.destroy(self);
     }
@@ -4166,7 +4177,7 @@ pub const D3D12SwapChain = struct {
     }
 
     fn releaseRenderTargets(self: *D3D12SwapChain) void {
-        _ = self.device.queue.waitUntil(self.device.queue.fence_value);
+        self.device.queue.waitIdle();
 
         for (self.views[0..self.buffer_count]) |*view| {
             _ = view;
@@ -4180,8 +4191,7 @@ pub const D3D12SwapChain = struct {
     }
 
     fn waitAndUpdateBackBufferIndex(self: *D3D12SwapChain) void {
-        const fence_value = self.fences[self.current_index];
-        _ = self.device.queue.waitUntil(fence_value);
+        _ = self.device.queue.waitIdle();
         const index = self.swapchain.?.IDXGISwapChain3_GetCurrentBackBufferIndex();
         self.current_index = index;
     }
@@ -4222,8 +4232,9 @@ pub const D3D12SwapChain = struct {
         self.fences[self.current_index] = self.device.queue.fence_value;
     }
 
-    pub fn resize(self: *D3D12SwapChain, size: [2]u32) !void {
-        if (size[0] == self.desc.width and size[1] == self.desc.height) return;
+    pub fn resize(self: *D3D12SwapChain, size: [2]u32) !bool {
+        if (size[0] == self.desc.width and size[1] == self.desc.height) return false;
+        self.device.queue.waitIdle();
         self.desc.width = @max(size[0], 1);
         self.desc.height = @max(size[1], 1);
         self.releaseRenderTargets();
@@ -4238,6 +4249,7 @@ pub const D3D12SwapChain = struct {
         if (!d3dcommon.checkHResult(resize_hr)) return gpu.SwapChain.Error.SwapChainFailedToResize;
 
         self.createRenderTargets() catch return gpu.SwapChain.Error.SwapChainFailedToResize;
+        return true;
     }
 };
 
