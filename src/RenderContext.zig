@@ -133,7 +133,6 @@ pub fn load(self: *RenderContext, allocator: std.mem.Allocator, window: *app.win
 }
 
 pub fn deinit(self: *RenderContext) void {
-    std.log.info("final {}", .{self.permanent_arena.queryCapacity()});
     self.cleanResources();
 
     self.swapchain.destroy();
@@ -142,7 +141,6 @@ pub fn deinit(self: *RenderContext) void {
     self.surface.destroy();
     self.instance.destroy();
 
-    std.log.info("hmm {}", .{self.permanent_arena.queryCapacity()});
     self.permanent_arena.deinit();
     self.resource_arena.deinit();
     self.swapchain_arena.deinit();
@@ -165,18 +163,12 @@ pub fn present(self: *RenderContext) !void {
 
 fn loadResources(self: *RenderContext) !void {
     try self.loadViews();
-    std.log.info("views loaded {}", .{self.permanent_arena.queryCapacity()});
     try self.createDepthTexture(self.swapchain_size);
     try self.prepareVertexAndIndexBuffers();
-    std.log.info("buffers prepared {}", .{self.permanent_arena.queryCapacity()});
     try self.setupPipelineLayout();
-    std.log.info("pipeline layout set up {}", .{self.permanent_arena.queryCapacity()});
     try self.prepareUniformBuffers();
-    std.log.info("uniforms prepared {}", .{self.permanent_arena.queryCapacity()});
     try self.setupBindGroups();
-    std.log.info("bind groups set up {}", .{self.permanent_arena.queryCapacity()});
     try self.preparePipelines();
-    std.log.info("pipelines prepared {}", .{self.permanent_arena.queryCapacity()});
 }
 
 fn cleanResources(self: *RenderContext) void {

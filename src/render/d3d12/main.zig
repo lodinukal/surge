@@ -1152,30 +1152,28 @@ pub const D3D12CommandEncoder = struct {
 pub const D3D12BarrierEnforcer = struct {
     device: *D3D12Device = undefined,
 
-    buf_set: [512]u8 = .{0} ** 512,
-    fba_set: std.heap.FixedBufferAllocator = undefined,
+    arena_set: std.heap.ArenaAllocator = undefined,
     allocator_set: std.mem.Allocator = undefined,
 
-    buf_barriers: [512]u8 = .{0} ** 512,
-    fba_barriers: std.heap.FixedBufferAllocator = undefined,
+    arena_barriers: std.heap.ArenaAllocator = undefined,
     allocator_barriers: std.mem.Allocator = undefined,
 
     written_set: std.AutoArrayHashMapUnmanaged(*const D3D12Resource, d3d12.D3D12_RESOURCE_STATES) = .{},
     barriers: std.ArrayListUnmanaged(d3d12.D3D12_RESOURCE_BARRIER) = .{},
 
     pub fn init(self: *D3D12BarrierEnforcer, allocator: std.mem.Allocator, device: *D3D12Device) void {
-        _ = allocator;
-        self.fba_set = std.heap.FixedBufferAllocator.init(&self.buf_set);
-        self.allocator_set = self.fba_set.allocator();
+        self.arena_set = std.heap.ArenaAllocator.init(allocator);
+        self.allocator_set = self.arena_set.allocator();
 
-        self.fba_barriers = std.heap.FixedBufferAllocator.init(&self.buf_barriers);
-        self.allocator_barriers = self.fba_barriers.allocator();
+        self.arena_barriers = std.heap.ArenaAllocator.init(allocator);
+        self.allocator_barriers = self.arena_barriers.allocator();
 
         self.device = device;
     }
 
     pub fn deinit(self: *D3D12BarrierEnforcer) void {
-        _ = self;
+        self.arena_set.deinit();
+        self.arena_barriers.deinit();
     }
 
     pub fn transition(self: *D3D12BarrierEnforcer, resource: *const D3D12Resource, new_state: d3d12.D3D12_RESOURCE_STATES) !void {
@@ -2245,8 +2243,7 @@ pub const D3D12Queue = struct {
     device: *D3D12Device,
     command_queue: ?*d3d12.ID3D12CommandQueue = null,
 
-    buf: [4096]u8 = undefined,
-    fba: std.heap.FixedBufferAllocator = undefined,
+    arena: std.heap.ArenaAllocator = undefined,
     allocator: std.mem.Allocator = undefined,
 
     fence: ?*d3d12.ID3D12Fence,
@@ -2296,8 +2293,8 @@ pub const D3D12Queue = struct {
             .fence = fence,
             .fence_event = fence_event.?,
         };
-        self.fba = std.heap.FixedBufferAllocator.init(&self.buf);
-        self.allocator = self.fba.allocator();
+        self.arena = std.heap.ArenaAllocator.init(device.allocator);
+        self.allocator = self.arena.allocator();
     }
 
     pub fn deinit(self: *D3D12Queue) void {
@@ -2305,6 +2302,8 @@ pub const D3D12Queue = struct {
         d3dcommon.releaseIUnknown(d3d12.ID3D12CommandQueue, &self.command_queue);
         d3dcommon.releaseIUnknown(d3d12.ID3D12Fence, &self.fence);
         _ = win32.foundation.CloseHandle(self.fence_event);
+
+        self.arena.deinit();
     }
 
     pub fn submit(self: *D3D12Queue, command_buffers: []const *gpu.CommandBuffer) gpu.Queue.Error!void {
@@ -2323,8 +2322,8 @@ pub const D3D12Queue = struct {
 
         if (self.current_command_encoder) |ce| {
             const command_buffer = ce.finish(&.{}) catch return gpu.Queue.Error.QueueFailedToSubmit;
+            defer _ = self.arena.reset(.retain_capacity);
             defer ce.destroy();
-            defer self.fba.reset();
             // give it back so we can clean it up
             ce.command_buffer = command_buffer;
             self.current_command_encoder = null;
@@ -3885,7 +3884,9 @@ pub const D3D12ShaderCompiler = struct {
         }
 
         if (self.lib == null) {
-            self.lib = try std.DynLib.open("dxcompiler.dll");
+            self.lib = std.DynLib.open("dxcompiler.dll") catch {
+                @panic("failed to load dxcompiler.dll");
+            };
             self.createInstance = self.lib.?.lookup(
                 dxc.DxcCreateInstanceProc,
                 "DxcCreateInstance",
