@@ -97,6 +97,11 @@ pub fn build(b: *std.Build) !void {
         // buildD3d11(b, target, optimize);
         buildD3d12(b, target, optimize);
     }
+
+    const stbi = stbImage(b, target, optimize);
+    inline for (.{ exe, unit_tests }) |t| {
+        t.addObject(stbi);
+    }
 }
 
 fn linkGdk(
@@ -183,4 +188,21 @@ fn buildD3d12(
     const win32_dep = b.dependency("win32", .{});
     const win32_module = win32_dep.module("zigwin32");
     d3d12.addModule("win32", win32_module);
+}
+
+fn stbImage(
+    b: *std.Build,
+    target: std.zig.CrossTarget,
+    optimize: std.builtin.OptimizeMode,
+) *std.Build.Step.Compile {
+    const src = "src/c/stb_image_impl.c";
+
+    var stbi = b.addObject(.{
+        .name = "stb_image",
+        .root_source_file = .{ .path = src },
+        .target = target,
+        .optimize = optimize,
+    });
+    stbi.linkLibC();
+    return stbi;
 }

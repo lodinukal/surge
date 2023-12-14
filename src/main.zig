@@ -7,6 +7,8 @@ const gpu = @import("render/gpu.zig");
 
 const RenderContext = @import("RenderContext.zig");
 
+const image = @import("image.zig");
+
 const Context = struct {
     allocator: std.mem.Allocator,
     application: *app.Application,
@@ -148,14 +150,24 @@ const Context = struct {
     }
 };
 
+const reginleif = @embedFile("reginleif.png");
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const alloc = gpa.allocator();
 
+    image.setAllocator(alloc);
+
     // var arena = std.heap.ArenaAllocator.init(gpa_alloc);
     // defer arena.deinit();
     // const alloc = arena.allocator();
+
+    var info = image.Info{};
+    const img = try image.Image.load(reginleif, &info);
+    defer img.deinit();
+
+    std.debug.print("{}\n", .{info});
 
     var context = try Context.init(alloc);
     defer context.deinit();
