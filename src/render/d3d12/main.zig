@@ -1537,6 +1537,8 @@ pub const D3D12Device = struct {
             self.shader_arena.deinit();
         }
 
+        self.queue.deinit();
+
         self.command_pool.deinit();
         self.streaming_pool.deinit();
         self.resource_pool.deinit();
@@ -1546,7 +1548,6 @@ pub const D3D12Device = struct {
         self.sampler_heap.deinit();
         self.general_heap.deinit();
 
-        self.queue.deinit();
         self.allocator.destroy(self.queue);
         d3dcommon.releaseIUnknown(d3d12.ID3D12Device2, &self.device);
         self.allocator.destroy(self);
@@ -4369,20 +4370,13 @@ pub const D3D12Texture = struct {
         });
         const initial_state = read_state;
 
-        const clear_value = d3d12.D3D12_CLEAR_VALUE{
-            .Format = resource_desc.Format,
-            .Anonymous = .{
-                .Color = .{ 0, 0, 0, 0 },
-            },
-        };
-
         var resource: ?*d3d12.ID3D12Resource = null;
         const resource_hr = device.device.?.ID3D12Device_CreateCommittedResource(
             &heap_properties,
             .CREATE_NOT_ZEROED,
             &resource_desc,
             initial_state,
-            &clear_value,
+            null,
             d3d12.IID_ID3D12Resource,
             @ptrCast(&resource),
         );
