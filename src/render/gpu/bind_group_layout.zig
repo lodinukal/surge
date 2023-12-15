@@ -8,13 +8,46 @@ pub const BindGroupLayout = opaque {
         BindGroupLayoutFailedToCreate,
     };
 
+    pub const BindingType = enum {
+        buffer,
+        sampler,
+        texture,
+        storage_texture,
+    };
+
+    pub const BindingInfo = union(BindingType) {
+        buffer: struct {
+            type: gpu.Buffer.BindingType,
+            has_dynamic_offset: bool,
+            min_binding_size: u64,
+        },
+        sampler: struct {
+            type: gpu.Sampler.BindingType,
+        },
+        texture: struct {
+            sample_type: gpu.Texture.SampleType,
+            view_dimension: gpu.TextureView.Dimension,
+            multisampled: bool,
+        },
+        storage_texture: struct {
+            access: gpu.StorageTextureAccess,
+            format: gpu.Texture.Format,
+            view_dimension: gpu.TextureView.Dimension,
+        },
+
+        pub inline fn hasDynamicOffset(self: BindingInfo) bool {
+            return switch (self) {
+                .buffer => |buffer| buffer.has_dynamic_offset,
+                else => false,
+            };
+        }
+    };
+
     pub const Entry = struct {
         binding: u32,
         visibility: gpu.ShaderStageFlags,
-        buffer: gpu.Buffer.BindingLayout = .{},
-        sampler: gpu.Sampler.BindingLayout = .{},
-        texture: gpu.Texture.BindingLayout = .{},
-        storage_texture: gpu.StorageTextureBindingLayout = .{},
+        type: BindingInfo,
+        count: ?u32 = null,
 
         pub fn buffer(
             binding: u32,
@@ -26,10 +59,12 @@ pub const BindGroupLayout = opaque {
             return .{
                 .binding = binding,
                 .visibility = visibility,
-                .buffer = .{
-                    .type = binding_type,
-                    .has_dynamic_offset = has_dynamic_offset,
-                    .min_binding_size = min_binding_size,
+                .type = .{
+                    .buffer = .{
+                        .type = binding_type,
+                        .has_dynamic_offset = has_dynamic_offset,
+                        .min_binding_size = min_binding_size,
+                    },
                 },
             };
         }
@@ -42,7 +77,11 @@ pub const BindGroupLayout = opaque {
             return .{
                 .binding = binding,
                 .visibility = visibility,
-                .sampler = .{ .type = binding_type },
+                .type = .{
+                    .sampler = .{
+                        .type = binding_type,
+                    },
+                },
             };
         }
 
@@ -56,10 +95,12 @@ pub const BindGroupLayout = opaque {
             return .{
                 .binding = binding,
                 .visibility = visibility,
-                .texture = .{
-                    .sample_type = sample_type,
-                    .view_dimension = view_dimension,
-                    .multisampled = multisampled,
+                .type = .{
+                    .texture = .{
+                        .sample_type = sample_type,
+                        .view_dimension = view_dimension,
+                        .multisampled = multisampled,
+                    },
                 },
             };
         }
@@ -74,10 +115,12 @@ pub const BindGroupLayout = opaque {
             return .{
                 .binding = binding,
                 .visibility = visibility,
-                .storage_texture = .{
-                    .access = access,
-                    .format = format,
-                    .view_dimension = view_dimension,
+                .type = .{
+                    .storage_texture = .{
+                        .access = access,
+                        .format = format,
+                        .view_dimension = view_dimension,
+                    },
                 },
             };
         }
@@ -85,7 +128,7 @@ pub const BindGroupLayout = opaque {
 
     pub const Descriptor = struct {
         label: ?[]const u8 = null,
-        entries: ?[]const Entry = null,
+        entries: []const Entry = &.{},
     };
 
     pub inline fn destroy(self: *BindGroupLayout) void {

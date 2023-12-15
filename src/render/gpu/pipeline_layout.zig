@@ -9,7 +9,7 @@ pub const PipelineLayout = opaque {
 
     pub const Descriptor = struct {
         label: ?[]const u8 = null,
-        bind_group_layouts: ?[]const *gpu.BindGroupLayout = null,
+        bind_group_layouts: []const *gpu.BindGroupLayout = &.{},
     };
 
     pub inline fn destroy(self: *PipelineLayout) void {

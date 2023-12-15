@@ -755,7 +755,7 @@ pub const SupportedLimits = struct {
 pub const VertexBufferLayout = struct {
     array_stride: u64,
     step_mode: VertexStepMode = .vertex,
-    attributes: ?[]const VertexAttribute = null,
+    attributes: []const VertexAttribute = &.{},
 
     pub fn fromStruct(comptime T: type, comptime field_info: anytype) VertexBufferLayout {
         const fields: []const std.builtin.Type.StructField = std.meta.fields(T);
@@ -799,13 +799,13 @@ pub const ColourTargetState = struct {
 pub const VertexState = struct {
     module: *ShaderModule,
     entry_point: []const u8,
-    constants: ?[]const ConstantEntry = null,
-    buffers: ?[]const VertexBufferLayout = null,
+    constants: []const ConstantEntry = &.{},
+    buffers: []const VertexBufferLayout = &.{},
 };
 
 pub const FragmentState = struct {
     module: *ShaderModule,
     entry_point: []const u8,
-    constants: ?[]const ConstantEntry = null,
-    targets: ?[]const ColourTargetState = null,
+    constants: []const ConstantEntry = &.{},
+    targets: []const ColourTargetState = &.{},
 };

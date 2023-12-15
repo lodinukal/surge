@@ -131,7 +131,7 @@ pub const Procs = struct {
         renderPassEncoder: *gpu.RenderPass.Encoder,
         index: u32,
         bindGroup: *gpu.BindGroup,
-        dynamicOffsets: ?[]const u32,
+        dynamicOffsets: []const u32,
     ) void,
     renderPassEncoderSetBlendConstant: *const fn (
         renderPassEncoder: *gpu.RenderPass.Encoder,

@@ -385,7 +385,7 @@ pub inline fn renderPassEncoderSetBindGroup(
         render_pass_encoder,
         index,
         bind_group,
-        dynamic_offsets,
+        dynamic_offsets orelse &.{},
     );
 }
 

@@ -5,7 +5,7 @@ const impl = gpu.impl;
 
 pub const Descriptor = struct {
     label: ?[]const u8 = null,
-    colour_attachments: ?[]const ColourAttachment = null,
+    colour_attachments: []const ColourAttachment = &.{},
     depth_stencil_attachment: ?*const DepthStencilAttachment = null,
     query_set: ?*gpu.QuerySet = null,
     timestamp_writes: ?[]const TimestampWrite = null,

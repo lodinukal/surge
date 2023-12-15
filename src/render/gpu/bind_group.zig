@@ -46,7 +46,7 @@ pub const BindGroup = opaque {
     pub const Descriptor = struct {
         label: ?[]const u8 = null,
         layout: *gpu.BindGroupLayout,
-        entries: ?[]const Entry = null,
+        entries: []const Entry = &.{},
     };
 
     pub inline fn destroy(self: *BindGroup) void {

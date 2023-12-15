@@ -27,6 +27,11 @@ fn fragmentMain(@location(0) worldPos : vec3f,
   let N = normalize(normal);
   var surfaceColor = vec3f(0);
 
+  // Loop over the scene point lights.
+  for (var i = 0u; i < lights.pointCount; i++) {
+    let worldToLight = lights.point[i].position - worldPos;
+  }
+
   // Return the accumulated surface color.
-  return vec4f(0.0);
+  return vec4(1.0, 1.0, 1.0, 1.0);
 }
