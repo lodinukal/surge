@@ -3,8 +3,6 @@ const std = @import("std");
 const app = @import("app/app.zig");
 const math = @import("math.zig");
 
-const gpu = @import("render/gpu.zig");
-
 const RenderContext = @import("RenderContext.zig");
 
 const image = @import("image.zig");

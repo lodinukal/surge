@@ -5,7 +5,7 @@ const math = @import("math.zig");
 
 const common = @import("core/common.zig");
 
-const gpu = @import("render/gpu.zig");
+const gpu = @import("render/render.zig").gpu;
 const image = @import("image.zig");
 
 const RenderContext = @This();
@@ -80,8 +80,11 @@ reginleif_sampler: ?*gpu.Sampler = null,
 
 pipeline_layout: ?*gpu.PipelineLayout = null,
 
-bind_group_layout: ?*gpu.BindGroupLayout = null,
-bind_group: ?*gpu.BindGroup = null,
+bind_group_layout_0: ?*gpu.BindGroupLayout = null,
+bind_group_0: ?*gpu.BindGroup = null,
+
+bind_group_layout_1: ?*gpu.BindGroupLayout = null,
+bind_group_1: ?*gpu.BindGroup = null,
 
 render_pass: RenderPass = .{},
 
@@ -182,8 +185,11 @@ fn cleanResources(self: *RenderContext) void {
     if (self.vertex_buffer) |b| b.destroy();
     if (self.index_buffer) |b| b.destroy();
 
-    if (self.bind_group) |bg| bg.destroy();
-    if (self.bind_group_layout) |bgl| bgl.destroy();
+    if (self.bind_group_0) |bg| bg.destroy();
+    if (self.bind_group_layout_0) |bgl| bgl.destroy();
+
+    if (self.bind_group_1) |bg| bg.destroy();
+    if (self.bind_group_layout_1) |bgl| bgl.destroy();
 
     if (self.uniform_buffer) |b| b.destroy();
     if (self.pipeline_layout) |pl| pl.destroy();
@@ -280,8 +286,8 @@ fn prepareVertexAndIndexBuffers(self: *RenderContext) !void {
 }
 
 fn setupPipelineLayout(self: *RenderContext) !void {
-    self.bind_group_layout = try self.device.createBindGroupLayout(self.resource_allocator, &.{
-        .label = "bgl!",
+    self.bind_group_layout_0 = try self.device.createBindGroupLayout(self.resource_allocator, &.{
+        .label = "bgl1!",
         .entries = &.{
             gpu.BindGroupLayout.Entry.buffer(
                 0,
@@ -290,15 +296,21 @@ fn setupPipelineLayout(self: *RenderContext) !void {
                 false,
                 @sizeOf(Uniforms),
             ),
+        },
+    });
+
+    self.bind_group_layout_1 = try self.device.createBindGroupLayout(self.resource_allocator, &.{
+        .label = "bgl2!",
+        .entries = &.{
             gpu.BindGroupLayout.Entry.texture(
-                1,
+                0,
                 gpu.ShaderStageFlags.fragment,
                 .uint,
                 .dimension_2d,
                 true,
             ),
             gpu.BindGroupLayout.Entry.sampler(
-                2,
+                1,
                 gpu.ShaderStageFlags.fragment,
                 .filtering,
             ),
@@ -307,14 +319,14 @@ fn setupPipelineLayout(self: *RenderContext) !void {
 
     self.pipeline_layout = try self.device.createPipelineLayout(self.resource_allocator, &.{
         .label = "pl!",
-        .bind_group_layouts = &.{self.bind_group_layout.?},
+        .bind_group_layouts = &.{ self.bind_group_layout_0.?, self.bind_group_layout_1.? },
     });
 }
 
 fn setupBindGroups(self: *RenderContext) !void {
-    self.bind_group = try self.device.createBindGroup(self.resource_allocator, &gpu.BindGroup.Descriptor{
+    self.bind_group_0 = try self.device.createBindGroup(self.resource_allocator, &gpu.BindGroup.Descriptor{
         .label = "bg!",
-        .layout = self.bind_group_layout.?,
+        .layout = self.bind_group_layout_0.?,
         .entries = &.{
             gpu.BindGroup.Entry.fromBuffer(
                 0,
@@ -323,12 +335,19 @@ fn setupBindGroups(self: *RenderContext) !void {
                 @sizeOf(Uniforms),
                 @sizeOf(Uniforms),
             ),
+        },
+    });
+
+    self.bind_group_1 = try self.device.createBindGroup(self.resource_allocator, &gpu.BindGroup.Descriptor{
+        .label = "bg!",
+        .layout = self.bind_group_layout_1.?,
+        .entries = &.{
             gpu.BindGroup.Entry.fromTextureView(
-                1,
+                0,
                 self.reginleif_texture_view.?,
             ),
             gpu.BindGroup.Entry.fromSampler(
-                2,
+                1,
                 self.reginleif_sampler.?,
             ),
         },
@@ -521,8 +540,8 @@ const hlsl_shader =
     \\cbuffer un : register(b0) { Uniforms un; }
     \\
     \\// texture
-    \\Texture2D g_texture : register(t1);
-    \\SamplerState g_sampler : register(s2);
+    \\Texture2D g_texture : register(t0, space1);
+    \\SamplerState g_sampler : register(s1, space1);
     \\
     \\struct InputVS
     \\{
@@ -625,7 +644,8 @@ fn prepareCommandBuffer(self: *RenderContext) !*gpu.CommandBuffer {
     defer render_pass_encoder.destroy();
 
     try render_pass_encoder.setPipeline(self.render_pipeline.?);
-    render_pass_encoder.setBindGroup(0, self.bind_group.?, null);
+    render_pass_encoder.setBindGroup(0, self.bind_group_0.?, null);
+    render_pass_encoder.setBindGroup(1, self.bind_group_1.?, null);
     try render_pass_encoder.setViewport(
         0.0,
         0.0,

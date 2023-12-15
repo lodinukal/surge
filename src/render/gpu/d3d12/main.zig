@@ -1,5 +1,5 @@
 const std = @import("std");
-const gpu = @import("../../gpu.zig");
+const gpu = @import("../gpu.zig");
 
 const winapi = @import("win32");
 const win32 = winapi.windows.win32;
