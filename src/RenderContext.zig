@@ -236,7 +236,7 @@ fn loadTextureFromMemory(self: *RenderContext, memory: []const u8, info: image.I
             .copy_dst = true,
         },
         .mip_level_count = 1,
-        .sample_count = 5,
+        .sample_count = 1,
         .format = .rgba8_unorm_srgb,
     });
 
