@@ -167,7 +167,7 @@ fn buildD3d11(
     target: std.zig.CrossTarget,
     optimize: std.builtin.OptimizeMode,
 ) void {
-    const src = "src/render/d3d11/main.zig";
+    const src = "src/render/gpu/d3d11/main.zig";
     const name = "render_d3d11";
     const d3d11 = buildBackend(b, name, src, target, optimize);
 
@@ -181,7 +181,7 @@ fn buildD3d12(
     target: std.zig.CrossTarget,
     optimize: std.builtin.OptimizeMode,
 ) void {
-    const src = "src/render/d3d12/main.zig";
+    const src = "src/render/gpu/d3d12/main.zig";
     const name = "render_d3d12";
     const d3d12 = buildBackend(b, name, src, target, optimize);
 

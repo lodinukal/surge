@@ -1,5 +1,5 @@
 const std = @import("std");
-const gpu = @import("../gpu.zig");
+const gpu = @import("../../gpu.zig");
 
 const winapi = @import("win32");
 const win32 = winapi.windows.win32;
@@ -23,11 +23,11 @@ const max_back_buffer_count = 3;
 const TRUE = win32.foundation.TRUE;
 const FALSE = win32.foundation.FALSE;
 
-const winappimpl = @import("../../app/platform/windows.zig");
+const winappimpl = @import("../../../app/platform/windows.zig");
 
 const d3dcommon = @import("../d3d/common.zig");
 
-const common = @import("../../core/common.zig");
+const common = @import("../../../core/common.zig");
 
 // Loading
 pub const procs: gpu.procs.Procs = .{

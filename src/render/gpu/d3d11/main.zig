@@ -1,5 +1,5 @@
 const std = @import("std");
-const gpu = @import("../gpu.zig");
+const gpu = @import("../../gpu.zig");
 
 const winapi = @import("win32");
 const win32 = winapi.windows.win32;
@@ -10,9 +10,9 @@ const hlsl = win32.graphics.hlsl;
 
 const TRUE = win32.foundation.TRUE;
 
-const d3dcommon = @import("../d3d/common.zig");
+const d3dcommon = @import("../../d3d/common.zig");
 
-const common = @import("../../core/common.zig");
+const common = @import("../../../core/common.zig");
 
 // Loading
 pub const procs: gpu.procs.Procs = .{
