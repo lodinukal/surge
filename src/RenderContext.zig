@@ -6,6 +6,7 @@ const math = @import("math.zig");
 const common = @import("core/common.zig");
 
 const gpu = @import("render/gpu.zig");
+const image = @import("image.zig");
 
 const RenderContext = @This();
 
@@ -13,7 +14,7 @@ const RenderContext = @This();
 /// https://github.com/samdauwe/webgpu-native-examples/blob/master/src/examples/triangle.c
 pub const Vertex = struct {
     position: math.Vec,
-    colour: math.Vec,
+    tex_coords: [2]f32,
 };
 
 pub const Uniforms = struct {
@@ -21,6 +22,7 @@ pub const Uniforms = struct {
     // view: math.Mat = math.identity(),
     // model: math.Mat = math.identity(),
     rotation: f32 = 0,
+    resolution: [2]f32 = .{ 1, 1 },
 };
 
 pub const RenderPass = struct {
@@ -71,6 +73,10 @@ uniforms: Uniforms = .{},
 
 depth_texture: ?*gpu.Texture = null,
 depth_texture_view: ?*gpu.TextureView = null,
+
+reginleif_texture: ?*gpu.Texture = null,
+reginleif_texture_view: ?*gpu.TextureView = null,
+reginleif_sampler: ?*gpu.Sampler = null,
 
 pipeline_layout: ?*gpu.PipelineLayout = null,
 
@@ -167,6 +173,7 @@ fn loadResources(self: *RenderContext) !void {
     try self.prepareVertexAndIndexBuffers();
     try self.setupPipelineLayout();
     try self.prepareUniformBuffers();
+    try self.loadReginleifTexture();
     try self.setupBindGroups();
     try self.preparePipelines();
 }
@@ -180,6 +187,10 @@ fn cleanResources(self: *RenderContext) void {
 
     if (self.uniform_buffer) |b| b.destroy();
     if (self.pipeline_layout) |pl| pl.destroy();
+
+    if (self.reginleif_sampler) |s| s.destroy();
+    if (self.reginleif_texture_view) |tv| tv.destroy();
+    if (self.reginleif_texture) |t| t.destroy();
 
     if (self.render_pipeline) |rp| rp.destroy();
 
@@ -212,24 +223,51 @@ fn createUploadedBuffer(
     return buffer;
 }
 
+fn loadTextureFromMemory(self: *RenderContext, memory: []const u8, info: image.Info) !*gpu.Texture {
+    const size: gpu.Extent3D = .{
+        .width = info.width,
+        .height = info.height,
+        .depth_or_array_layers = 1,
+    };
+    const tex = try self.device.createTexture(self.resource_allocator, &.{
+        .size = size,
+        .usage = .{
+            .texture_binding = true,
+            .copy_dst = true,
+        },
+        .mip_level_count = 1,
+        .sample_count = 5,
+        .format = .rgba8_unorm_srgb,
+    });
+
+    var dst = gpu.ImageCopyTexture{
+        .texture = tex,
+        .mip_level = 0,
+        .origin = gpu.Origin3D.zero,
+        .aspect = .all,
+    };
+    try self.queue.writeTexture(&dst, u8, memory, &.{
+        .offset = 0,
+        .bytes_per_row = info.channels * info.width,
+        .rows_per_image = info.height,
+    }, &size);
+
+    return tex;
+}
+
 fn prepareVertexAndIndexBuffers(self: *RenderContext) !void {
-    const vertices = [3]Vertex{
-        .{
-            .position = .{ 0.0, 0.5, 0.0, 0.0 },
-            .colour = .{ 1.0, 0.0, 0.0, 1.0 },
-        },
-        .{
-            .position = .{ 0.5, -0.5, 0.0, 0.0 },
-            .colour = .{ 0.0, 1.0, 0.0, 1.0 },
-        },
-        .{
-            .position = .{ -0.5, -0.5, 0.0, 0.0 },
-            .colour = .{ 0.0, 0.0, 1.0, 1.0 },
-        },
+    const vertices = [4]Vertex{
+        .{ .position = .{ -0.5, -0.5, 0.0, 1.0 }, .tex_coords = .{ 0.0, 1.0 } },
+        .{ .position = .{ 0.5, -0.5, 0.0, 1.0 }, .tex_coords = .{ 1.0, 1.0 } },
+        .{ .position = .{ 0.5, 0.5, 0.0, 1.0 }, .tex_coords = .{ 1.0, 0.0 } },
+        .{ .position = .{ -0.5, 0.5, 0.0, 1.0 }, .tex_coords = .{ 0.0, 0.0 } },
     };
     self.vertex_count = vertices.len;
 
-    const indices = [4]u16{ 0, 1, 2, 0 };
+    const indices = [6]u16{
+        0, 1, 2,
+        2, 3, 0,
+    };
     self.index_count = indices.len;
 
     self.vertex_buffer = try self.createUploadedBuffer(.{
@@ -252,6 +290,18 @@ fn setupPipelineLayout(self: *RenderContext) !void {
                 false,
                 @sizeOf(Uniforms),
             ),
+            gpu.BindGroupLayout.Entry.texture(
+                1,
+                gpu.ShaderStageFlags.fragment,
+                .uint,
+                .dimension_2d,
+                true,
+            ),
+            gpu.BindGroupLayout.Entry.sampler(
+                2,
+                gpu.ShaderStageFlags.fragment,
+                .filtering,
+            ),
         },
     });
 
@@ -272,6 +322,14 @@ fn setupBindGroups(self: *RenderContext) !void {
                 0,
                 @sizeOf(Uniforms),
                 @sizeOf(Uniforms),
+            ),
+            gpu.BindGroup.Entry.fromTextureView(
+                1,
+                self.reginleif_texture_view.?,
+            ),
+            gpu.BindGroup.Entry.fromSampler(
+                2,
+                self.reginleif_sampler.?,
             ),
         },
     });
@@ -367,6 +425,27 @@ fn updateUniformBuffers(self: *RenderContext) !void {
     );
 }
 
+const reginleif = @embedFile("reginleif.png");
+fn loadReginleifTexture(self: *RenderContext) !void {
+    var img = try image.Image.load(reginleif);
+    defer img.deinit();
+
+    self.reginleif_texture = try self.loadTextureFromMemory(
+        img.data,
+        img.info,
+    );
+    self.reginleif_texture_view = try self.reginleif_texture.?.createView(self.resource_allocator, &.{});
+    self.reginleif_sampler = try self.device.createSampler(self.resource_allocator, &.{
+        .label = "reginleif_sampler",
+        .address_mode_u = .clamp_to_edge,
+        .address_mode_v = .clamp_to_edge,
+        .address_mode_w = .clamp_to_edge,
+        .mag_filter = .linear,
+        .min_filter = .nearest,
+        .mipmap_filter = .nearest,
+    });
+}
+
 fn preparePipelines(self: *RenderContext) !void {
     const primitive_state = gpu.PrimitiveState{
         .topology = .triangle_list,
@@ -390,7 +469,7 @@ fn preparePipelines(self: *RenderContext) !void {
         Vertex,
         .{
             .position = .{ 0, .float32x4 },
-            .colour = .{ 1, .float32x4 },
+            .tex_coords = .{ 1, .float32x2 },
         },
     );
 
@@ -436,39 +515,49 @@ const hlsl_shader =
     \\struct Uniforms
     \\{
     \\   float rotation;
+    \\   float2 resolution;
     \\};
     \\
     \\cbuffer un : register(b0) { Uniforms un; }
     \\
+    \\// texture
+    \\Texture2D g_texture : register(t1);
+    \\SamplerState g_sampler : register(s2);
+    \\
     \\struct InputVS
     \\{
-    \\    float2 position : LOC0;
-    \\    float3 color : LOC1;
+    \\    float4 position : LOC0;
+    \\    float2 tex_coords : LOC1;
     \\};
     \\
     \\struct OutputVS
     \\{
     \\    float4 position : SV_Position;
-    \\    float3 color : COLOR;
+    \\    float2 tex_coords : TEXCOORD0;
     \\};
     \\
     \\// Vertex shader main function
     \\OutputVS vs_main(InputVS inp)
     \\{
     \\    OutputVS outp;
-    \\    // rotate vertices around 0,0 by un.rotation degrees
-    \\    float s = sin(un.rotation);
-    \\    float c = cos(un.rotation);
-    \\    float2x2 rot = float2x2(c, -s, s, c);
-    \\    outp.position = float4(mul(rot, inp.position), 0, 1);
-    \\    outp.color = inp.color;
+    \\    outp.position = inp.position;
+    \\    outp.tex_coords = inp.tex_coords;
     \\    return outp;
     \\}
     \\
     \\// Pixel shader main function
     \\float4 ps_main(OutputVS inp) : SV_Target
     \\{
-    \\    return float4(inp.color, 1);
+    \\    float const aspect = un.resolution.x / un.resolution.y;
+    \\    float2 uv = inp.tex_coords;
+    \\    uv -= 0.5;
+    \\    uv.x *= aspect;
+    \\    uv += 0.5;
+    \\    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+    \\      discard;
+    \\    }
+    \\    float4 colour = g_texture.Sample(g_sampler, uv);
+    \\    return colour;
     \\};
 ;
 
@@ -582,6 +671,7 @@ pub fn draw(self: *RenderContext) !void {
     // defer command_buffer.destroy();
 
     self.uniforms.rotation = @mod((self.uniforms.rotation + 0.01), @as(f32, 360.0));
+    self.uniforms.resolution = .{ @as(f32, @floatFromInt(self.swapchain_size[0])), @as(f32, @floatFromInt(self.swapchain_size[1])) };
     try self.updateUniformBuffers();
 
     try self.queue.submit(&.{

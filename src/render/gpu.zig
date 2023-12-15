@@ -605,12 +605,16 @@ pub const Limits = struct {
 pub const Origin2D = struct {
     x: u32 = 0,
     y: u32 = 0,
+
+    pub const zero = Origin2D{};
 };
 
 pub const Origin3D = struct {
     x: u32 = 0,
     y: u32 = 0,
     z: u32 = 0,
+
+    pub const zero = Origin3D{};
 };
 
 pub const ConstantEntry = struct {
