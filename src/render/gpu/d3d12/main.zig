@@ -29,6 +29,8 @@ const d3dcommon = @import("../d3d/common.zig");
 
 const common = @import("../../../core/common.zig");
 
+const gpu_allocator = @import("../allocator.zig");
+
 // Loading
 pub const procs: gpu.procs.Procs = .{
     // BindGroup
@@ -184,7 +186,8 @@ pub const D3D12BindGroup = struct {
         var general_table: ?d3d12.D3D12_GPU_DESCRIPTOR_HANDLE = null;
 
         if (layout.general_table_size > 0) {
-            const allocation = device.general_heap.alloc() catch return gpu.BindGroup.Error.BindGroupFailedToCreate;
+            const allocation = device.general_heap.alloc(layout.general_table_size) catch
+                return gpu.BindGroup.Error.BindGroupFailedToCreate;
             general_allocation = allocation;
             general_table = device.general_heap.gpuDescriptor(allocation);
 
@@ -195,7 +198,7 @@ pub const D3D12BindGroup = struct {
                     continue;
 
                 if (layout_entry.table_index) |table_index| {
-                    const dest_descriptor = device.general_heap.cpuDescriptor(allocation + table_index);
+                    const dest_descriptor = device.general_heap.cpuDescriptor(allocation.add(table_index));
 
                     switch (layout_entry.entry.type) {
                         .buffer => |buffer_layout| {
@@ -302,7 +305,8 @@ pub const D3D12BindGroup = struct {
         var sampler_table: ?d3d12.D3D12_GPU_DESCRIPTOR_HANDLE = null;
 
         if (layout.sampler_table_size > 0) {
-            const allocation = device.sampler_heap.alloc() catch return gpu.BindGroup.Error.BindGroupFailedToCreate;
+            const allocation = device.sampler_heap.alloc(layout.sampler_table_size) catch
+                return gpu.BindGroup.Error.BindGroupFailedToCreate;
             sampler_allocation = allocation;
             sampler_table = device.sampler_heap.gpuDescriptor(allocation);
 
@@ -313,7 +317,7 @@ pub const D3D12BindGroup = struct {
                     continue;
 
                 if (layout_entry.table_index) |table_index| {
-                    const dest_descriptor = device.sampler_heap.cpuDescriptor(allocation + table_index);
+                    const dest_descriptor = device.sampler_heap.cpuDescriptor(allocation.add(table_index));
 
                     const sampler: *D3D12Sampler = @ptrCast(@alignCast(entry.sampler.?));
 
@@ -478,16 +482,16 @@ pub const D3D12BindGroupLayout = struct {
                         }) catch return gpu.BindGroupLayout.Error.BindGroupLayoutFailedToCreate;
                     } else {
                         table_index = general_table_size;
-                        general_table_size += 1;
+                        general_table_size += entry.count orelse 1;
                     }
                 },
                 .sampler => {
                     table_index = sampler_table_size;
-                    sampler_table_size += 1;
+                    sampler_table_size += entry.count orelse 1;
                 },
                 else => {
                     table_index = general_table_size;
-                    general_table_size += 1;
+                    general_table_size += entry.count orelse 1;
                 },
             }
 
@@ -1684,9 +1688,10 @@ pub const D3D12DescriptorHeap = struct {
         DescriptorHeapFailedToCreate,
         DescriptorHeapOutOfMemory,
     };
-    pub const Allocation = u32;
+    pub const Allocation = gpu_allocator.Allocation;
 
     allocator: std.mem.Allocator,
+    sub_allocator: gpu_allocator.OffsetAllocator,
     device: *D3D12Device,
     heap: ?*d3d12.ID3D12DescriptorHeap = null,
     cpu_handle: d3d12.D3D12_CPU_DESCRIPTOR_HANDLE,
@@ -1743,6 +1748,11 @@ pub const D3D12DescriptorHeap = struct {
 
         return .{
             .allocator = allocator,
+            .sub_allocator = try gpu_allocator.OffsetAllocator.init(
+                allocator,
+                descriptor_count,
+                null,
+            ),
             .device = device,
             .heap = heap,
             .cpu_handle = cpu_handle,
@@ -1756,46 +1766,28 @@ pub const D3D12DescriptorHeap = struct {
 
     pub fn deinit(self: *D3D12DescriptorHeap) void {
         self.free_blocks.deinit(self.allocator);
+        self.sub_allocator.deinit();
         d3dcommon.releaseIUnknown(d3d12.ID3D12DescriptorHeap, &self.heap);
     }
 
-    pub fn alloc(self: *D3D12DescriptorHeap) !Allocation {
-        if (self.free_blocks.getLastOrNull() == null) {
-            if (self.next_alloc == self.descriptor_count) {
-                return Error.DescriptorHeapOutOfMemory;
-            }
-            const index = self.next_alloc;
-            self.next_alloc += self.block_size;
-            try self.free_blocks.append(self.allocator, index);
-        }
-
-        return self.free_blocks.pop();
+    pub fn alloc(self: *D3D12DescriptorHeap, size: u32) !Allocation {
+        return try self.sub_allocator.allocate("", size, null);
     }
 
     pub fn free(self: *D3D12DescriptorHeap, allocation: Allocation) void {
-        self.free_blocks.append(self.allocator, allocation) catch {
-            @panic("failed to free descriptor heap allocation");
-        };
+        self.sub_allocator.free(allocation) catch {};
     }
 
-    pub fn cpuDescriptor(self: *D3D12DescriptorHeap, index: u32) d3d12.D3D12_CPU_DESCRIPTOR_HANDLE {
+    pub fn cpuDescriptor(self: *D3D12DescriptorHeap, al: Allocation) d3d12.D3D12_CPU_DESCRIPTOR_HANDLE {
         return .{
-            .ptr = self.cpu_handle.ptr + index * self.descriptor_size,
+            .ptr = self.cpu_handle.ptr + al.offset * self.descriptor_size,
         };
     }
 
-    pub fn cpuAllocation(self: *D3D12DescriptorHeap, handle: d3d12.D3D12_CPU_DESCRIPTOR_HANDLE) u32 {
-        return @as(u32, @intCast(handle.ptr - self.cpu_handle.ptr)) / self.descriptor_size;
-    }
-
-    pub fn gpuDescriptor(self: *D3D12DescriptorHeap, index: u32) d3d12.D3D12_GPU_DESCRIPTOR_HANDLE {
+    pub fn gpuDescriptor(self: *D3D12DescriptorHeap, al: Allocation) d3d12.D3D12_GPU_DESCRIPTOR_HANDLE {
         return .{
-            .ptr = self.gpu_handle.ptr + index * self.descriptor_size,
+            .ptr = self.gpu_handle.ptr + al.offset * self.descriptor_size,
         };
-    }
-
-    pub fn gpuAllocation(self: *D3D12DescriptorHeap, handle: d3d12.D3D12_GPU_DESCRIPTOR_HANDLE) u32 {
-        return @as(u32, @intCast(handle.ptr - self.gpu_handle.ptr)) / self.descriptor_size;
     }
 };
 
@@ -2825,8 +2817,8 @@ pub const D3D12RenderPassEncoder = struct {
     vertex_buffer_views: [gpu.Limits.max_vertex_buffers]d3d12.D3D12_VERTEX_BUFFER_VIEW,
     vertex_strides: []u32 = undefined,
 
-    rtv_handles: ?d3d12.D3D12_CPU_DESCRIPTOR_HANDLE = null,
-    dsv_handle: ?d3d12.D3D12_CPU_DESCRIPTOR_HANDLE = null,
+    rtv_allocation: ?D3D12DescriptorHeap.Allocation = null,
+    dsv_allocation: ?D3D12DescriptorHeap.Allocation = null,
 
     label: ?[]const u8 = null,
 
@@ -2840,13 +2832,17 @@ pub const D3D12RenderPassEncoder = struct {
             gpu.RenderPass.ColourAttachment,
             gpu.Limits.max_colour_attachments,
         ) = .{};
-        const rtv_handles: ?d3d12.D3D12_CPU_DESCRIPTOR_HANDLE = if (desc.colour_attachments.len > 0)
+        const rtv_allocation: ?D3D12DescriptorHeap.Allocation = if (desc.colour_attachments.len > 0)
             allocateRtvDescriptors(device) catch
                 return gpu.RenderPass.Encoder.Error.RenderPassEncoderFailedToCreate
         else
             null;
         const descriptor_size = command_encoder.device.rtv_heap.descriptor_size;
 
+        const rtv_handles: ?d3d12.D3D12_CPU_DESCRIPTOR_HANDLE = if (rtv_allocation) |rtva|
+            rtvGetCpuHandle(device, rtva)
+        else
+            null;
         var rtv_handle = rtv_handles;
         for (desc.colour_attachments) |attach| {
             if (attach.view) |view_raw| {
@@ -2884,6 +2880,7 @@ pub const D3D12RenderPassEncoder = struct {
         }
 
         var depth_attachment: ?gpu.RenderPass.DepthStencilAttachment = null;
+        var dsv_allocation: ?D3D12DescriptorHeap.Allocation = null;
         var dsv_handle: ?d3d12.D3D12_CPU_DESCRIPTOR_HANDLE = null;
 
         if (desc.depth_stencil_attachment) |attach| {
@@ -2900,8 +2897,9 @@ pub const D3D12RenderPassEncoder = struct {
             height = view.height();
             depth_attachment = attach.*;
 
-            dsv_handle = allocateDsvDescriptor(device) catch
+            dsv_allocation = allocateDsvDescriptor(device) catch
                 return gpu.RenderPass.Encoder.Error.RenderPassEncoderFailedToCreate;
+            dsv_handle = dsvGetCpuHandle(device, dsv_allocation.?);
 
             command_encoder.device.device.?.ID3D12Device_CreateDepthStencilView(
                 texture.resource.?.resource,
@@ -2989,37 +2987,42 @@ pub const D3D12RenderPassEncoder = struct {
             .vertex_buffer_views = std.mem.zeroes([gpu.Limits.max_vertex_buffers]d3d12.D3D12_VERTEX_BUFFER_VIEW),
             .label = desc.label,
 
-            .rtv_handles = rtv_handles,
-            .dsv_handle = dsv_handle,
+            .rtv_allocation = rtv_allocation,
+            .dsv_allocation = dsv_allocation,
         };
+
         return encoder;
     }
 
-    fn allocateRtvDescriptors(device: *D3D12Device) !d3d12.D3D12_CPU_DESCRIPTOR_HANDLE {
-        var rtv_heap = &device.rtv_heap;
-        return rtv_heap.cpuDescriptor(try rtv_heap.alloc());
+    fn allocateRtvDescriptors(device: *D3D12Device) !D3D12DescriptorHeap.Allocation {
+        return try device.rtv_heap.alloc(rtv_block_size);
     }
 
-    fn freeRtvDescriptors(device: *D3D12Device, handle: d3d12.D3D12_CPU_DESCRIPTOR_HANDLE) void {
-        var rtv_heap = &device.rtv_heap;
-        rtv_heap.free(rtv_heap.cpuAllocation(handle));
+    fn rtvGetCpuHandle(device: *D3D12Device, allocation: D3D12DescriptorHeap.Allocation) d3d12.D3D12_CPU_DESCRIPTOR_HANDLE {
+        return device.rtv_heap.cpuDescriptor(allocation);
     }
 
-    fn allocateDsvDescriptor(device: *D3D12Device) !d3d12.D3D12_CPU_DESCRIPTOR_HANDLE {
-        var dsv_heap = &device.dsv_heap;
-        return dsv_heap.cpuDescriptor(try dsv_heap.alloc());
+    fn freeRtvDescriptors(device: *D3D12Device, allocation: D3D12DescriptorHeap.Allocation) void {
+        device.rtv_heap.free(allocation);
+    }
+    //
+    fn allocateDsvDescriptor(device: *D3D12Device) !D3D12DescriptorHeap.Allocation {
+        return try device.dsv_heap.alloc(dsv_block_size);
     }
 
-    fn freeDsvDescriptor(device: *D3D12Device, handle: d3d12.D3D12_CPU_DESCRIPTOR_HANDLE) void {
-        var dsv_heap = &device.dsv_heap;
-        dsv_heap.free(dsv_heap.cpuAllocation(handle));
+    fn dsvGetCpuHandle(device: *D3D12Device, allocation: D3D12DescriptorHeap.Allocation) d3d12.D3D12_CPU_DESCRIPTOR_HANDLE {
+        return device.dsv_heap.cpuDescriptor(allocation);
+    }
+
+    fn freeDsvDescriptor(device: *D3D12Device, allocation: D3D12DescriptorHeap.Allocation) void {
+        device.dsv_heap.free(allocation);
     }
 
     pub fn destroy(self: *D3D12RenderPassEncoder) void {
-        if (self.rtv_handles) |h|
-            freeRtvDescriptors(self.device, h);
-        if (self.dsv_handle) |h|
-            freeDsvDescriptor(self.device, h);
+        if (self.rtv_allocation) |a|
+            freeRtvDescriptors(self.device, a);
+        if (self.dsv_allocation) |a|
+            freeDsvDescriptor(self.device, a);
 
         self.allocator.destroy(self);
     }
