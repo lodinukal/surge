@@ -264,10 +264,10 @@ fn loadTextureFromMemory(self: *RenderContext, memory: []const u8, info: image.I
 
 fn prepareVertexAndIndexBuffers(self: *RenderContext) !void {
     const vertices = [4]Vertex{
-        .{ .position = .{ -0.5, -0.5, 0.0, 1.0 }, .tex_coords = .{ 0.0, 1.0 } },
-        .{ .position = .{ 0.5, -0.5, 0.0, 1.0 }, .tex_coords = .{ 1.0, 1.0 } },
-        .{ .position = .{ 0.5, 0.5, 0.0, 1.0 }, .tex_coords = .{ 1.0, 0.0 } },
-        .{ .position = .{ -0.5, 0.5, 0.0, 1.0 }, .tex_coords = .{ 0.0, 0.0 } },
+        .{ .position = .{ -1, -1, 0.0, 1.0 }, .tex_coords = .{ 0.0, 1.0 } },
+        .{ .position = .{ 1, -1, 0.0, 1.0 }, .tex_coords = .{ 1.0, 1.0 } },
+        .{ .position = .{ 1, 1, 0.0, 1.0 }, .tex_coords = .{ 1.0, 0.0 } },
+        .{ .position = .{ -1, 1, 0.0, 1.0 }, .tex_coords = .{ 0.0, 0.0 } },
     };
     self.vertex_count = vertices.len;
 
