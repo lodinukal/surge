@@ -428,9 +428,11 @@ pub const OffsetAllocator = struct {
     pub fn deinit(self: *OffsetAllocator) void {
         if (self.nodes) |nodes| {
             self.allocator.free(nodes);
+            self.nodes = null;
         }
         if (self.free_nodes) |free_nodes| {
             self.allocator.free(free_nodes);
+            self.free_nodes = null;
         }
     }
 
