@@ -107,7 +107,7 @@ pub const Allocator = union(enum) {
 
     pub fn deinit(self: *Allocator) void {
         switch (self.*) {
-            inline else => |x| x.deinit(),
+            inline else => |*x| x.deinit(),
         }
     }
 
@@ -123,15 +123,15 @@ pub const Allocator = union(enum) {
         _size: u32,
         alignment: ?u32,
     ) Error!Allocation {
-        switch (self.*) {
-            inline else => |x| x.allocate(name, _size, alignment),
-        }
+        return switch (self.*) {
+            inline else => |*x| x.allocate(name, _size, alignment),
+        };
     }
 
     pub fn free(self: *Allocator, allocation: Allocation) Error!void {
-        switch (self.*) {
-            inline else => |x| x.free(allocation),
-        }
+        return switch (self.*) {
+            inline else => |*x| x.free(allocation),
+        };
     }
 
     pub fn allocationSize(self: *const Allocator, allocation: Allocation) u32 {
@@ -192,6 +192,10 @@ pub const DedicatedBlockAllocator = struct {
             .allocated = 0,
             .name = null,
         };
+    }
+
+    pub fn deinit(self: *DedicatedBlockAllocator) void {
+        _ = self;
     }
 
     pub fn allocate(
@@ -540,6 +544,9 @@ pub const OffsetAllocator = struct {
         // debug
         // std.debug.print("putting node {} into freelist[{}] (free)\n", .{ node_index, self.free_offset + 1 });
 
+        self.free_offset += 1;
+        self.free_nodes.?[self.free_offset] = @intCast(node_index);
+
         const combined_node_index = self.insertNodeIntoBin(_size, offset);
         if (neighbour_next) |nn| {
             self.nodes.?[combined_node_index].neighbour_next = neighbour_next;
@@ -675,30 +682,96 @@ pub const OffsetAllocator = struct {
     }
 };
 
-test OffsetAllocator {
-    var al = try OffsetAllocator.init(
+test "basic" {
+    var allocator = try Allocator.initOffsetAllocator(
         std.testing.allocator,
-        12345,
+        1024 * 1024 * 256,
         null,
     );
-    defer al.deinit();
+    defer allocator.deinit();
 
-    const a = try al.allocate(
-        1337,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-    );
-    defer al.free(a) catch {};
+    const a = try allocator.allocate("test", 1337, null);
+    const offset = a.offset;
+    try std.testing.expectEqual(@as(u64, 0), offset);
+    try allocator.free(a);
+}
 
-    const b = try al.allocate(
-        1337,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
+test "allocate" {
+    var allocator = try Allocator.initOffsetAllocator(
+        std.testing.allocator,
+        1024 * 1024 * 256,
+        null,
     );
-    defer al.free(b) catch {};
-    std.log.warn("{}\n{}\n", .{ a, b });
+    defer allocator.deinit();
+
+    {
+        const a = try allocator.allocate("a", 0, null);
+        try std.testing.expectEqual(@as(u64, 0), a.offset);
+
+        const b = try allocator.allocate("b", 1, null);
+        try std.testing.expectEqual(@as(u64, 0), b.offset);
+
+        const c = try allocator.allocate("c", 123, null);
+        try std.testing.expectEqual(@as(u64, 1), c.offset);
+
+        const d = try allocator.allocate("d", 1234, null);
+        try std.testing.expectEqual(@as(u64, 124), d.offset);
+
+        try allocator.free(a);
+        try allocator.free(b);
+        try allocator.free(c);
+        try allocator.free(d);
+
+        const validate = try allocator.allocate("validate", 1024 * 1024 * 256, null);
+        try std.testing.expectEqual(@as(u64, 0), validate.offset);
+        try allocator.free(validate);
+    }
+
+    {
+        const a = try allocator.allocate("a", 1024, null);
+        try std.testing.expectEqual(@as(u64, 0), a.offset);
+
+        const b = try allocator.allocate("b", 3456, null);
+        try std.testing.expectEqual(@as(u64, 1024), b.offset);
+
+        try allocator.free(a);
+
+        const c = try allocator.allocate("c", 1024, null);
+        try std.testing.expectEqual(@as(u64, 0), c.offset);
+
+        try allocator.free(b);
+        try allocator.free(c);
+
+        const validate = try allocator.allocate("validate", 1024 * 1024 * 256, null);
+        try std.testing.expectEqual(@as(u64, 0), validate.offset);
+        try allocator.free(validate);
+    }
+
+    {
+        const a = try allocator.allocate("a", 1024, null);
+        try std.testing.expectEqual(@as(u64, 0), a.offset);
+
+        const b = try allocator.allocate("b", 3456, null);
+        try std.testing.expectEqual(@as(u64, 1024), b.offset);
+
+        try allocator.free(a);
+
+        const c = try allocator.allocate("c", 2345, null);
+        try std.testing.expectEqual(@as(u64, 1024 + 3456), c.offset);
+
+        const d = try allocator.allocate("d", 456, null);
+        try std.testing.expectEqual(@as(u64, 0), d.offset);
+
+        const e = try allocator.allocate("e", 512, null);
+        try std.testing.expectEqual(@as(u64, 456), e.offset);
+
+        try allocator.free(b);
+        try allocator.free(c);
+        try allocator.free(d);
+        try allocator.free(e);
+
+        const validate = try allocator.allocate("validate", 1024 * 1024 * 256, null);
+        try std.testing.expectEqual(@as(u64, 0), validate.offset);
+        try allocator.free(validate);
+    }
 }

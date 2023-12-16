@@ -158,6 +158,7 @@ pub fn deinit(self: *RenderContext) void {
 
 pub fn resize(self: *RenderContext, size: [2]u32) !void {
     self.swapchain_size = size;
+    if (size[0] == 0 and size[1] == 0) return; // suspend the game
     if (try self.swapchain.resize(size)) {
         // we resized, recreate the depth texture
         self.cleanupDepthTexture();
