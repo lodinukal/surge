@@ -777,3 +777,122 @@ test "allocate" {
         try allocator.free(validate);
     }
 }
+
+pub const RangeAllocator = struct {
+    pub const Range = struct {
+        start: usize,
+        end: usize,
+
+        pub inline fn size(self: Range) usize {
+            return self.end - self.start;
+        }
+    };
+
+    block_range: Range,
+    free_ranges: std.ArrayList(Range),
+
+    pub fn init(
+        allocator: std.mem.Allocator,
+        size: u64,
+    ) std.mem.Allocator.Error!RangeAllocator {
+        var self = RangeAllocator{
+            .block_range = .{
+                .start = 0,
+                .end = @as(usize, size),
+            },
+            .free_ranges = std.ArrayList(Range).init(allocator),
+        };
+        try self.reset();
+        return self;
+    }
+
+    pub fn deinit(self: *RangeAllocator) void {
+        self.free_ranges.deinit();
+    }
+
+    pub fn reset(self: *RangeAllocator) std.mem.Allocator.Error!void {
+        self.free_ranges.clearRetainingCapacity();
+        try self.free_ranges.append(self.block_range);
+    }
+
+    pub fn allocate(
+        self: *RangeAllocator,
+        size: u32,
+    ) Error!Range {
+        var best_range_index: ?usize = null;
+        for (self.free_ranges.items, 0..) |range, index| {
+            const len = range.size();
+            if (len < size) {
+                continue;
+            }
+            if (len == size) {
+                best_range_index = index;
+                break;
+            }
+            if (best_range_index) |range_index| {
+                const best_range = self.free_ranges.items[range_index];
+                if (len < best_range.size()) {
+                    best_range_index = index;
+                }
+            } else {
+                best_range_index = index;
+            }
+        }
+
+        if (best_range_index) |index| {
+            const range = self.free_ranges.items[index];
+            if (range.size() == size) {
+                _ = self.free_ranges.orderedRemove(index);
+            } else {
+                self.free_ranges.items[index].start += size;
+            }
+            return range;
+        } else {
+            return Error.OutOfMemory;
+        }
+    }
+
+    pub fn free(self: *RangeAllocator, range: Range) std.mem.Allocator.Error!void {
+        std.debug.assert(range.start < range.end);
+        std.debug.assert(self.block_range.start <= range.start);
+        std.debug.assert(range.end <= self.block_range.end);
+
+        const index = blk: {
+            for (self.free_ranges.items, 0..) |r, i| {
+                if (r.start > range.start) {
+                    break :blk i;
+                }
+            }
+            break :blk self.free_ranges.items.len;
+        };
+
+        // merge with left and right free ranges if possible
+        const left: ?*Range = if (index > 0) &self.free_ranges.items[index - 1] else null;
+        const right: ?*Range = if (index < self.free_ranges.items.len) &self.free_ranges.items[index] else null;
+
+        const merge_left = index > 0 and range.start == left.?.end;
+        const merge_right = index < self.free_ranges.items.len and range.end == right.?.start;
+        if (merge_left) {
+            var left_range_end = range.end;
+            if (merge_right) {
+                _ = self.free_ranges.orderedRemove(index);
+                left_range_end = right.?.end;
+            }
+            left.?.end = left_range_end;
+            return;
+        } else if (merge_right) {
+            var right_range_start = range.start;
+            if (merge_left) {
+                _ = self.free_ranges.orderedRemove(index - 1);
+                right_range_start = left.?.start;
+            }
+            right.?.start = right_range_start;
+            return;
+        }
+
+        std.debug.assert((index == 0 or left.?.end < range.start) and
+            (index >= self.free_ranges.items.len or range.end < right.?.start));
+
+        try self.free_ranges.insert(index, range);
+    }
+};

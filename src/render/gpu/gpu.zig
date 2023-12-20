@@ -529,18 +529,6 @@ pub const ShaderStageFlags = packed struct(u32) {
     }
 };
 
-pub const ChainedStruct = struct {
-    // TODO: dawn: not marked as nullable in dawn.json but in fact is.
-    next: ?*const ChainedStruct = null,
-    s_type: SType,
-};
-
-pub const ChainedStructOut = struct {
-    // TODO: dawn: not marked as nullable in dawn.json but in fact is.
-    next: ?*ChainedStructOut = null,
-    s_type: SType,
-};
-
 pub const BlendComponent = struct {
     operation: BlendOperation = .add,
     src_factor: BlendFactor = .one,
@@ -645,11 +633,6 @@ pub const PrimitiveState = struct {
     front_face: FrontFace = .ccw,
     cull_mode: CullMode = .none,
     unclipped_depth: bool = false,
-};
-
-pub const RenderPassDescriptorMaxDrawCount = struct {
-    chain: ChainedStruct = .{ .next = null, .s_type = .render_pass_descriptor_max_draw_count },
-    max_draw_count: u64 = 50000000,
 };
 
 pub const StencilFaceState = struct {
