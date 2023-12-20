@@ -89,6 +89,7 @@ pub const Input = struct {
     touch_ended_callback: ?TouchEndedCallback = null,
     input_type_updated_callback: ?InputTypeUpdatedCallback = null,
     frame_update_callback: ?FrameUpdateCallback = null,
+    window_resized_callback: ?WindowResizedCallback = null,
 
     const FocusedChangedCallback = *const fn (*app.window.Window, bool) void;
     const InputBeganCallback = *const fn (InputObject) void;
@@ -99,6 +100,7 @@ pub const Input = struct {
     const TouchEndedCallback = *const fn (InputObject) void;
     const InputTypeUpdatedCallback = *const fn (InputType) void;
     const FrameUpdateCallback = *const fn (*app.window.Window) void;
+    const WindowResizedCallback = *const fn (*app.window.Window, [2]u32) void;
 
     pub fn create(allocator: std.mem.Allocator) !*Input {
         var self: *Input = try allocator.create(Input);
@@ -320,7 +322,6 @@ pub const InputObject = struct {
                 text: []const u8,
             },
         },
-        resize: [2]i32,
     },
 
     pub fn deinit(self: *InputObject) void {
@@ -368,7 +369,6 @@ pub const InputType = enum(u8) {
     gyro,
     gamepad,
     textinput,
-    resize,
 };
 
 pub const WrapMode = enum(u8) {

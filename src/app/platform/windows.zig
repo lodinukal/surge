@@ -137,7 +137,7 @@ const WindowsWindow = struct {
             null,
             win32.ui.windows_and_messaging.IDC_ARROW,
         );
-        wc.hbrBackground = @ptrFromInt(@intFromEnum(win32.graphics.gdi.COLOR_WINDOW));
+        wc.hbrBackground = null; //@ptrFromInt(@intFromEnum(win32.graphics.gdi.COLOR_WINDOW));
         wc.lpszClassName = class_name;
         wc.cbClsExtra = 0;
         wc.cbWndExtra = 0;
@@ -889,14 +889,9 @@ const WindowsInput = struct {
                 const width = LOWORD(@bitCast(lparam));
                 const height = HIWORD(@bitCast(lparam));
 
-                const iobj = app.input.InputObject{
-                    .type = .resize,
-                    .window = window.getBase(),
-                    .input_state = .change,
-                    .data = .{ .resize = .{ width, height } },
-                };
-
-                self.pushEvent(iobj) catch {};
+                if (self.getBase().window_resized_callback) |cb| {
+                    cb(window.getBase(), .{ width, height });
+                }
             },
             win32.ui.windows_and_messaging.WM_SETFOCUS => {
                 self.setWindowFocus(window, true);

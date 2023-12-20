@@ -40,7 +40,9 @@ pub const Application = struct {
 
     pub fn createWindow(self: *Application, descriptor: window.WindowDescriptor) !*window.Window {
         var wnd: *window.Window = try self.allocator.create(window.Window);
-        wnd.application = self;
+        wnd.* = .{
+            .application = self,
+        };
         try wnd.platform_window.init(descriptor);
         return wnd;
     }

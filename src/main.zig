@@ -27,7 +27,7 @@ const Context = struct {
 
         // application.input.focused_changed_callback = focused_changed_callback;
         application.input.input_began_callback = inputBeganCallback;
-        application.input.input_changed_callback = inputChangedCallback;
+        application.input.window_resized_callback = windowResizedCallback;
         application.input.input_ended_callback = inputEndedCallback;
         application.input.frame_update_callback = frameUpdate;
 
@@ -106,12 +106,7 @@ const Context = struct {
 
             const frame_start = std.time.nanoTimestamp();
 
-            if (self.resized) |size| {
-                try self.render.resize(size);
-            }
-
-            try self.render.draw();
-            try self.render.present();
+            frameUpdate(self.window);
 
             const frame_end = std.time.nanoTimestamp();
 
@@ -126,21 +121,23 @@ const Context = struct {
     }
 
     fn frameUpdate(wnd: *app.window.Window) void {
-        _ = wnd;
+        var ctx: *Context = @alignCast(wnd.getContext(Context).?);
+
+        if (ctx.resized) |size| {
+            ctx.render.resize(size) catch {};
+        }
+
+        ctx.render.draw() catch {};
+        ctx.render.present() catch {};
     }
 
     fn inputBeganCallback(ipo: app.input.InputObject) void {
         _ = ipo;
     }
 
-    fn inputChangedCallback(ipo: app.input.InputObject) void {
-        if (ipo.type == .resize) {
-            var ctx = ipo.window.?.getContext(Context).?;
-            ctx.resized = .{
-                @intCast(ipo.data.resize[0]),
-                @intCast(ipo.data.resize[1]),
-            };
-        }
+    fn windowResizedCallback(window: *const app.window.Window, size: [2]u32) void {
+        var ctx = window.getContext(Context) orelse return;
+        ctx.resized = size;
     }
 
     fn inputEndedCallback(ipo: app.input.InputObject) void {
