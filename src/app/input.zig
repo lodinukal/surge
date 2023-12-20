@@ -91,7 +91,7 @@ pub const Input = struct {
     frame_update_callback: ?FrameUpdateCallback = null,
     window_resized_callback: ?WindowResizedCallback = null,
 
-    const FocusedChangedCallback = *const fn (*app.window.Window, bool) void;
+    const FocusedChangedCallback = *const fn (*app.Window, bool) void;
     const InputBeganCallback = *const fn (InputObject) void;
     const InputChangedCallback = *const fn (InputObject) void;
     const InputEndedCallback = *const fn (InputObject) void;
@@ -99,8 +99,8 @@ pub const Input = struct {
     const TouchChangedCallback = *const fn (InputObject) void;
     const TouchEndedCallback = *const fn (InputObject) void;
     const InputTypeUpdatedCallback = *const fn (InputType) void;
-    const FrameUpdateCallback = *const fn (*app.window.Window) void;
-    const WindowResizedCallback = *const fn (*app.window.Window, [2]u32) void;
+    const FrameUpdateCallback = *const fn (*app.Window) void;
+    const WindowResizedCallback = *const fn (*app.Window, [2]u32) void;
 
     pub fn create(allocator: std.mem.Allocator) !*Input {
         var self: *Input = try allocator.create(Input);
@@ -300,7 +300,7 @@ pub const Input = struct {
 
 pub const InputObject = struct {
     type: InputType,
-    window: ?*app.window.Window = null,
+    window: ?*app.Window = null,
     input_state: InputState = .begin,
     position: math.Vec = math.f32x4s(0),
     delta: math.Vec = math.f32x4s(0),

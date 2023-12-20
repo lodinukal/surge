@@ -10,7 +10,7 @@ const image = @import("image.zig");
 const Context = struct {
     allocator: std.mem.Allocator,
     application: *app.Application,
-    window: *app.window.Window,
+    window: *app.Window,
 
     ui_thread: ?std.Thread = null,
     mutex: std.Thread.Mutex = .{},
@@ -120,7 +120,7 @@ const Context = struct {
         self.render.deinit();
     }
 
-    fn frameUpdate(wnd: *app.window.Window) void {
+    fn frameUpdate(wnd: *app.Window) void {
         var ctx: *Context = @alignCast(wnd.getContext(Context).?);
 
         if (ctx.resized) |size| {
@@ -131,16 +131,16 @@ const Context = struct {
         ctx.render.present() catch {};
     }
 
-    fn inputBeganCallback(ipo: app.input.InputObject) void {
+    fn inputBeganCallback(ipo: app.InputObject) void {
         _ = ipo;
     }
 
-    fn windowResizedCallback(window: *const app.window.Window, size: [2]u32) void {
+    fn windowResizedCallback(window: *const app.Window, size: [2]u32) void {
         var ctx = window.getContext(Context) orelse return;
         ctx.resized = size;
     }
 
-    fn inputEndedCallback(ipo: app.input.InputObject) void {
+    fn inputEndedCallback(ipo: app.InputObject) void {
         _ = ipo;
     }
 };

@@ -90,7 +90,7 @@ render_pass: RenderPass = .{},
 
 render_pipeline: ?*gpu.RenderPipeline = null,
 
-pub fn load(self: *RenderContext, allocator: std.mem.Allocator, window: *app.window.Window) !void {
+pub fn load(self: *RenderContext, allocator: std.mem.Allocator, window: *app.Window) !void {
     if (gpu.loadBackend(.d3d12) == false) return;
     self.permanent_arena = std.heap.ArenaAllocator.init(allocator);
     self.resource_arena = std.heap.ArenaAllocator.init(allocator);

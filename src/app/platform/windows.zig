@@ -81,7 +81,7 @@ const WindowsWindow = struct {
     var class_registered: bool = false;
     const class_name = winapizig.L("app");
     const Modified = struct {
-        descriptor: app.window.WindowDescriptor = undefined,
+        descriptor: app.WindowDescriptor = undefined,
         title_changed: bool = false,
         use_client_area: bool = false,
         size_changed: bool = false,
@@ -91,20 +91,20 @@ const WindowsWindow = struct {
 
     should_close: bool = false,
     focused: bool = false,
-    descriptor: app.window.WindowDescriptor,
+    descriptor: app.WindowDescriptor,
     modified_state: Modified,
 
     non_fullscreen_window_placement: win32.ui.windows_and_messaging.WINDOWPLACEMENT = undefined,
 
-    fn getBase(self: *WindowsWindow) *app.window.Window {
-        return @fieldParentPtr(app.window.Window, "platform_window", self);
+    fn getBase(self: *WindowsWindow) *app.Window {
+        return @fieldParentPtr(app.Window, "platform_window", self);
     }
 
     pub inline fn allocator(self: *WindowsWindow) std.mem.Allocator {
         return self.getBase().allocator();
     }
 
-    pub fn init(self: *WindowsWindow, descriptor: app.window.WindowDescriptor) !void {
+    pub fn init(self: *WindowsWindow, descriptor: app.WindowDescriptor) !void {
         try registerClassOnce();
         self.descriptor = descriptor;
         self.modified_state.descriptor = descriptor;
@@ -114,7 +114,7 @@ const WindowsWindow = struct {
         self.hwnd = try self.buildWindow();
     }
 
-    pub fn getNativeHandle(self: *const WindowsWindow) app.window.NativeHandle {
+    pub fn getNativeHandle(self: *const WindowsWindow) app.NativeHandle {
         return .{ .wnd = self.hwnd.? };
     }
 
@@ -280,11 +280,11 @@ const WindowsWindow = struct {
         return self.descriptor.visible;
     }
 
-    pub fn setFullscreenMode(self: *WindowsWindow, mode: app.window.FullscreenMode) void {
+    pub fn setFullscreenMode(self: *WindowsWindow, mode: app.FullscreenMode) void {
         self.modified_state.descriptor.fullscreen_mode = mode;
     }
 
-    pub fn getFullscreenMode(self: *const WindowsWindow) app.window.FullscreenMode {
+    pub fn getFullscreenMode(self: *const WindowsWindow) app.FullscreenMode {
         return self.descriptor.fullscreen_mode;
     }
 
@@ -360,7 +360,7 @@ const WindowsWindow = struct {
         });
     };
 
-    fn getStyles(descriptor: *const app.window.WindowDescriptor) Styles {
+    fn getStyles(descriptor: *const app.WindowDescriptor) Styles {
         const ws = win32.ui.windows_and_messaging.WINDOW_STYLE;
         const wexs = win32.ui.windows_and_messaging.WINDOW_EX_STYLE;
         var styles: Styles = .{
@@ -744,8 +744,8 @@ const WindowsInput = struct {
     mouse_capture_count: u32 = 0,
     mouse_button_flags: win32.foundation.WPARAM = 0,
 
-    fn getBase(self: *WindowsInput) *app.input.Input {
-        return @fieldParentPtr(app.input.Input, "platform_input", self);
+    fn getBase(self: *WindowsInput) *app.Input {
+        return @fieldParentPtr(app.Input, "platform_input", self);
     }
 
     pub inline fn allocator(self: *WindowsInput) std.mem.Allocator {
@@ -775,7 +775,7 @@ const WindowsInput = struct {
         _ = self;
     }
 
-    fn pushEvent(self: *WindowsInput, iobj: app.input.InputObject) !void {
+    fn pushEvent(self: *WindowsInput, iobj: app.InputObject) !void {
         try self.getBase().addEvent(iobj, null);
     }
 
@@ -854,7 +854,7 @@ const WindowsInput = struct {
         }
         window.focused = focused;
 
-        const iobj = app.input.InputObject{
+        const iobj = app.InputObject{
             .type = .focus,
             .window = window.getBase(),
             .input_state = if (focused) .begin else .end,
@@ -926,7 +926,7 @@ const WindowsInput = struct {
             win32.ui.windows_and_messaging.WM_KEYDOWN => self.postKeyEvent(window, wparam, lparam, true),
             win32.ui.windows_and_messaging.WM_KEYUP => self.postKeyEvent(window, wparam, lparam, false),
             win32.ui.windows_and_messaging.WM_CHAR => {
-                const iobj = app.input.InputObject{
+                const iobj = app.InputObject{
                     .type = .textinput,
                     .window = window.getBase(),
                     .input_state = .begin,
@@ -936,7 +936,7 @@ const WindowsInput = struct {
             },
 
             win32.ui.windows_and_messaging.WM_MOUSEWHEEL => {
-                const iobj = app.input.InputObject{
+                const iobj = app.InputObject{
                     .type = .mousewheel,
                     .window = window.getBase(),
                     .input_state = .begin,
@@ -1001,7 +1001,7 @@ const WindowsInput = struct {
     }
 
     fn postKeyEvent(self: *WindowsInput, wnd: *WindowsWindow, wparam: std.os.windows.WPARAM, lparam: std.os.windows.LPARAM, down: bool) void {
-        const iobj = app.input.InputObject{
+        const iobj = app.InputObject{
             .type = .keyboard,
             .window = wnd.getBase(),
             .input_state = if (down) .begin else .end,
@@ -1046,7 +1046,7 @@ const WindowsInput = struct {
                 self.releaseInput();
             }
 
-            const iobj = app.input.InputObject{
+            const iobj = app.InputObject{
                 .type = .mousebutton,
                 .window = wnd.getBase(),
                 .input_state = if (new_state) .begin else .end,
@@ -1099,7 +1099,7 @@ const WindowsInput = struct {
 
         const last_pos = self.getBase().mouse_state.position;
 
-        const iobj = app.input.InputObject{
+        const iobj = app.InputObject{
             .type = .mousemove,
             .window = wnd.getBase(),
             .input_state = .change,
@@ -1136,7 +1136,7 @@ const WindowsInput = struct {
 
                 const new_pos = getMouseRelativePosition(wnd);
 
-                const iobj = app.input.InputObject{
+                const iobj = app.InputObject{
                     .type = .mousemove,
                     .window = wnd.getBase(),
                     .input_state = .change,
@@ -1156,7 +1156,7 @@ const WindowsInput = struct {
         }
     }
 
-    fn windowsToKeycode(lparam: std.os.windows.LPARAM, wparam: std.os.windows.WPARAM) app.input.KeyCode {
+    fn windowsToKeycode(lparam: std.os.windows.LPARAM, wparam: std.os.windows.WPARAM) app.KeyCode {
         const scancode = (lparam >> 16) & 0xFF;
         const extended = (lparam & (1 << 24)) != 0;
 
@@ -1198,7 +1198,7 @@ const WindowsInput = struct {
         return code;
     }
 
-    fn vkeyToKeyCode(wparam: std.os.windows.WPARAM) app.input.KeyCode {
+    fn vkeyToKeyCode(wparam: std.os.windows.WPARAM) app.KeyCode {
         const VK = win32.ui.input.keyboard_and_mouse.VIRTUAL_KEY;
         return switch (@as(VK, @enumFromInt(wparam))) {
             VK.MODECHANGE => .mode,
@@ -1254,7 +1254,7 @@ const WindowsInput = struct {
         };
     }
 
-    const keycode_map_table = [_]app.input.KeyCode{
+    const keycode_map_table = [_]app.KeyCode{
         .unknown,
         .escape,
         .@"1",
