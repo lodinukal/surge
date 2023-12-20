@@ -44,7 +44,7 @@ queue: *gpu.Queue = undefined,
 mutex: std.Thread.Mutex = .{},
 
 swapchain: *gpu.SwapChain = undefined,
-swapchain_size: [2]u32 = .{ 800, 800 },
+swapchain_size: [2]u32 = .{ 0, 0 },
 swapchain_format: gpu.Texture.Format = .undefined,
 views: [3]?*const gpu.TextureView = .{ null, null, null },
 view_count: usize = 0,
@@ -119,9 +119,10 @@ pub fn load(self: *RenderContext, allocator: std.mem.Allocator, window: *app.win
     const device = try physicalDevice.createDevice(self.permanent_allocator, &.{ .label = "device" });
     errdefer device.destroy();
 
+    const window_size = window.getContentSize();
     const swapchain = try device.createSwapChain(self.permanent_allocator, surface, &.{
-        .height = 600,
-        .width = 800,
+        .height = window_size[0],
+        .width = window_size[1],
         .present_mode = .mailbox,
         .format = .bgra8_unorm,
         .usage = .{
@@ -136,6 +137,7 @@ pub fn load(self: *RenderContext, allocator: std.mem.Allocator, window: *app.win
     self.device = device;
     self.queue = device.getQueue();
     self.swapchain = swapchain;
+    self.swapchain_size = window_size;
     self.swapchain_format = .bgra8_unorm;
 
     try self.loadResources();
