@@ -162,20 +162,6 @@ fn buildBackend(
     return lib;
 }
 
-fn buildD3d11(
-    b: *std.Build,
-    target: std.zig.CrossTarget,
-    optimize: std.builtin.OptimizeMode,
-) void {
-    const src = "src/render/gpu/d3d11/main.zig";
-    const name = "render_d3d11";
-    const d3d11 = buildBackend(b, name, src, target, optimize);
-
-    const win32_dep = b.dependency("win32", .{});
-    const win32_module = win32_dep.module("zigwin32");
-    d3d11.addModule("win32", win32_module);
-}
-
 fn buildD3d12(
     b: *std.Build,
     target: std.zig.CrossTarget,
