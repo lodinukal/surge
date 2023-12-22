@@ -8,7 +8,7 @@ const d3d12 = win32.graphics.direct3d12;
 
 const d3dcommon = @import("../d3d/common.zig");
 
-const common = @import("../../../core/common.zig");
+const common = @import("../../core/common.zig");
 
 pub const ResourceCategory = enum {
     buffer,

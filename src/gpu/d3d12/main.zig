@@ -15,11 +15,11 @@ const max_back_buffer_count = 3;
 const TRUE = win32.foundation.TRUE;
 const FALSE = win32.foundation.FALSE;
 
-const winappimpl = @import("../../../app/platform/windows.zig");
+const winappimpl = @import("../../app/platform/windows.zig");
 
 const d3dcommon = @import("../d3d/common.zig");
 
-const common = @import("../../../core/common.zig");
+const common = @import("../../core/common.zig");
 
 const gpu_allocator = @import("../allocator.zig");
 const descriptor = @import("descriptor.zig");

@@ -5,7 +5,7 @@ const math = @import("math.zig");
 
 const common = @import("core/common.zig");
 
-const gpu = @import("render/render.zig").gpu;
+const gpu = @import("gpu/gpu.zig");
 const image = @import("image.zig");
 
 const RenderContext = @This();
