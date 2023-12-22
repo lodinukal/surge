@@ -8,7 +8,6 @@ const platform = @import("platform.zig");
 const Self = @This();
 
 allocator: std.mem.Allocator,
-frame_allocator: ?std.mem.Allocator = null,
 
 platform_application: platform.impl.Application = undefined,
 input: *input.Input = undefined,
@@ -18,10 +17,6 @@ pub fn create(allocator: std.mem.Allocator) !*Self {
     app.allocator = allocator;
     try app.init();
     return app;
-}
-
-pub fn setFrameAllocator(self: *Self, allocator: ?std.mem.Allocator) void {
-    self.frame_allocator = allocator;
 }
 
 pub fn destroy(self: *Self) void {
@@ -50,5 +45,4 @@ pub fn createWindow(self: *Self, descriptor: window.WindowDescriptor) !*window.W
 
 pub fn pumpEvents(self: *Self) !void {
     try self.platform_application.pumpEvents();
-    self.input.process();
 }

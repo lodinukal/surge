@@ -46,6 +46,7 @@ const Context = struct {
         if (self.ui_thread) |t| {
             t.join();
         }
+        self.render.deinit();
         self.window.destroy();
         self.application.destroy();
     }
@@ -116,8 +117,6 @@ const Context = struct {
 
             std.time.sleep(if (self.window.isFocused()) focused_sleep else unfocused_sleep);
         }
-
-        self.render.deinit();
     }
 
     fn frameUpdate(wnd: *app.Window) void {
@@ -164,10 +163,6 @@ pub fn main() !void {
     // std.debug.print("mem: {}\n", .{arena.queryCapacity()});
 
     while (context.running()) {
-        // if (std.time.timestamp() - start > 100) {
-        //     start = std.time.timestamp();
-        //     context.window.setVisible(!context.window.isVisible());
-        // }
         std.time.sleep(std.time.ns_per_s);
     }
 

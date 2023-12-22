@@ -756,12 +756,6 @@ const WindowsInput = struct {
         const hr: std.os.windows.HRESULT = 0;
         _ = hr;
 
-        const stack_allocator = std.heap.stackFallback(
-            1024,
-            self.allocator(),
-        );
-        _ = stack_allocator;
-
         self.mouse_button_swap = win32.ui.windows_and_messaging.GetSystemMetrics(
             .SWAPBUTTON,
         ) != 0;

@@ -5,54 +5,6 @@ const math = @import("../math.zig");
 const platform = @import("platform.zig");
 
 pub const Input = struct {
-    pub const input_events_buffer_preinit_size = 32;
-    pub const buffered_event_buffer_count = 2;
-    pub const BufferedEventsList = struct {
-        const EventPair = struct {
-            InputObject,
-            ?*void,
-        };
-        buffers: [buffered_event_buffer_count]std.ArrayList(EventPair),
-        current_buffer: std.atomic.Value(usize),
-
-        pub fn init(allocator: std.mem.Allocator) !BufferedEventsList {
-            var self: BufferedEventsList = undefined;
-            self.current_buffer = std.atomic.Value(usize).init(0);
-            for (&self.buffers) |*buffer| {
-                buffer.* = try std.ArrayList(EventPair).initCapacity(
-                    allocator,
-                    input_events_buffer_preinit_size,
-                );
-            }
-            return self;
-        }
-
-        pub fn deinit(self: *BufferedEventsList) void {
-            _ = self.current_buffer.load(.Acquire);
-            for (&self.buffers) |*buffer| {
-                buffer.deinit();
-            }
-        }
-
-        pub fn append(self: *BufferedEventsList, ep: EventPair) !void {
-            var buffer = &self.buffers[self.current_buffer.load(.Acquire)];
-            try buffer.append(ep);
-        }
-
-        pub fn clear(self: *BufferedEventsList) void {
-            var buffer = &self.buffers[self.current_buffer.load(.Acquire)];
-            buffer.shrinkRetainingCapacity(0);
-        }
-
-        pub fn swapBuffers(self: *BufferedEventsList) void {
-            self.current_buffer.store((self.current_buffer.load(.Acquire) + 1) % buffered_event_buffer_count, .Release);
-        }
-
-        pub fn getBuffer(self: *BufferedEventsList) *std.ArrayList(EventPair) {
-            return &self.buffers[self.current_buffer.load(.Acquire)];
-        }
-    };
-
     const MouseState = struct {
         buttons: [5]bool = .{false} ** 5,
         position: [2]i32 = .{ 0, 0 },
@@ -70,11 +22,6 @@ pub const Input = struct {
     touch_enabled: bool = false,
     keyboard_enabled: bool = false,
     gamepad_enabled: bool = false,
-
-    begin_events: BufferedEventsList = undefined,
-    change_events: BufferedEventsList = undefined,
-    end_events: BufferedEventsList = undefined,
-    cleanup_events: BufferedEventsList = undefined,
 
     mouse_state: MouseState = .{},
 
@@ -98,7 +45,7 @@ pub const Input = struct {
     const TouchBeganCallback = *const fn (InputObject) void;
     const TouchChangedCallback = *const fn (InputObject) void;
     const TouchEndedCallback = *const fn (InputObject) void;
-    const InputTypeUpdatedCallback = *const fn (InputType) void;
+    const InputTypeUpdatedCallback = *const fn (new: InputType, old: InputType) void;
     const FrameUpdateCallback = *const fn (*app.Window) void;
     const WindowResizedCallback = *const fn (*app.Window, [2]u32) void;
 
@@ -140,10 +87,6 @@ pub const Input = struct {
             else => {},
         }
         self.allocator = allocator;
-        self.begin_events = try BufferedEventsList.init(allocator);
-        self.change_events = try BufferedEventsList.init(allocator);
-        self.end_events = try BufferedEventsList.init(allocator);
-        self.cleanup_events = try BufferedEventsList.init(allocator);
 
         try self.platform_input.init();
     }
@@ -153,11 +96,6 @@ pub const Input = struct {
         defer self.mutex.unlock();
 
         self.platform_input.deinit();
-
-        self.begin_events.deinit();
-        self.change_events.deinit();
-        self.end_events.deinit();
-        self.cleanup_events.deinit();
     }
 
     pub fn format(
@@ -190,8 +128,11 @@ pub const Input = struct {
             if (input_object.type == .gamepad and math.all(math.length3(input_object.position) < math.splat(math.Vec, 0.2), 0)) {
                 return;
             }
+            const old = self.last_input_type;
             self.last_input_type = input_object.type;
-            // TODO: Signals?
+            if (self.input_type_updated_callback) |cb| {
+                cb(input_object.type, old);
+            }
         }
     }
 
@@ -203,20 +144,13 @@ pub const Input = struct {
         }
     }
 
-    fn processInput(self: *Input, input_object: InputObject, native_input_object: ?*void, input_state: InputState) void {
+    pub fn addEvent(self: *Input, input_object: InputObject, native_input_object: ?*void) !void {
         _ = native_input_object;
-        self.updateLastInputType(input_object);
-        self.updateCurrentMousePosition(input_object);
 
-        if (input_object.type == .focus) {
-            if (self.focused_changed_callback) |cb| {
-                cb(input_object.window.?, input_object.input_state == .begin);
-            }
-            self.has_focus = input_object.input_state == .begin;
-            return;
-        }
+        if (!self.mutex.tryLock()) return;
+        defer self.mutex.unlock();
 
-        switch (input_state) {
+        switch (input_object.input_state) {
             .begin => {
                 if (self.input_began_callback) |cb| {
                     cb(input_object);
@@ -246,46 +180,6 @@ pub const Input = struct {
                         cb(input_object);
                     }
                 }
-            },
-            .cancel => {},
-        }
-    }
-
-    fn processInputSlice(self: *Input, events: *BufferedEventsList, input_state: InputState) void {
-        var buffer = events.getBuffer();
-        events.swapBuffers();
-
-        for (buffer.items) |*event| {
-            self.processInput(event.@"0", event.@"1", input_state);
-            event.@"0".deinit();
-        }
-        buffer.shrinkRetainingCapacity(0);
-    }
-
-    pub fn process(self: *Input) void {
-        if (!self.mutex.tryLock()) return;
-        defer self.mutex.unlock();
-
-        self.platform_input.process();
-
-        self.processInputSlice(&self.begin_events, .begin);
-        self.processInputSlice(&self.change_events, .change);
-        self.processInputSlice(&self.end_events, .end);
-    }
-
-    pub fn addEvent(self: *Input, input_object: InputObject, native_input_object: ?*void) !void {
-        if (!self.mutex.tryLock()) return;
-        defer self.mutex.unlock();
-
-        switch (input_object.input_state) {
-            .begin => {
-                try self.begin_events.append(.{ input_object, native_input_object });
-            },
-            .change => {
-                try self.change_events.append(.{ input_object, native_input_object });
-            },
-            .end => {
-                try self.end_events.append(.{ input_object, native_input_object });
             },
             .cancel => {},
         }
