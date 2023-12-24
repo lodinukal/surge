@@ -23,6 +23,7 @@ pub const Uniforms = struct {
     // model: math.Mat = math.identity(),
     rotation: f32 = 0,
     resolution: [2]f32 = .{ 1, 1 },
+    uv_clip: f32 = 0,
 };
 
 pub const RenderPass = struct {
@@ -74,9 +75,13 @@ uniforms: Uniforms = .{},
 depth_texture: ?*gpu.Texture = null,
 depth_texture_view: ?*gpu.TextureView = null,
 
-reginleif_texture: ?*gpu.Texture = null,
-reginleif_texture_view: ?*gpu.TextureView = null,
-reginleif_sampler: ?*gpu.Sampler = null,
+reginleif_texture_a: ?*gpu.Texture = null,
+reginleif_texture_view_a: ?*gpu.TextureView = null,
+reginleif_sampler_a: ?*gpu.Sampler = null,
+
+eye_blob_texture: ?*gpu.Texture = null,
+eye_blob_texture_view: ?*gpu.TextureView = null,
+eye_blob_sampler: ?*gpu.Sampler = null,
 
 pipeline_layout: ?*gpu.PipelineLayout = null,
 
@@ -197,9 +202,13 @@ fn cleanResources(self: *RenderContext) void {
     if (self.uniform_buffer) |b| b.destroy();
     if (self.pipeline_layout) |pl| pl.destroy();
 
-    if (self.reginleif_sampler) |s| s.destroy();
-    if (self.reginleif_texture_view) |tv| tv.destroy();
-    if (self.reginleif_texture) |t| t.destroy();
+    if (self.reginleif_sampler_a) |s| s.destroy();
+    if (self.reginleif_texture_view_a) |tv| tv.destroy();
+    if (self.reginleif_texture_a) |t| t.destroy();
+
+    if (self.eye_blob_sampler) |s| s.destroy();
+    if (self.eye_blob_texture_view) |tv| tv.destroy();
+    if (self.eye_blob_texture) |t| t.destroy();
 
     if (self.render_pipeline) |rp| rp.destroy();
 
@@ -292,31 +301,15 @@ fn setupPipelineLayout(self: *RenderContext) !void {
     self.bind_group_layout_0 = try self.device.createBindGroupLayout(self.resource_allocator, &.{
         .label = "bgl1!",
         .entries = &.{
-            gpu.BindGroupLayout.Entry.buffer(
-                0,
-                gpu.ShaderStageFlags.vertex,
-                .uniform,
-                false,
-                @sizeOf(Uniforms),
-            ),
+            gpu.BindGroupLayout.Entry.buffer(0, .{ .vertex = true }, .uniform, false, @sizeOf(Uniforms)),
         },
     });
 
     self.bind_group_layout_1 = try self.device.createBindGroupLayout(self.resource_allocator, &.{
         .label = "bgl2!",
         .entries = &.{
-            gpu.BindGroupLayout.Entry.texture(
-                0,
-                gpu.ShaderStageFlags.fragment,
-                .uint,
-                .dimension_2d,
-                true,
-            ),
-            gpu.BindGroupLayout.Entry.sampler(
-                1,
-                gpu.ShaderStageFlags.fragment,
-                .filtering,
-            ),
+            gpu.BindGroupLayout.Entry.texture(0, .{ .fragment = true }, .uint, .dimension_2d, true, 2),
+            gpu.BindGroupLayout.Entry.sampler(1, .{ .fragment = true }, .filtering, 2),
         },
     });
 
@@ -331,13 +324,13 @@ fn setupBindGroups(self: *RenderContext) !void {
         .label = "bg!",
         .layout = self.bind_group_layout_0.?,
         .entries = &.{
-            gpu.BindGroup.Entry.fromBuffer(
-                0,
-                self.uniform_buffer.?,
-                0,
-                @sizeOf(Uniforms),
-                @sizeOf(Uniforms),
-            ),
+            gpu.BindGroup.Entry.fromBuffers(0, &.{
+                .{
+                    .buffer = self.uniform_buffer.?,
+                    .offset = 0,
+                    .size = @sizeOf(Uniforms),
+                },
+            }),
         },
     });
 
@@ -345,14 +338,14 @@ fn setupBindGroups(self: *RenderContext) !void {
         .label = "bg!",
         .layout = self.bind_group_layout_1.?,
         .entries = &.{
-            gpu.BindGroup.Entry.fromTextureView(
-                0,
-                self.reginleif_texture_view.?,
-            ),
-            gpu.BindGroup.Entry.fromSampler(
-                1,
-                self.reginleif_sampler.?,
-            ),
+            gpu.BindGroup.Entry.fromTextureViews(0, &.{
+                self.reginleif_texture_view_a.?,
+                self.eye_blob_texture_view.?,
+            }),
+            gpu.BindGroup.Entry.fromSamplers(1, &.{
+                self.reginleif_sampler_a.?,
+                self.eye_blob_sampler.?,
+            }),
         },
     });
 }
@@ -439,6 +432,8 @@ fn updateUniformBuffers(self: *RenderContext) !void {
     // self.uniforms.view = math.translate(math.identity(), .{ 0.0, 0.0, -2.0 });
     // self.uniforms.projection = math.perspective(math.radians(45.0), 800.0 / 600.0, 0.1, 100.0);
 
+    self.uniforms.uv_clip = @mod(self.uniforms.uv_clip + 0.01, 1.0);
+
     try self.queue.writeBuffer(
         self.uniform_buffer.?,
         0,
@@ -448,23 +443,42 @@ fn updateUniformBuffers(self: *RenderContext) !void {
 }
 
 const reginleif = @embedFile("reginleif.png");
+const eye_blob = @embedFile("eye-blob.jpg");
 fn loadReginleifTexture(self: *RenderContext) !void {
-    var img = try image.Image.load(reginleif);
-    defer img.deinit();
+    var img_a = try image.Image.load(reginleif);
+    defer img_a.deinit();
 
-    self.reginleif_texture = try self.loadTextureFromMemory(
-        img.data,
-        img.info,
+    self.reginleif_texture_a = try self.loadTextureFromMemory(
+        img_a.data,
+        img_a.info,
     );
-    self.reginleif_texture_view = try self.reginleif_texture.?.createView(self.resource_allocator, &.{});
-    self.reginleif_sampler = try self.device.createSampler(self.resource_allocator, &.{
-        .label = "reginleif_sampler",
+    self.reginleif_texture_view_a = try self.reginleif_texture_a.?.createView(self.resource_allocator, &.{});
+    self.reginleif_sampler_a = try self.device.createSampler(self.resource_allocator, &.{
+        .label = "reginleif_sampler_a",
         .address_mode_u = .clamp_to_edge,
         .address_mode_v = .clamp_to_edge,
         .address_mode_w = .clamp_to_edge,
         .mag_filter = .linear,
         .min_filter = .nearest,
         .mipmap_filter = .nearest,
+    });
+
+    var img_b = try image.Image.load(eye_blob);
+    defer img_b.deinit();
+
+    self.eye_blob_texture = try self.loadTextureFromMemory(
+        img_b.data,
+        img_b.info,
+    );
+    self.eye_blob_texture_view = try self.eye_blob_texture.?.createView(self.resource_allocator, &.{});
+    self.eye_blob_sampler = try self.device.createSampler(self.resource_allocator, &.{
+        .label = "eye_blob_sampler",
+        .address_mode_u = .clamp_to_edge,
+        .address_mode_v = .clamp_to_edge,
+        .address_mode_w = .clamp_to_edge,
+        .mag_filter = .nearest,
+        .min_filter = .linear,
+        .mipmap_filter = .linear,
     });
 }
 
@@ -538,13 +552,14 @@ const hlsl_shader =
     \\{
     \\   float rotation;
     \\   float2 resolution;
+    \\   float uv_clip;
     \\};
     \\
     \\cbuffer un : register(b0) { Uniforms un; }
     \\
     \\// texture
-    \\Texture2D g_texture : register(t0, space1);
-    \\SamplerState g_sampler : register(s1, space1);
+    \\Texture2D g_textures[] : register(t0, space1);
+    \\SamplerState g_samplers[] : register(s1, space1);
     \\
     \\struct InputVS
     \\{
@@ -578,7 +593,8 @@ const hlsl_shader =
     \\    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
     \\      discard;
     \\    }
-    \\    float4 colour = g_texture.Sample(g_sampler, uv);
+    \\    int using_texture = uv.x > un.uv_clip ? 1 : 0;
+    \\    float4 colour = g_textures[using_texture].Sample(g_samplers[using_texture], uv);
     \\    return colour;
     \\};
 ;

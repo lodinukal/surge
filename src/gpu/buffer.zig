@@ -80,6 +80,20 @@ pub const Buffer = opaque {
         min_binding_size: u64 = 0,
     };
 
+    pub const Binding = struct {
+        buffer: *gpu.Buffer,
+        offset: u64,
+        size: ?u64,
+
+        pub inline fn resolveSize(self: Binding) u64 {
+            if (self.size) |size| {
+                return size;
+            } else {
+                return self.buffer.getSize() - self.offset;
+            }
+        }
+    };
+
     pub const Descriptor = struct {
         label: ?[]const u8 = null,
         usage: UsageFlags,

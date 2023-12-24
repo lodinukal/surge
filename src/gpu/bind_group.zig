@@ -5,40 +5,41 @@ pub const BindGroup = opaque {
     pub const Error = error{
         BindGroupFailedToCreate,
         BindGroupUnknownBinding,
+        BindGroupMismatchedBindingType,
     };
 
     pub const Entry = struct {
         binding: u32,
-        buffer: ?*gpu.Buffer = null,
-        offset: u64 = 0,
-        size: u64,
-        element_size: u32 = 0,
-        sampler: ?*gpu.Sampler = null,
-        texture_view: ?*gpu.TextureView = null,
+        type: union(enum) {
+            buffers: []const gpu.Buffer.Binding,
+            samplers: []const *gpu.Sampler,
+            texture_views: []const *gpu.TextureView,
+        },
 
-        pub fn fromBuffer(binding: u32, buffer: *gpu.Buffer, offset: u64, size: u64, elem_size: u32) Entry {
+        pub fn fromBuffers(binding: u32, buffers: []const gpu.Buffer.Binding) Entry {
             return Entry{
                 .binding = binding,
-                .buffer = buffer,
-                .offset = offset,
-                .size = size,
-                .element_size = elem_size,
+                .type = .{
+                    .buffers = buffers,
+                },
             };
         }
 
-        pub fn fromSampler(binding: u32, sampler: *gpu.Sampler) Entry {
+        pub fn fromSamplers(binding: u32, samplers: []const *gpu.Sampler) Entry {
             return Entry{
                 .binding = binding,
-                .sampler = sampler,
-                .size = 0,
+                .type = .{
+                    .samplers = samplers,
+                },
             };
         }
 
-        pub fn fromTextureView(binding: u32, texture_view: *gpu.TextureView) Entry {
+        pub fn fromTextureViews(binding: u32, texture_views: []const *gpu.TextureView) Entry {
             return Entry{
                 .binding = binding,
-                .texture_view = texture_view,
-                .size = 0,
+                .type = .{
+                    .texture_views = texture_views,
+                },
             };
         }
     };

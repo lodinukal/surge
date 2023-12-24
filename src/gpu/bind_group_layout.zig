@@ -73,10 +73,12 @@ pub const BindGroupLayout = opaque {
             binding: u32,
             visibility: gpu.ShaderStageFlags,
             binding_type: gpu.Sampler.BindingType,
+            count: ?u32,
         ) Entry {
             return .{
                 .binding = binding,
                 .visibility = visibility,
+                .count = count,
                 .type = .{
                     .sampler = .{
                         .type = binding_type,
@@ -91,6 +93,7 @@ pub const BindGroupLayout = opaque {
             sample_type: gpu.Texture.SampleType,
             view_dimension: gpu.TextureView.Dimension,
             multisampled: bool,
+            count: ?u32,
         ) Entry {
             return .{
                 .binding = binding,
@@ -102,6 +105,7 @@ pub const BindGroupLayout = opaque {
                         .multisampled = multisampled,
                     },
                 },
+                .count = count,
             };
         }
 
@@ -111,10 +115,12 @@ pub const BindGroupLayout = opaque {
             access: gpu.StorageTextureAccess,
             format: gpu.Texture.Format,
             view_dimension: gpu.TextureView.Dimension,
+            count: ?u32,
         ) Entry {
             return .{
                 .binding = binding,
                 .visibility = visibility,
+                .count = count,
                 .type = .{
                     .storage_texture = .{
                         .access = access,
