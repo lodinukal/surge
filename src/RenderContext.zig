@@ -36,6 +36,7 @@ pub const RenderPass = struct {
     }
 };
 
+ready: bool = false,
 instance: *gpu.Instance = undefined,
 surface: *gpu.Surface = undefined,
 physical_device: *gpu.PhysicalDevice = undefined,
@@ -146,6 +147,7 @@ pub fn load(self: *RenderContext, allocator: std.mem.Allocator, window: *app.Win
     self.swapchain_format = .bgra8_unorm;
 
     try self.loadResources();
+    self.ready = true;
 }
 
 pub fn deinit(self: *RenderContext) void {

@@ -108,6 +108,7 @@ const WindowsWindow = struct {
         try registerClassOnce();
         self.descriptor = descriptor;
         self.modified_state.descriptor = descriptor;
+        self.hwnd = null;
     }
 
     pub fn build(self: *WindowsWindow) !void {

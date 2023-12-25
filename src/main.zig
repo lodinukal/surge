@@ -7,164 +7,83 @@ const RenderContext = @import("RenderContext.zig");
 
 const image = @import("image.zig");
 
-const Context = struct {
-    allocator: std.mem.Allocator,
-    application: *app.Application,
+const WindowInfo = struct {
     window: *app.Window,
 
-    ui_thread: ?std.Thread = null,
-    mutex: std.Thread.Mutex = .{},
-
-    ready_condition: std.Thread.Condition = .{},
-    ready_mutex: std.Thread.Mutex = .{},
-
-    render: RenderContext = .{},
+    render_ctx: RenderContext = .{},
     resized: ?[2]u32 = null,
 
-    pub fn init(allocator: std.mem.Allocator) !Context {
-        var application = try app.Application.create(allocator);
-        errdefer application.destroy();
-
-        // application.input.focused_changed_callback = focused_changed_callback;
-        application.input.input_began_callback = inputBeganCallback;
-        application.input.window_resized_callback = windowResizedCallback;
-        application.input.input_ended_callback = inputEndedCallback;
-        application.input.frame_update_callback = frameUpdate;
-
-        return Context{
-            .allocator = allocator,
-            .application = application,
-            .window = try application.createWindow(.{
-                .title = "helloo!",
-                .size = .{ 800, 800 },
-                .visible = true,
-            }),
-        };
+    pub fn init(self: *WindowInfo, allocator: std.mem.Allocator) !void {
+        try self.render_ctx.load(allocator, self.window);
     }
 
-    pub fn deinit(self: *Context) void {
-        if (self.ui_thread) |t| {
-            t.join();
-        }
-        self.render.deinit();
-        self.window.destroy();
-        self.application.destroy();
-    }
-
-    pub fn pumpEvents(self: *Context) !void {
-        try self.application.pumpEvents();
-    }
-
-    pub fn running(self: *Context) bool {
-        return !self.window.shouldClose();
-    }
-
-    pub fn spawnWindowThread(self: *Context) !void {
-        self.ui_thread = try std.Thread.spawn(.{
-            .allocator = self.allocator,
-        }, windowLoop, .{self});
-        self.ready_mutex.lock();
-        defer self.ready_mutex.unlock();
-        self.ready_condition.wait(&self.ready_mutex);
-    }
-
-    pub const focused_sleep = std.time.ns_per_us * 100;
-    pub const unfocused_sleep = std.time.ns_per_ms * 10;
-
-    fn windowLoop(self: *Context) !void {
-        try self.window.build();
-
-        self.window.storeContext(Context, self);
-
-        self.ready_mutex.lock();
-        self.ready_condition.broadcast();
-        self.ready_mutex.unlock();
-
-        try self.render.load(self.allocator, self.window);
-
-        var buffer: [1024]u8 = .{0} ** 1024;
-        var fba = std.heap.FixedBufferAllocator.init(&buffer);
-        const temp_allocator = fba.allocator();
-
-        while (self.running()) {
-            const frame = self.render.frame_arena.queryCapacity();
-            const resource = self.render.resource_arena.queryCapacity();
-            const permanent = self.render.permanent_arena.queryCapacity();
-            const title = try std.fmt.allocPrint(
-                temp_allocator,
-                "{};{};{};{}",
-                .{
-                    frame,
-                    resource,
-                    permanent,
-                    frame + resource + permanent,
-                },
-            );
-            defer fba.reset();
-
-            try self.pumpEvents();
-            self.window.setTitle(title);
-
-            const frame_start = std.time.nanoTimestamp();
-
-            frameUpdate(self.window);
-
-            const frame_end = std.time.nanoTimestamp();
-
-            const frame_time = frame_end - frame_start;
-            _ = frame_time;
-            // std.debug.print("frame time: {d:1}\n", .{std.time.ns_per_s / @as(f64, @floatFromInt(frame_time))});
-
-            std.time.sleep(if (self.window.isFocused()) focused_sleep else unfocused_sleep);
-        }
-    }
-
-    fn frameUpdate(wnd: *app.Window) void {
-        var ctx: *Context = @alignCast(wnd.getContext(Context).?);
-
-        if (ctx.resized) |size| {
-            ctx.render.resize(size) catch {};
-        }
-
-        ctx.render.draw() catch {};
-        ctx.render.present() catch {};
-    }
-
-    fn inputBeganCallback(ipo: app.InputObject) void {
-        _ = ipo;
-    }
-
-    fn windowResizedCallback(window: *const app.Window, size: [2]u32) void {
-        var ctx = window.getContext(Context) orelse return;
-        ctx.resized = size;
-    }
-
-    fn inputEndedCallback(ipo: app.InputObject) void {
-        _ = ipo;
+    pub fn deinit(self: *WindowInfo) void {
+        self.render_ctx.deinit();
     }
 };
 
+var current_window_info: ?WindowInfo = null;
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
-    const alloc = gpa.allocator();
+    const allocator = gpa.allocator();
 
-    image.setAllocator(alloc);
+    image.setAllocator(allocator);
 
-    // var arena = std.heap.ArenaAllocator.init(gpa_alloc);
-    // defer arena.deinit();
-    // const alloc = arena.allocator();
+    var application = try app.Application.create(allocator);
+    defer application.destroy();
 
-    var context = try Context.init(alloc);
-    defer context.deinit();
+    try application.detach();
 
-    try context.spawnWindowThread();
+    var opened_window = try application.createWindow(.{
+        .title = "helloo!",
+        .size = .{ 800, 800 },
+        .visible = true,
+    });
+    defer opened_window.destroy();
 
-    // std.debug.print("mem: {}\n", .{arena.queryCapacity()});
+    application.loop_callback = loop;
+    application.input.frame_update_callback = frame;
+    application.input.window_resized_callback = resized;
 
-    while (context.running()) {
+    current_window_info = WindowInfo{
+        .window = opened_window,
+    };
+    opened_window.storeContext(WindowInfo, &current_window_info.?);
+    try current_window_info.?.init(allocator);
+    defer current_window_info.?.deinit();
+
+    while (!opened_window.shouldClose()) {
         std.time.sleep(std.time.ns_per_s);
     }
+}
 
-    // std.debug.print("mem: {}\n", .{arena.queryCapacity()});
+fn loop(passed_application: *app.Application) bool {
+    _ = passed_application;
+
+    if (current_window_info) |wi| {
+        frame(wi.window);
+        return wi.window.shouldClose();
+    }
+
+    return true;
+}
+
+fn frame(passed_window: *app.Window) void {
+    var window = passed_window.getContext(WindowInfo) orelse return;
+
+    var render_ctx: *RenderContext = @alignCast(@ptrCast(&window.render_ctx));
+    if (!render_ctx.ready) return;
+
+    if (window.resized) |size| {
+        render_ctx.resize(size) catch {};
+    }
+
+    render_ctx.draw() catch {};
+    render_ctx.present() catch {};
+}
+
+fn resized(passed_window: *app.Window, size: [2]u32) void {
+    var window = passed_window.getContext(WindowInfo) orelse return;
+    window.resized = size;
 }
