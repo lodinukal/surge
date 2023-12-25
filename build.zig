@@ -174,6 +174,8 @@ fn buildD3d12(
     const win32_dep = b.dependency("win32", .{});
     const win32_module = win32_dep.module("zigwin32");
     d3d12.addModule("win32", win32_module);
+    b.installBinFile("libs/x64/dxil.dll", "dxil.dll");
+    b.installBinFile("libs/x64/dxcompiler.dll", "dxcompiler.dll");
 }
 
 fn stbImage(
