@@ -27,7 +27,7 @@ pub const FullscreenMode = enum {
 pub const Window = struct {
     platform_window: platform.impl.Window = undefined,
     application: *app.Application = undefined,
-    context: ?*anyopaque = null,
+    context: ?*align(8) anyopaque = null,
 
     pub inline fn allocator(self: *const Window) std.mem.Allocator {
         return self.application.allocator;
@@ -116,7 +116,7 @@ pub const Window = struct {
         self.context = @ptrCast(context);
     }
 
-    pub fn getContext(self: *const Window, comptime T: type) ?*align(1) T {
+    pub fn getContext(self: *const Window, comptime T: type) ?*T {
         return @ptrCast(self.context);
     }
 };

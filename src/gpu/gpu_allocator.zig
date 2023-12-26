@@ -1,13 +1,10 @@
 const std = @import("std");
-const util = @import("util.zig");
 
 pub const Error = error{
     OutOfMemory,
-    FailedToMap,
+    FreeingZeroSizeAllocation,
+    InvalidAllocation,
     NoCompatibleMemoryFound,
-    InvalidAllocationCreateDesc,
-    InvalidAllocatorCreateDesc,
-    BarrierLayoutNeedsDevice10,
     Other,
 };
 
@@ -18,27 +15,13 @@ pub const MemoryLocation = enum {
     gpu_to_cpu,
 };
 
-pub const AllocationType = enum {
-    free,
-    linear,
-    non_linear,
-};
-
 pub const Report = struct {
-    name: []const u8,
     size: u64,
 };
 
 pub const Allocation = struct {
     offset: u64,
     chunk: u64,
-
-    pub inline fn add(self: Allocation, offset: u64) Allocation {
-        return .{
-            .offset = self.offset + offset,
-            .chunk = self.chunk,
-        };
-    }
 };
 
 pub const AllocationSizes = struct {
@@ -83,114 +66,86 @@ pub const Allocator = union(enum) {
 
     pub fn initOffsetAllocator(
         allocator: std.mem.Allocator,
-        _size: u32,
+        size: u32,
         max_allocations: ?u32,
     ) std.mem.Allocator.Error!Allocator {
         return .{
             .offset_allocator = try OffsetAllocator.init(
                 allocator,
-                _size,
+                size,
                 max_allocations,
             ),
         };
     }
 
     pub fn initDedicatedBlockAllocator(
-        _size: u64,
+        size: u64,
     ) std.mem.Allocator.Error!Allocator {
         return .{
-            .dedicated_block_allocator = DedicatedBlockAllocator.init(
-                _size,
+            .dedicated_block_allocator = try DedicatedBlockAllocator.init(
+                size,
             ),
         };
     }
 
     pub fn deinit(self: *Allocator) void {
         switch (self.*) {
-            inline else => |*x| x.deinit(),
+            inline else => |*allocator| allocator.deinit(),
         }
     }
 
     pub fn reset(self: *Allocator) std.mem.Allocator.Error!void {
         switch (self.*) {
-            inline else => |x| x.reset(),
+            inline else => |allocator| allocator.reset(),
         }
     }
 
     pub fn allocate(
         self: *Allocator,
-        name: []const u8,
-        _size: u32,
-        alignment: ?u32,
+        size: u32,
     ) Error!Allocation {
         return switch (self.*) {
-            inline else => |*x| x.allocate(name, _size, alignment),
+            inline else => |*allocator| allocator.allocate(size),
         };
     }
 
     pub fn free(self: *Allocator, allocation: Allocation) Error!void {
         return switch (self.*) {
-            inline else => |*x| x.free(allocation),
+            inline else => |*allocator| allocator.free(allocation),
         };
     }
 
-    pub fn allocationSize(self: *const Allocator, allocation: Allocation) u32 {
-        switch (self.*) {
-            inline else => |x| x.allocationSize(allocation),
-        }
+    pub fn getSize(self: *const Allocator) u64 {
+        return switch (self.*) {
+            inline else => |allocator| allocator.getSize(),
+        };
     }
 
-    pub fn reportMemoryLeaks(self: *const Allocator, type_idx: usize, block_idx: usize) void {
-        switch (self.*) {
-            inline else => |x| x.reportMemoryLeaks(type_idx, block_idx),
-        }
-    }
-
-    pub fn reportAllocations(self: *const Allocator, allocator: std.mem.Allocator) Error!std.ArrayList(Report) {
-        switch (self.*) {
-            inline else => |x| x.reportAllocations(allocator),
-        }
-    }
-
-    pub fn supportsGeneralAllocations(self: *const Allocator) bool {
-        switch (self.*) {
-            inline else => |x| x.supportsGeneralAllocations(),
-        }
-    }
-
-    pub fn size(self: *const Allocator) u64 {
-        switch (self.*) {
-            inline else => |x| x.size(),
-        }
-    }
-
-    pub fn allocated(self: *const Allocator) u64 {
-        switch (self.*) {
-            inline else => |x| x.allocated(),
-        }
+    pub fn getAllocated(self: *const Allocator) u64 {
+        return switch (self.*) {
+            inline else => |allocator| allocator.getAllocated(),
+        };
     }
 
     pub fn availableMemory(self: *const Allocator) u64 {
-        return self.size() - self.allocated();
+        return self.getSize() - self.getAllocated();
     }
 
     pub fn isEmpty(self: *const Allocator) bool {
-        return self.allocated() == 0;
+        return self.getAllocated() == 0;
     }
 };
 
 pub const DedicatedBlockAllocator = struct {
     size: u64,
     allocated: u64,
-    name: ?[]const u8,
 
     pub fn init(
-        _size: u64,
+        size: u64,
     ) std.mem.Allocator.Error!DedicatedBlockAllocator {
         return .{
-            .size = _size,
+            .size = size,
             .allocated = 0,
-            .name = null,
         };
     }
 
@@ -200,21 +155,17 @@ pub const DedicatedBlockAllocator = struct {
 
     pub fn allocate(
         self: *DedicatedBlockAllocator,
-        name: []const u8,
-        _size: u32,
-        alignment: ?u32,
+        size: u32,
     ) Error!Allocation {
-        _ = alignment;
         if (self.allocated != 0) {
             return Error.OutOfMemory;
         }
 
-        if (self.size != _size) {
+        if (self.size != size) {
             return Error.OutOfMemory;
         }
 
-        self.allocated = _size;
-        self.name = name;
+        self.allocated = size;
 
         return .{
             .offset = 0,
@@ -223,69 +174,21 @@ pub const DedicatedBlockAllocator = struct {
     }
 
     pub fn free(self: *DedicatedBlockAllocator, allocation: Allocation) Error!void {
-        if (self.allocated == 0) {
-            return Error.Other;
-        }
-
-        if (allocation.chunk != 1) {
-            return Error.Other;
-        }
-
-        self.allocated = 0;
-        self.name = null;
-    }
-
-    pub fn allocationSize(self: *const DedicatedBlockAllocator, allocation: Allocation) u32 {
         _ = allocation;
-        return @as(u32, @truncate(self.allocated));
+        self.allocated = 0;
     }
 
-    pub fn reportMemoryLeaks(self: *const DedicatedBlockAllocator, type_idx: usize, block_idx: usize) void {
-        std.log.warn(
-            \\leak detected: {{
-            \\    memory type: {}
-            \\    memory block: {}
-            \\    dedicated block allocator: {{
-            \\        size: 0x{:x},
-            \\        name: {s},
-            \\    }}
-            \\}}
-        , .{
-            type_idx,
-            block_idx,
-            self.size,
-            self.name orelse "<unknown>",
-        });
-    }
-
-    pub fn reportAllocations(self: *const DedicatedBlockAllocator, allocator: std.mem.Allocator) Error!std.ArrayList(Report) {
-        var list = std.ArrayList(Report).initCapacity(allocator, 1) catch
-            return Error.OutOfMemory;
-
-        if (self.allocated != 0) {
-            list.appendAssumeCapacity(allocator, .{
-                .name = self.name orelse "<unknown>",
-                .size = self.allocated,
-            });
-        }
-
-        return list;
-    }
-
-    pub fn supportsGeneralAllocations(self: *const DedicatedBlockAllocator) bool {
-        _ = self;
-        return false;
-    }
-
-    pub fn size(self: *const DedicatedBlockAllocator) u64 {
+    pub fn getSize(self: *const DedicatedBlockAllocator) u64 {
         return self.size;
     }
 
-    pub fn allocated(self: *const DedicatedBlockAllocator) u64 {
+    pub fn getAllocated(self: *const DedicatedBlockAllocator) u64 {
         return self.allocated;
     }
 };
 
+// OffsetAllocator from https://github.com/sebbbi/OffsetAllocator
+// rewritten in zig
 pub const OffsetAllocator = struct {
     const NodeIndex = u32;
 
@@ -318,35 +221,27 @@ pub const OffsetAllocator = struct {
     free_nodes: ?[]NodeIndex,
     free_offset: u32 = 0,
 
-    inline fn lzcntNonzero(v: u32) u32 {
-        return @clz(v);
-    }
-
-    inline fn tzcntNonzero(v: u32) u32 {
-        return @ctz(v);
-    }
-
     const SmallFloat = struct {
         const mantissa_bits: u32 = 3;
         const mantissa_value: u32 = 1 << mantissa_bits;
         const mantissa_mask: u32 = mantissa_value - 1;
 
-        pub fn toFloatRoundUp(_size: u32) u32 {
+        pub fn toFloatRoundUp(size: u32) u32 {
             var exp: u32 = 0;
             var mantissa: u32 = 0;
 
-            if (_size < mantissa_value) {
-                mantissa = _size;
+            if (size < mantissa_value) {
+                mantissa = size;
             } else {
-                const leading_zeros = lzcntNonzero(_size);
+                const leading_zeros = @clz(size);
                 const highestSetBit = 31 - leading_zeros;
 
                 const mantissa_start_bit = highestSetBit - mantissa_bits;
                 exp = mantissa_start_bit + 1;
-                mantissa = (_size >> @as(u5, @truncate(mantissa_start_bit))) & mantissa_mask;
+                mantissa = (size >> @as(u5, @truncate(mantissa_start_bit))) & mantissa_mask;
 
                 const low_bits_mask = (@as(u32, 1) << @as(u5, @truncate(mantissa_start_bit))) - 1;
-                if ((_size & low_bits_mask) != 0) {
+                if ((size & low_bits_mask) != 0) {
                     mantissa += 1;
                 }
             }
@@ -354,19 +249,19 @@ pub const OffsetAllocator = struct {
             return (exp << mantissa_bits) + mantissa;
         }
 
-        pub fn toFloatRoundDown(_size: u32) u32 {
+        pub fn toFloatRoundDown(size: u32) u32 {
             var exp: u32 = 0;
             var mantissa: u32 = 0;
 
-            if (_size < mantissa_value) {
-                mantissa = _size;
+            if (size < mantissa_value) {
+                mantissa = size;
             } else {
-                const leading_zeros = lzcntNonzero(_size);
+                const leading_zeros = @clz(size);
                 const highestSetBit = 31 - leading_zeros;
 
                 const mantissa_start_bit = highestSetBit - mantissa_bits;
                 exp = mantissa_start_bit + 1;
-                mantissa = (_size >> @as(u5, @truncate(mantissa_start_bit))) & mantissa_mask;
+                mantissa = (size >> @as(u5, @truncate(mantissa_start_bit))) & mantissa_mask;
             }
 
             return (exp << mantissa_bits) | mantissa;
@@ -378,13 +273,13 @@ pub const OffsetAllocator = struct {
         const mask_after_start_index: u32 = ~mask_before_start_index;
         const bits_after: u32 = v & mask_after_start_index;
         if (bits_after == 0) return null;
-        return tzcntNonzero(bits_after);
+        return @ctz(bits_after);
     }
 
-    pub fn init(allocator: std.mem.Allocator, _size: u32, max_allocations: ?u32) std.mem.Allocator.Error!OffsetAllocator {
+    pub fn init(allocator: std.mem.Allocator, size: u32, max_allocations: ?u32) std.mem.Allocator.Error!OffsetAllocator {
         var self = OffsetAllocator{
             .allocator = allocator,
-            .size = _size,
+            .size = size,
             .max_allocations = max_allocations orelse 128 * 1024,
             .nodes = null,
             .free_nodes = null,
@@ -438,17 +333,13 @@ pub const OffsetAllocator = struct {
 
     pub fn allocate(
         self: *OffsetAllocator,
-        name: []const u8,
-        _size: u32,
-        alignment: ?u32,
+        size: u32,
     ) Error!Allocation {
-        _ = name;
         if (self.free_offset == 0) {
             return Error.OutOfMemory;
         }
 
-        const use_size = util.alignUp(_size, alignment orelse 1);
-        const min_bin_index = SmallFloat.toFloatRoundUp(@intCast(use_size));
+        const min_bin_index = SmallFloat.toFloatRoundUp(@intCast(size));
 
         const min_top_bin_index: u32 = min_bin_index >> top_bins_index_shift;
         const min_leaf_bin_index: u32 = min_bin_index & lead_bins_index_mask;
@@ -466,7 +357,7 @@ pub const OffsetAllocator = struct {
                 return Error.OutOfMemory;
             }
             top_bin_index = found_top_bin_index.?;
-            leaf_bin_index = tzcntNonzero(self.used_bins[top_bin_index]);
+            leaf_bin_index = @ctz(self.used_bins[top_bin_index]);
         }
 
         const bin_index = (top_bin_index << top_bins_index_shift) | leaf_bin_index.?;
@@ -474,7 +365,7 @@ pub const OffsetAllocator = struct {
         const node_index = self.bin_indices[bin_index].?;
         const node = &self.nodes.?[node_index];
         const node_total_size = node.data_size;
-        node.data_size = @intCast(use_size);
+        node.data_size = @intCast(size);
         node.used = true;
         self.bin_indices[bin_index] = node.bin_list_next;
         if (node.bin_list_next) |bln| self.nodes.?[bln].bin_list_prev = null;
@@ -490,9 +381,9 @@ pub const OffsetAllocator = struct {
             }
         }
 
-        const remainder_size = node_total_size - use_size;
+        const remainder_size = node_total_size - size;
         if (remainder_size > 0) {
-            const new_node_index = self.insertNodeIntoBin(@intCast(remainder_size), @intCast(node.data_offset + use_size));
+            const new_node_index = self.insertNodeIntoBin(@intCast(remainder_size), @intCast(node.data_offset + size));
             if (node.neighbour_next) |nnn| self.nodes.?[nnn].neighbour_prev = new_node_index;
             self.nodes.?[new_node_index].neighbour_prev = node_index;
             self.nodes.?[new_node_index].neighbour_next = node.neighbour_next;
@@ -507,22 +398,22 @@ pub const OffsetAllocator = struct {
 
     pub fn free(self: *OffsetAllocator, allocation: Allocation) Error!void {
         if (self.nodes == null) {
-            return Error.Other;
+            return Error.InvalidAllocation;
         }
 
         const node_index = allocation.chunk;
         const node = &self.nodes.?[node_index];
         if (!node.used) {
-            return Error.Other;
+            return Error.InvalidAllocation;
         }
 
         var offset = node.data_offset;
-        var _size = node.data_size;
+        var size = node.data_size;
 
         if (node.neighbour_prev != null and self.nodes.?[node.neighbour_prev.?].used == false) {
             const prev_node = &self.nodes.?[node.neighbour_prev.?];
             offset = prev_node.data_offset;
-            _size += prev_node.data_size;
+            size += prev_node.data_size;
 
             self.removeNodeFromBin(node.neighbour_prev.?);
 
@@ -532,7 +423,7 @@ pub const OffsetAllocator = struct {
 
         if (node.neighbour_next != null and self.nodes.?[node.neighbour_next.?].used == false) {
             const next_node = &self.nodes.?[node.neighbour_next.?];
-            _size += next_node.data_size;
+            size += next_node.data_size;
 
             self.removeNodeFromBin(node.neighbour_next.?);
 
@@ -549,7 +440,7 @@ pub const OffsetAllocator = struct {
         self.free_offset += 1;
         self.free_nodes.?[self.free_offset] = @intCast(node_index);
 
-        const combined_node_index = self.insertNodeIntoBin(_size, offset);
+        const combined_node_index = self.insertNodeIntoBin(size, offset);
         if (neighbour_next) |nn| {
             self.nodes.?[combined_node_index].neighbour_next = neighbour_next;
             self.nodes.?[nn].neighbour_prev = combined_node_index;
@@ -560,8 +451,8 @@ pub const OffsetAllocator = struct {
         }
     }
 
-    pub fn insertNodeIntoBin(self: *OffsetAllocator, _size: u32, data_offset: u32) u32 {
-        const bin_index = SmallFloat.toFloatRoundDown(_size);
+    pub fn insertNodeIntoBin(self: *OffsetAllocator, size: u32, data_offset: u32) u32 {
+        const bin_index = SmallFloat.toFloatRoundDown(size);
 
         const top_bin_index: u32 = bin_index >> top_bins_index_shift;
         const leaf_bin_index: u32 = bin_index & lead_bins_index_mask;
@@ -580,16 +471,16 @@ pub const OffsetAllocator = struct {
 
         self.nodes.?[node_index] = .{
             .data_offset = data_offset,
-            .data_size = _size,
+            .data_size = size,
             .bin_list_next = top_node_index,
         };
         if (top_node_index) |tni| self.nodes.?[tni].bin_list_prev = node_index;
         self.bin_indices[bin_index] = node_index;
 
-        self.free_storage += _size;
+        self.free_storage += size;
 
         // debug
-        // std.debug.print("free storage: {} ({}) (insertNodeIntoBin)\n", .{ self.free_storage, _size });
+        // std.debug.print("free storage: {} ({}) (insertNodeIntoBin)\n", .{ self.free_storage, size });
 
         return node_index;
     }
@@ -628,58 +519,11 @@ pub const OffsetAllocator = struct {
         // std.debug.print("free storage: {} ({}) (removeNodeFromBin)\n", .{ self.free_storage, node.data_size });
     }
 
-    pub fn allocationSize(self: *const OffsetAllocator, allocation: Allocation) u32 {
-        return self.nodes.?[allocation.chunk].data_size;
-    }
-
-    pub fn reportMemoryLeaks(self: *const OffsetAllocator, type_idx: usize, block_idx: usize) void {
-        std.log.warn(
-            \\leak detected: {{
-            \\    memory type: {}
-            \\    memory block: {}
-            \\    offset allocator: {{
-            \\        size: 0x{:x},
-            \\        free storage: 0x{:x},
-            \\    }}
-            \\}}
-        , .{
-            type_idx,
-            block_idx,
-            self.size,
-            self.free_storage,
-        });
-    }
-
-    pub fn reportAllocations(self: *const OffsetAllocator, allocator: std.mem.Allocator) Error!std.ArrayList(Report) {
-        var list = std.ArrayList(Report).init(allocator);
-
-        for (0..num_leaf_bins) |i| {
-            if (self.bin_indices[i] != null) {
-                var node_index = self.bin_indices[i];
-                while (node_index != null) : (node_index = self.nodes.?[node_index].bin_list_next) {
-                    const node = &self.nodes.?[node_index];
-                    try list.append(allocator, .{
-                        .name = "",
-                        .size = node.data_size,
-                    });
-                }
-            }
-        }
-
-        return list;
-    }
-
-    pub fn supportsGeneralAllocations(self: *const OffsetAllocator) bool {
-        _ = self;
-
-        return true;
-    }
-
-    pub fn size(self: *const OffsetAllocator) u64 {
+    pub fn getSize(self: *const OffsetAllocator) u64 {
         return self.size;
     }
 
-    pub fn allocated(self: *const OffsetAllocator) u64 {
+    pub fn getAllocated(self: *const OffsetAllocator) u64 {
         return self.size - self.free_storage;
     }
 };

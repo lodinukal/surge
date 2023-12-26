@@ -72,7 +72,7 @@ fn loop(passed_application: *app.Application) bool {
 fn frame(passed_window: *app.Window) void {
     var window = passed_window.getContext(WindowInfo) orelse return;
 
-    var render_ctx: *RenderContext = @alignCast(@ptrCast(&window.render_ctx));
+    var render_ctx: *RenderContext = &window.render_ctx;
     if (!render_ctx.ready) return;
 
     if (window.resized) |size| {

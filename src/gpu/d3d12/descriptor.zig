@@ -7,7 +7,7 @@ const d3d = win32.graphics.direct3d;
 const d3d12 = win32.graphics.direct3d12;
 
 const d3dcommon = @import("../d3d/common.zig");
-const gpu_allocator = @import("../allocator.zig");
+const gpu_allocator = @import("../gpu_allocator.zig");
 
 pub const DescriptorIndex = u64;
 pub const DualHandle = struct {
