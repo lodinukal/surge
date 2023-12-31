@@ -8,17 +8,6 @@ pub const Error = error{
     Other,
 };
 
-pub const MemoryLocation = enum {
-    unknown,
-    gpu_only,
-    cpu_to_gpu,
-    gpu_to_cpu,
-};
-
-pub const Report = struct {
-    size: u64,
-};
-
 pub const Allocation = struct {
     offset: u64,
     chunk: u64,

@@ -1710,7 +1710,7 @@ pub const D3D12Resource = struct {
     read_state: d3d12.D3D12_RESOURCE_STATES = .COMMON,
     allocation: ?D3D12Allocator.Allocation = null,
     resource: ?*d3d12.ID3D12Resource = null,
-    memory_location: gpu_allocator.MemoryLocation = .unknown,
+    memory_location: gpu_allocator = .unknown,
     size: u64 = 0,
 
     pub fn deinit(self: *D3D12Resource) void {
@@ -2440,17 +2440,6 @@ pub const D3D12ResourceCategory = enum {
     rtv_dsv_texture,
     other_texture,
 
-    const rtv_dsv_flags = d3d12.D3D12_RESOURCE_FLAGS.initFlags(.{
-        .ALLOW_RENDER_TARGET = 1,
-        .ALLOW_DEPTH_STENCIL = 1,
-    });
-    pub inline fn fromD3d12ResourceDesc(desc: *const d3d12.D3D12_RESOURCE_DESC) D3D12ResourceCategory {
-        if (desc.Dimension == .BUFFER) return .buffer;
-        if ((@intFromEnum(desc.Flags) &
-            @intFromEnum(rtv_dsv_flags)) != 0) return .rtv_dsv_texture;
-        return .other_texture;
-    }
-
     pub inline fn heapUsable(self: D3D12ResourceCategory, heap: D3D12HeapCategory) bool {
         return switch (heap) {
             .all => true,
@@ -2468,15 +2457,22 @@ pub const D3D12HeapCategory = enum {
     other_texture,
 };
 
+pub const D3D12MemoryLocation = enum {
+    unknown,
+    gpu_only,
+    cpu_to_gpu,
+    gpu_to_cpu,
+};
+
 pub const D3D12AllocationCreateDescriptor = struct {
-    location: gpu_allocator.MemoryLocation,
+    location: D3D12MemoryLocation,
     size: u64,
     alignment: u64,
     resource_category: D3D12ResourceCategory,
 };
 
 pub const D3D12ResourceCreateDescriptor = struct {
-    location: gpu_allocator.MemoryLocation,
+    location: D3D12MemoryLocation,
     resource_category: D3D12ResourceCategory,
     resource_desc: *const d3d12.D3D12_RESOURCE_DESC,
     clear_value: ?*const d3d12.D3D12_CLEAR_VALUE,
@@ -2556,7 +2552,7 @@ pub const D3D12Allocator = struct {
     pub const MemoryGroup = struct {
         owning_pool: *D3D12Allocator,
 
-        memory_location: gpu_allocator.MemoryLocation,
+        memory_location: D3D12MemoryLocation,
         heap_category: D3D12HeapCategory,
         heap_properties: d3d12.D3D12_HEAP_PROPERTIES,
 
@@ -2570,7 +2566,7 @@ pub const D3D12Allocator = struct {
 
         pub fn init(
             owner: *D3D12Allocator,
-            memory_location: gpu_allocator.MemoryLocation,
+            memory_location: D3D12MemoryLocation,
             category: D3D12HeapCategory,
             properties: d3d12.D3D12_HEAP_PROPERTIES,
         ) MemoryGroup {
@@ -2689,7 +2685,7 @@ pub const D3D12Allocator = struct {
 
     pub fn init(self: *D3D12Allocator, allocator: std.mem.Allocator, device: *D3D12Device) !void {
         const HeapType = struct {
-            location: gpu_allocator.MemoryLocation,
+            location: D3D12MemoryLocation,
             properties: d3d12.D3D12_HEAP_PROPERTIES,
         };
         const heap_types = [_]HeapType{ .{
