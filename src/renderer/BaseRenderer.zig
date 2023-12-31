@@ -16,17 +16,17 @@ queue: *gpu.Queue,
 
 // swapchain
 swapchain_lifetime_arena: std.heap.ArenaAllocator,
-swapchain_lifetime_allocator: std.mem.Allocator,
+swapchain_lifetime_allocator: std.mem.Allocator = undefined,
 
 swapchain: *gpu.SwapChain,
 swapchain_size: [2]u32 = .{ 0, 0 },
 swapchain_format: gpu.Texture.Format = .undefined,
-views: [3]?*const gpu.TextureView = .{ null, null, null },
-view_count: usize = 0,
+views: [3]?*const gpu.TextureView,
+view_count: usize,
 
 swapchain_present_resources: struct {
     depth: ?*gpu.Texture = null,
-    depth_view: ?*const gpu.TextureView = null,
+    depth_view: ?*gpu.TextureView = null,
 } = .{},
 swapchain_renderpass_colour_attachments: [1]gpu.RenderPass.ColourAttachment = .{
     .{
@@ -51,13 +51,13 @@ swapchain_renderpass_depth_attachment: gpu.RenderPass.DepthStencilAttachment = .
 
 // frame
 frame_lifetime_arena: std.heap.ArenaAllocator,
-frame_lifetime_allocator: std.mem.Allocator,
+frame_lifetime_allocator: std.mem.Allocator = undefined,
 
 frame_in_progress: bool = false,
 frame_command_encoder: ?*gpu.CommandEncoder = null,
 
-pub fn init(allocator: std.mem.Allocator, window: *Window) !Self {
-    if (!gpu.loadBackend(.d3d12)) return error.BackendLoadFailed;
+pub fn init(self: *Self, allocator: std.mem.Allocator, window: *Window, backend: gpu.BackendType) !void {
+    if (!gpu.loadBackend(backend)) return error.BackendLoadFailed;
 
     const instance = try gpu.createInstance(allocator, &.{});
     errdefer instance.destroy();
@@ -88,13 +88,9 @@ pub fn init(allocator: std.mem.Allocator, window: *Window) !Self {
     });
     errdefer swapchain.destroy();
 
-    const swapchain_lifetime_arena = std.heap.ArenaAllocator.init(allocator);
-    const swapchain_lifetime_allocator = swapchain_lifetime_arena.allocator();
-
-    const frame_lifetime_arena = std.heap.ArenaAllocator.init(allocator);
-    const frame_lifetime_allocator = frame_lifetime_arena.allocator();
-
-    return .{
+    var views: [3]?*const gpu.TextureView = .{ null, null, null };
+    const view_count = try swapchain.getTextureViews(&views);
+    self.* = .{
         .allocator = allocator,
         .instance = instance,
         .surface = surface,
@@ -102,18 +98,23 @@ pub fn init(allocator: std.mem.Allocator, window: *Window) !Self {
         .device = device,
         .queue = device.getQueue(),
 
-        .swapchain_lifetime_arena = swapchain_lifetime_arena,
-        .swapchain_lifetime_allocator = swapchain_lifetime_allocator,
+        .swapchain_lifetime_arena = std.heap.ArenaAllocator.init(allocator),
+        // .swapchain_lifetime_allocator = ,
         .swapchain = swapchain,
         .swapchain_size = window_size,
         .swapchain_format = .bgra8_unorm,
+        .views = views,
+        .view_count = view_count,
 
-        .frame_lifetime_arena = frame_lifetime_arena,
-        .frame_lifetime_allocator = frame_lifetime_allocator,
+        .frame_lifetime_arena = std.heap.ArenaAllocator.init(allocator),
+        // .frame_lifetime_allocator = ,
     };
+    self.swapchain_lifetime_allocator = self.swapchain_lifetime_arena.allocator();
+    self.frame_lifetime_allocator = self.frame_lifetime_arena.allocator();
+    try self.createSwapchainDependentResources();
 }
 
-pub fn deinit(self: *Self) !void {
+pub fn deinit(self: *Self) void {
     self.cleanupSwapchainDependentResources(true);
 
     self.swapchain.destroy();
@@ -121,6 +122,9 @@ pub fn deinit(self: *Self) !void {
     self.physical_device.destroy();
     self.surface.destroy();
     self.instance.destroy();
+
+    self.frame_lifetime_arena.deinit();
+    self.swapchain_lifetime_arena.deinit();
 }
 
 fn createDepthTexture(self: *Self, swapchain_size: [2]u32) !void {
@@ -147,7 +151,7 @@ fn createDepthTexture(self: *Self, swapchain_size: [2]u32) !void {
     );
     errdefer self.swapchain_present_resources.depth.?.destroy();
 
-    self.swapchain_present_resources.depth_view = try self.depth_texture.?.createView(
+    self.swapchain_present_resources.depth_view = try self.swapchain_present_resources.depth.?.createView(
         self.swapchain_lifetime_allocator,
         &.{},
     );
@@ -155,14 +159,11 @@ fn createDepthTexture(self: *Self, swapchain_size: [2]u32) !void {
 }
 
 fn cleanupDepthTexture(self: *Self) void {
-    if (self.swapchain_present_resources.depth) |depth| {
-        depth.destroy();
-        self.swapchain_present_resources.depth = null;
-    }
     if (self.swapchain_present_resources.depth_view) |depth_view| {
         depth_view.destroy();
-        self.swapchain_present_resources.depth_view = null;
-        self.swapchain_renderpass_depth_attachment.view = undefined;
+    }
+    if (self.swapchain_present_resources.depth) |depth| {
+        depth.destroy();
     }
 }
 
@@ -173,7 +174,7 @@ fn createSwapchainDependentResources(self: *Self) !void {
 
 fn cleanupSwapchainDependentResources(self: *Self, final: bool) void {
     self.cleanupDepthTexture();
-    self.swapchain_lifetime_allocator.reset(if (final) .retain_capacity else .free_all);
+    _ = self.swapchain_lifetime_arena.reset(if (final) .free_all else .retain_capacity);
 }
 
 fn recreateSwapchainDependentResources(self: *Self) !void {
@@ -203,9 +204,12 @@ pub fn endFrame(self: *Self) !void {
     std.debug.assert(self.frame_in_progress);
     self.frame_in_progress = false;
 
-    const command_buffer = try self.frame_command_encoder.?.finish();
-    command_buffer.destroy();
-    self.frame_lifetime_arena.reset(.retain_capacity);
+    const command_buffer = try self.frame_command_encoder.?.finish(&.{
+        .label = "frame command buffer",
+    });
+    try self.queue.submit(&.{command_buffer});
+    // command_buffer.destroy();
+    _ = self.frame_lifetime_arena.reset(.retain_capacity);
 }
 
 pub fn beginRenderPassAttachments(
@@ -229,17 +233,25 @@ pub fn beginRenderPass(
     self: *Self,
     name: []const u8,
 ) !*gpu.RenderPass.Encoder {
-    self.swapchain_renderpass_descriptor.colour_attachments[0].view = self.swapchain.getCurrentTextureView();
+    self.swapchain_renderpass_colour_attachments[0].view = self.swapchain.getCurrentTextureView();
 
-    return self.beginRenderPassAttachments(
+    const rpe = try self.beginRenderPassAttachments(
         name,
         &self.swapchain_renderpass_colour_attachments,
         &self.swapchain_renderpass_depth_attachment,
     );
+    try rpe.setViewport(0, 0, @floatFromInt(self.swapchain_size[0]), @floatFromInt(self.swapchain_size[1]), 0.0, 1.0);
+    try rpe.setScissorRect(0, 0, self.swapchain_size[0], self.swapchain_size[1]);
+
+    return rpe;
 }
 
-pub fn endRenderPass(self: *Self, render_pass_encoder: *gpu.RenderPass.Encoder) void {
+pub fn endRenderPass(self: *Self, render_pass_encoder: *gpu.RenderPass.Encoder) !void {
     std.debug.assert(self.frame_in_progress);
     try render_pass_encoder.end();
     render_pass_encoder.destroy();
+}
+
+pub fn present(self: *Self) !void {
+    try self.swapchain.present();
 }

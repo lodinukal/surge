@@ -728,7 +728,7 @@ pub const D3D12Buffer = struct {
         setDebugName(d3d12.ID3D12Resource, self.buffer.resource, name);
         if (self.staging_buffer) |sb| {
             var scratch = common.ScratchSpace(2048){};
-            const temp_allocator = scratch.allocator();
+            const temp_allocator = scratch.init().allocator();
             sb.setLabel(std.fmt.allocPrint(
                 temp_allocator,
                 "{s}_staging",
@@ -754,7 +754,7 @@ pub const D3D12CommandBuffer = struct {
     device: *D3D12Device,
     command_allocator: ?*d3d12.ID3D12CommandAllocator = null,
     command_list: ?*d3d12.ID3D12GraphicsCommandList = null,
-    upload_buffer: ?*d3d12.ID3D12Resource = null,
+    upload_buffer: ?D3D12Resource = null,
     upload_map: ?[*]u8 = null,
     upload_next_offset: u32 = upload_page_size,
 
@@ -798,26 +798,28 @@ pub const D3D12CommandBuffer = struct {
         // unsubmitted CommandBuffer
         if (self.command_list) |cl| self.device.command_pool.destroyCommandList(cl);
         if (self.command_allocator) |ca| self.device.command_pool.destroyCommandAllocator(ca);
-        self.relaseUploadBuffer();
+        self.releaseUploadBuffer();
     }
 
-    fn relaseUploadBuffer(self: *D3D12CommandBuffer) void {
+    fn releaseUploadBuffer(self: *D3D12CommandBuffer) void {
         if (self.upload_buffer) |ub| {
-            ub.ID3D12Resource_Unmap(0, null);
+            ub.resource.?.ID3D12Resource_Unmap(0, null);
             self.device.streaming_pool.release(ub);
         }
     }
 
     pub fn upload(self: *D3D12CommandBuffer, size: u64) !StreamingResult {
+        std.debug.print("eeee\n", .{});
         if (self.upload_next_offset + size > upload_page_size) {
-            self.relaseUploadBuffer();
+            self.releaseUploadBuffer();
             std.debug.assert(size <= upload_page_size);
             const resource = try self.device.streaming_pool.acquire();
 
+            // TODO: find a way to name this
             self.upload_buffer = resource;
 
             var map: ?*anyopaque = null;
-            const hr_map = resource.ID3D12Resource_Map(0, null, &map);
+            const hr_map = resource.resource.?.ID3D12Resource_Map(0, null, &map);
             if (!d3dcommon.checkHResult(hr_map)) return gpu.CommandBuffer.Error.CommandBufferMapForUploadFailed;
 
             self.upload_map = @ptrCast(map);
@@ -833,15 +835,15 @@ pub const D3D12CommandBuffer = struct {
         );
 
         return .{
-            .resource = self.upload_buffer.?,
+            .resource = self.upload_buffer.?.resource.?,
             .map = self.upload_map.?[offset .. offset + size],
             .offset = offset,
         };
     }
 
-    pub inline fn setLabel(self: *D3D12CommandBuffer, name: []const u8) void {
-        var scratch = common.ScratchSpace(2048){};
-        const temp_allocator = scratch.allocator();
+    pub fn setLabel(self: *D3D12CommandBuffer, name: []const u8) void {
+        var scratch = common.ScratchSpace(4096){};
+        const temp_allocator = scratch.init().allocator();
 
         const command_allocator_name = std.fmt.allocPrint(
             temp_allocator,
@@ -849,6 +851,7 @@ pub const D3D12CommandBuffer = struct {
             .{name},
         ) catch "commandbuffer_command_allocator";
         setDebugName(d3d12.ID3D12CommandAllocator, self.command_allocator, command_allocator_name);
+        scratch.fba.reset();
 
         const command_list_name = std.fmt.allocPrint(
             temp_allocator,
@@ -856,13 +859,7 @@ pub const D3D12CommandBuffer = struct {
             .{name},
         ) catch "commandbuffer_command_list";
         setDebugName(d3d12.ID3D12GraphicsCommandList, self.command_list, command_list_name);
-
-        const upload_buffer_name = std.fmt.allocPrint(
-            temp_allocator,
-            "{s}_upload_buffer",
-            .{name},
-        ) catch "commandbuffer_upload_buffer";
-        setDebugName(d3d12.ID3D12Resource, self.upload_buffer, upload_buffer_name);
+        scratch.fba.reset();
     }
 };
 
@@ -1664,7 +1661,7 @@ pub const D3D12Device = struct {
 pub const D3D12StreamingPool = struct {
     allocator: std.mem.Allocator,
     device: *D3D12Device,
-    free_buffers: std.ArrayListUnmanaged(*d3d12.ID3D12Resource) = .{},
+    free_buffers: std.ArrayListUnmanaged(D3D12Resource) = .{},
 
     pub fn create(allocator: std.mem.Allocator, device: *D3D12Device) D3D12StreamingPool {
         return .{
@@ -1674,27 +1671,26 @@ pub const D3D12StreamingPool = struct {
     }
 
     pub fn deinit(self: *D3D12StreamingPool) void {
-        for (self.free_buffers.items) |resource| {
-            var proxy: ?*d3d12.ID3D12Resource = resource;
-            d3dcommon.releaseIUnknown(d3d12.ID3D12Resource, &proxy);
+        for (self.free_buffers.items) |*resource| {
+            resource.deinit();
         }
         self.free_buffers.deinit(self.allocator);
     }
 
-    pub fn acquire(self: *D3D12StreamingPool) !*d3d12.ID3D12Resource {
+    pub fn acquire(self: *D3D12StreamingPool) !D3D12Resource {
         // Create new buffer
         if (self.free_buffers.items.len == 0) {
             var resource = try self.device.createD3dBuffer(.{ .map_write = true }, upload_page_size);
             errdefer resource.deinit();
 
-            try self.free_buffers.append(self.allocator, resource.resource.?);
+            try self.free_buffers.append(self.allocator, resource);
         }
 
         // Result
         return self.free_buffers.pop();
     }
 
-    pub fn release(self: *D3D12StreamingPool, d3d_resource: *d3d12.ID3D12Resource) void {
+    pub fn release(self: *D3D12StreamingPool, d3d_resource: D3D12Resource) void {
         self.free_buffers.append(self.allocator, d3d_resource) catch {
             @panic("failed to release streaming buffer");
         };
@@ -1710,7 +1706,7 @@ pub const D3D12Resource = struct {
     read_state: d3d12.D3D12_RESOURCE_STATES = .COMMON,
     allocation: ?D3D12Allocator.Allocation = null,
     resource: ?*d3d12.ID3D12Resource = null,
-    memory_location: gpu_allocator = .unknown,
+    memory_location: D3D12MemoryLocation = .unknown,
     size: u64 = 0,
 
     pub fn deinit(self: *D3D12Resource) void {
@@ -1813,7 +1809,7 @@ pub const D3D12Instance = struct {
         if (winapi.zig.SUCCEEDED(dxgi.DXGIGetDebugInterface1(0, dxgi.IID_IDXGIDebug, @ptrCast(&dxgi_debug)))) {
             defer d3dcommon.releaseIUnknown(dxgi.IDXGIDebug, &dxgi_debug);
             std.log.warn("live objects!", .{});
-            _ = dxgi_debug.?.IDXGIDebug_ReportLiveObjects(dxgi.DXGI_DEBUG_ALL, dxgi.DXGI_DEBUG_RLO_ALL);
+            _ = dxgi_debug.?.IDXGIDebug_ReportLiveObjects(dxgi.DXGI_DEBUG_ALL, dxgi.DXGI_DEBUG_RLO_SUMMARY);
         }
     }
 };
@@ -2482,6 +2478,7 @@ pub const D3D12ResourceCreateDescriptor = struct {
 /// Stores a group of heaps
 pub const D3D12Allocator = struct {
     const max_memory_groups = 9;
+    arena: std.heap.ArenaAllocator,
     allocator: std.mem.Allocator,
     device: *D3D12Device,
 
@@ -2642,7 +2639,8 @@ pub const D3D12Allocator = struct {
             const heap = allocation.heap;
             try heap.gpu_allocator.free(allocation.allocation);
 
-            if (heap.gpu_allocator.isEmpty()) {
+            // keep at least one all times to prevent erratic allocations and deallocations
+            if (heap.gpu_allocator.isEmpty() and heap.index != 0) {
                 const index = heap.index;
                 heap.deinit();
                 self.heaps.items[index] = null;
@@ -2665,14 +2663,13 @@ pub const D3D12Allocator = struct {
             };
             errdefer _ = self.heaps.popOrNull();
 
-            const heap = &self.heaps.items[heap_index].?;
-            heap.* = try MemoryHeap.init(
+            self.heaps.items[heap_index] = try MemoryHeap.init(
                 self,
                 heap_index,
                 size,
                 dedicated,
             );
-            return heap;
+            return &(self.heaps.items[heap_index].?);
         }
     };
 
@@ -2717,12 +2714,11 @@ pub const D3D12Allocator = struct {
             },
         } };
 
-        self.* = .{
-            .allocator = allocator,
-            .device = device,
-            .memory_groups = std.BoundedArray(MemoryGroup, max_memory_groups).init(0) catch unreachable,
-            .allocation_sizes = .{},
-        };
+        self.arena = std.heap.ArenaAllocator.init(allocator);
+        self.allocator = self.arena.allocator();
+        self.device = device;
+        self.memory_groups = std.BoundedArray(MemoryGroup, max_memory_groups).init(0) catch unreachable;
+        self.allocation_sizes = .{};
 
         var options: d3d12.D3D12_FEATURE_DATA_D3D12_OPTIONS = undefined;
         const hr = device.device.?.ID3D12Device_CheckFeatureSupport(
@@ -2770,6 +2766,7 @@ pub const D3D12Allocator = struct {
         for (self.memory_groups.slice()) |*group| {
             group.deinit();
         }
+        self.arena.deinit();
     }
 
     pub fn reportMemoryLeaks(self: *const D3D12Allocator) void {
@@ -2823,14 +2820,9 @@ pub const D3D12Allocator = struct {
     }
 
     pub fn createResource(self: *D3D12Allocator, desc: *const D3D12ResourceCreateDescriptor) gpu_allocator.Error!D3D12Resource {
-        var device: ?*d3d12.ID3D12Device = null;
-        _ = self.device.device.?.IUnknown_QueryInterface(
-            d3d12.IID_ID3D12Device,
-            @ptrCast(&device),
-        );
         const allocation_desc = blk: {
             const ID3D12Device_GetResourceAllocationInfo = *const fn (
-                self: *const d3d12.ID3D12Device,
+                self: *const d3d12.ID3D12Device2,
                 ret: *d3d12.D3D12_RESOURCE_ALLOCATION_INFO,
                 visibleMask: u32,
                 numResourceDescs: u32,
@@ -2840,7 +2832,7 @@ pub const D3D12Allocator = struct {
                 @ptrCast(self.device.device.?.vtable.base.base.GetResourceAllocationInfo);
 
             var _ret_allocation_info: d3d12.D3D12_RESOURCE_ALLOCATION_INFO = undefined;
-            const allocation_info = getResourceAllocationInfo(device.?, &_ret_allocation_info, 0, 1, @ptrCast(desc.resource_desc)).*;
+            const allocation_info = getResourceAllocationInfo(self.device.device.?, &_ret_allocation_info, 0, 1, @ptrCast(desc.resource_desc)).*;
             break :blk D3D12AllocationCreateDescriptor{
                 .location = desc.location,
                 .size = allocation_info.SizeInBytes,
@@ -2876,11 +2868,9 @@ pub const D3D12Allocator = struct {
     pub fn destroyResource(self: *D3D12Allocator, resource: *D3D12Resource) gpu_allocator.Error!void {
         if (resource.allocation) |allocation| {
             try self.free(allocation);
-        } else {
-            // if this is a committed resource (no allocation), we can just free it
-            var proxy: ?*d3d12.ID3D12Resource = resource.resource;
-            d3dcommon.releaseIUnknown(d3d12.ID3D12Resource, @ptrCast(&proxy));
         }
+        var proxy: ?*d3d12.ID3D12Resource = resource.resource;
+        d3dcommon.releaseIUnknown(d3d12.ID3D12Resource, @ptrCast(&proxy));
     }
 };
 // RenderBundle
@@ -4659,8 +4649,6 @@ pub const D3D12Texture = struct {
             .COPY_SOURCE = if (desc.usage.copy_src) 1 else 0,
             .ALL_SHADER_RESOURCE = if (desc.usage.texture_binding or desc.usage.storage_binding) 1 else 0,
         });
-
-        // device.mem_allocator.reportMemoryLeaks();
 
         // Only enabled if this is a RTV/DSV/buffer
         const clear_value = d3d12.D3D12_CLEAR_VALUE{ .Format = resource_desc.Format, .Anonymous = .{

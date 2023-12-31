@@ -9,7 +9,7 @@ pub fn assert(ok: bool, comptime format: []const u8, args: anytype) noreturn {
 
 pub fn ScratchSpace(comptime len: usize) type {
     return struct {
-        buf: [len]u8 = undefined,
+        buf: [len]u8 = .{0} ** len,
         fba: std.heap.FixedBufferAllocator = undefined,
 
         pub fn init(s: *@This()) *@This() {

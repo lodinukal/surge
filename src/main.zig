@@ -3,9 +3,46 @@ const std = @import("std");
 const app = @import("app/app.zig");
 const math = @import("math.zig");
 
-const RenderContext = @import("RenderContext.zig");
+// const RenderContext = @import("RenderContext.zig");
 
 const image = @import("image.zig");
+
+const RenderContext = struct {
+    const Renderer = @import("renderer/renderer.zig").BaseRenderer;
+    allocator: std.mem.Allocator = undefined,
+    base_ren: Renderer = undefined,
+
+    ready: bool = false,
+
+    pub fn init(self: *RenderContext, allocator: std.mem.Allocator, window: *app.Window) !void {
+        try self.base_ren.init(allocator, window, .d3d12);
+        self.ready = true;
+    }
+
+    pub fn deinit(self: *RenderContext) void {
+        self.base_ren.deinit();
+    }
+
+    pub fn resize(self: *RenderContext, size: [2]u32) !void {
+        try self.base_ren.resize(size);
+    }
+
+    pub fn frame(self: *RenderContext) !void {
+        try self.base_ren.beginFrame();
+        try self.geometry();
+        try self.base_ren.endFrame();
+    }
+
+    fn geometry(self: *RenderContext) !void {
+        const rpe = try self.base_ren.beginRenderPass("geometry");
+
+        try self.base_ren.endRenderPass(rpe);
+    }
+
+    pub fn present(self: *RenderContext) !void {
+        try self.base_ren.present();
+    }
+};
 
 const WindowInfo = struct {
     window: *app.Window,
@@ -14,7 +51,7 @@ const WindowInfo = struct {
     resized: ?[2]u32 = null,
 
     pub fn init(self: *WindowInfo, allocator: std.mem.Allocator) !void {
-        try self.render_ctx.load(allocator, self.window);
+        try self.render_ctx.init(allocator, self.window);
     }
 
     pub fn deinit(self: *WindowInfo) void {
@@ -24,7 +61,9 @@ const WindowInfo = struct {
 
 var current_window_info: ?WindowInfo = null;
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.GeneralPurposeAllocator(.{
+        // .verbose_log = true,
+    }){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -79,7 +118,7 @@ fn frame(passed_window: *app.Window) void {
         render_ctx.resize(size) catch {};
     }
 
-    render_ctx.draw() catch {};
+    render_ctx.frame() catch {};
     render_ctx.present() catch {};
 }
 
