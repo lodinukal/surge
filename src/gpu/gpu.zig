@@ -476,6 +476,27 @@ pub const ColourWriteMaskFlags = packed struct(u32) {
     }
 };
 
+pub const DrawIndirectArgs = struct {
+    vertex_count: u32,
+    instance_count: u32,
+    first_vertex: u32,
+    first_instance: u32,
+};
+
+pub const DrawIndexedIndirectArgs = struct {
+    index_count: u32,
+    instance_count: u32,
+    first_index: u32,
+    base_vertex: i32,
+    first_instance: u32,
+};
+
+pub const DispatchIndirectArgs = struct {
+    x: u32,
+    y: u32,
+    z: u32,
+};
+
 pub const MapModeFlags = packed struct(u32) {
     read: bool = false,
     write: bool = false,

@@ -7,39 +7,39 @@ const math = @import("math.zig");
 
 const image = @import("image.zig");
 
-const RenderContext = struct {
-    const Renderer = @import("renderer/renderer.zig").BaseRenderer;
+const Renderer = struct {
+    const RenderContext = @import("renderer/renderer.zig").RenderContext;
     allocator: std.mem.Allocator = undefined,
-    base_ren: Renderer = undefined,
+    base_ren: RenderContext = undefined,
 
     ready: bool = false,
 
-    pub fn init(self: *RenderContext, allocator: std.mem.Allocator, window: *app.Window) !void {
+    pub fn init(self: *Renderer, allocator: std.mem.Allocator, window: *app.Window) !void {
         try self.base_ren.init(allocator, window, .d3d12);
         self.ready = true;
     }
 
-    pub fn deinit(self: *RenderContext) void {
+    pub fn deinit(self: *Renderer) void {
         self.base_ren.deinit();
     }
 
-    pub fn resize(self: *RenderContext, size: [2]u32) !void {
+    pub fn resize(self: *Renderer, size: [2]u32) !void {
         try self.base_ren.resize(size);
     }
 
-    pub fn frame(self: *RenderContext) !void {
+    pub fn frame(self: *Renderer) !void {
         try self.base_ren.beginFrame();
         try self.geometry();
         try self.base_ren.endFrame();
     }
 
-    fn geometry(self: *RenderContext) !void {
+    fn geometry(self: *Renderer) !void {
         const rpe = try self.base_ren.beginRenderPass("geometry");
 
         try self.base_ren.endRenderPass(rpe);
     }
 
-    pub fn present(self: *RenderContext) !void {
+    pub fn present(self: *Renderer) !void {
         try self.base_ren.present();
     }
 };
@@ -47,7 +47,7 @@ const RenderContext = struct {
 const WindowInfo = struct {
     window: *app.Window,
 
-    render_ctx: RenderContext = .{},
+    render_ctx: Renderer = .{},
     resized: ?[2]u32 = null,
 
     pub fn init(self: *WindowInfo, allocator: std.mem.Allocator) !void {
@@ -111,7 +111,7 @@ fn loop(passed_application: *app.Application) bool {
 fn frame(passed_window: *app.Window) void {
     var window = passed_window.getContext(WindowInfo) orelse return;
 
-    var render_ctx: *RenderContext = &window.render_ctx;
+    var render_ctx: *Renderer = &window.render_ctx;
     if (!render_ctx.ready) return;
 
     if (window.resized) |size| {

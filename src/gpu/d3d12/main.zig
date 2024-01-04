@@ -1423,6 +1423,12 @@ pub fn deviceDestroy(device: *gpu.Device) void {
     D3D12Device.destroy(@alignCast(@ptrCast(device)));
 }
 
+const D3D12CommandSignatures = struct {
+    draw: ?*d3d12.ID3D12CommandSignature = null,
+    draw_indexed: ?*d3d12.ID3D12CommandSignature = null,
+    dispatch: ?*d3d12.ID3D12CommandSignature = null,
+};
+
 pub const D3D12Device = struct {
     allocator: std.mem.Allocator,
     physical_device: *D3D12PhysicalDevice,
@@ -1430,6 +1436,8 @@ pub const D3D12Device = struct {
 
     device: ?*d3d12.ID3D12Device2 = null, // PhysicalDevice
     lost_cb: ?gpu.Device.LostCallback = null,
+
+    signatures: D3D12CommandSignatures = .{},
 
     heap_views: descriptor.GeneralHeap,
     heap_samplers: descriptor.GeneralHeap,
@@ -1523,6 +1531,52 @@ pub const D3D12Device = struct {
         self.queue.init(self) catch return gpu.Device.Error.DeviceFailedToCreate;
         errdefer D3D12Queue.deinit(queue);
 
+        inline for (.{
+            .{
+                "draw",
+                .{std.mem.zeroInit(d3d12.D3D12_INDIRECT_ARGUMENT_DESC, .{
+                    .Type = .DRAW,
+                })},
+                gpu.DrawIndirectArgs,
+            },
+            .{
+                "draw_indexed",
+                .{std.mem.zeroInit(d3d12.D3D12_INDIRECT_ARGUMENT_DESC, .{
+                    .Type = .DRAW_INDEXED,
+                })},
+                gpu.DrawIndexedIndirectArgs,
+            },
+            .{
+                "dispatch",
+                .{std.mem.zeroInit(d3d12.D3D12_INDIRECT_ARGUMENT_DESC, .{
+                    .Type = .DISPATCH,
+                })},
+                gpu.DispatchIndirectArgs,
+            },
+        }) |s| {
+            const sig_name = s.@"0";
+            const sig_args_desc = s.@"1";
+            const sig_struct = s.@"2";
+
+            var signature: ?*d3d12.ID3D12CommandSignature = null;
+            const sig_desc = d3d12.D3D12_COMMAND_SIGNATURE_DESC{
+                .ByteStride = @sizeOf(sig_struct),
+                .NumArgumentDescs = sig_args_desc.len,
+                .pArgumentDescs = @ptrCast(&sig_args_desc),
+                .NodeMask = 0,
+            };
+
+            const sig_hr = self.device.?.ID3D12Device_CreateCommandSignature(
+                &sig_desc,
+                null,
+                d3d12.IID_ID3D12CommandSignature,
+                @ptrCast(&signature),
+            );
+            if (!d3dcommon.checkHResult(sig_hr)) return gpu.Device.Error.DeviceFailedToCreate;
+
+            @field(self.signatures, sig_name) = signature;
+        }
+
         // uses a lot of memory just to have them exist in a ID3D12DescriptorHeap
         // const max_non_sampler_bindings = 1_000_000;
         // let's use 5k for now and see how it goes
@@ -1596,21 +1650,6 @@ pub const D3D12Device = struct {
     pub fn createD3dBuffer(self: *D3D12Device, usage: gpu.Buffer.UsageFlags, size: u64) !D3D12Resource {
         const resource_size = if (usage.uniform) gpu.util.alignUp(size, 256) else size;
 
-        const heap_type = if (usage.map_write)
-            d3d12.D3D12_HEAP_TYPE_UPLOAD
-        else if (usage.map_read)
-            d3d12.D3D12_HEAP_TYPE_READBACK
-        else
-            d3d12.D3D12_HEAP_TYPE_DEFAULT;
-
-        const heap_properties = d3d12.D3D12_HEAP_PROPERTIES{
-            .Type = heap_type,
-            .CPUPageProperty = .UNKNOWN,
-            .MemoryPoolPreference = .UNKNOWN,
-            .CreationNodeMask = 1,
-            .VisibleNodeMask = 1,
-        };
-        _ = heap_properties; // autofix
         const resource_desc = d3d12.D3D12_RESOURCE_DESC{
             .Dimension = .BUFFER,
             .Alignment = 0,
@@ -1638,20 +1677,21 @@ pub const D3D12Device = struct {
             .INDIRECT_ARGUMENT = if (usage.indirect) 1 else 0,
         });
         const create_desc = D3D12ResourceCreateDescriptor{
-            // .resource_type = .placed,
-            .location = switch (heap_type) {
-                .UPLOAD => .gpu_to_cpu,
-                .READBACK => .cpu_to_gpu,
-                else => .gpu_only,
-            },
+            .location = if (usage.map_write)
+                .gpu_to_cpu
+            else if (usage.map_read)
+                .cpu_to_gpu
+            else
+                .gpu_only,
             .resource_desc = &resource_desc,
             .clear_value = null,
             .resource_category = .buffer,
-            .initial_state = switch (heap_type) {
-                .UPLOAD => .GENERIC_READ,
-                .READBACK => .COPY_DEST,
-                else => read_state,
-            },
+            .initial_state = if (usage.map_write)
+                .GENERIC_READ
+            else if (usage.map_read)
+                .COPY_DEST
+            else
+                read_state,
         };
         return self.mem_allocator.createResource(&create_desc) catch
             return D3D12Resource.Error.ResourceFailedToCreate;
@@ -2915,16 +2955,11 @@ pub fn renderPassEncoderDrawIndexedIndirect(
     indirect_buffer: *gpu.Buffer,
     indirect_offset: u64,
 ) void {
-    _ = render_pass_encoder;
-    _ = indirect_buffer;
-    _ = indirect_offset;
-
-    // TODO: DrawIndexedIndirect
-    // D3D12RenderPassEncoder.drawIndexedIndirect(
-    //     @ptrCast(@alignCast(render_pass_encoder)),
-    //     @ptrCast(@alignCast(indirect_buffer)),
-    //     indirect_offset,
-    // );
+    D3D12RenderPassEncoder.drawIndexedIndirect(
+        @ptrCast(@alignCast(render_pass_encoder)),
+        @ptrCast(@alignCast(indirect_buffer)),
+        indirect_offset,
+    );
 }
 
 pub fn renderPassEncoderDrawIndirect(
@@ -2932,16 +2967,11 @@ pub fn renderPassEncoderDrawIndirect(
     indirect_buffer: *gpu.Buffer,
     indirect_offset: u64,
 ) void {
-    _ = render_pass_encoder;
-    _ = indirect_buffer;
-    _ = indirect_offset;
-
-    // TODO: DrawIndirect
-    // D3D12RenderPassEncoder.drawIndirect(
-    //     @ptrCast(@alignCast(render_pass_encoder)),
-    //     @ptrCast(@alignCast(indirect_buffer)),
-    //     indirect_offset,
-    // );
+    D3D12RenderPassEncoder.drawIndirect(
+        @ptrCast(@alignCast(render_pass_encoder)),
+        @ptrCast(@alignCast(indirect_buffer)),
+        indirect_offset,
+    );
 }
 
 pub fn renderPassEncoderEnd(render_pass_encoder: *gpu.RenderPass.Encoder) gpu.RenderPass.Encoder.Error!void {
@@ -3338,6 +3368,44 @@ pub const D3D12RenderPassEncoder = struct {
             first_index,
             base_vertex,
             first_instance,
+        );
+    }
+
+    pub fn drawIndexedIndirect(
+        encoder: *D3D12RenderPassEncoder,
+        indirect_buffer: *D3D12Buffer,
+        indirect_offset: u64,
+    ) void {
+        const command_list = encoder.command_list.?;
+
+        encoder.applyVertexBuffers();
+
+        command_list.ID3D12GraphicsCommandList_ExecuteIndirect(
+            encoder.device.signatures.draw_indexed.?,
+            1,
+            indirect_buffer.buffer.resource.?,
+            indirect_offset,
+            null,
+            0,
+        );
+    }
+
+    pub fn drawIndirect(
+        encoder: *D3D12RenderPassEncoder,
+        indirect_buffer: *D3D12Buffer,
+        indirect_offset: u64,
+    ) void {
+        const command_list = encoder.command_list.?;
+
+        encoder.applyVertexBuffers();
+
+        command_list.ID3D12GraphicsCommandList_ExecuteIndirect(
+            encoder.device.signatures.draw.?,
+            1,
+            indirect_buffer.buffer.resource.?,
+            indirect_offset,
+            null,
+            0,
         );
     }
 
