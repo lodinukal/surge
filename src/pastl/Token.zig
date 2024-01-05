@@ -86,6 +86,7 @@ pub const Kind = enum(i32) {
 
     // keywords
     import,
+    package,
     @"struct",
     @"enum",
     @"union",
@@ -105,7 +106,9 @@ pub const Kind = enum(i32) {
     // allow custom keywords
     _,
 
-    pub const keyword_start = @intFromEnum(Kind.or_return) + 1;
+    pub const keyword_start = @intFromEnum(Kind.import);
+    pub const keyword_end = @intFromEnum(Kind.or_return);
+    pub const custom_keyword_start = @intFromEnum(Kind.or_return) + 1;
 
     pub inline fn name(kind: Kind) []const u8 {
         return switch (kind) {
@@ -168,6 +171,7 @@ pub const Kind = enum(i32) {
             .colon => ":",
             .semicolon => ";",
             .import => "import",
+            .package => "package",
             .@"struct" => "struct",
             .@"enum" => "enum",
             .@"union" => "union",
@@ -192,7 +196,9 @@ pub const Kind = enum(i32) {
         var map = std.StringArrayHashMap(i32).init(allocator);
         const info = @typeInfo(Kind);
         inline for (info.Enum.fields) |field| {
-            try map.put(field.name, @as(i32, field.value));
+            if (field.value > Kind.keyword_start and field.value < Kind.keyword_end) {
+                try map.put(field.name, @as(i32, field.value));
+            }
         }
         return map;
     }

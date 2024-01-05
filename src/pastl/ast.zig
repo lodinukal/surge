@@ -2,13 +2,12 @@ const std = @import("std");
 
 const tokeniser = @import("tokeniser.zig");
 
-pub const FunctionTag = enum {
-    bounds_checked,
-    no_bounds_checked,
-    opt_ok,
-    opt_allocator_err,
+pub const FunctionTags = packed struct(u4) {
+    bounds_checked: bool = false,
+    no_bounds_checked: bool = false,
+    opt_ok: bool = false,
+    opt_allocator_err: bool = false,
 };
-pub const FunctionTags = std.bit_set.StaticBitSet(@bitSizeOf(FunctionTag));
 
 pub const FunctionInlining = enum {
     none,
@@ -32,6 +31,53 @@ pub const CommentGroup = struct {
     node: Node,
     list: []tokeniser.Token,
 };
+pub const PackageKind = enum {
+    normal,
+    runtime,
+    init,
+};
+pub const Package = struct {
+    node: Node,
+    kind: PackageKind,
+    id: i32,
+    name: []const u8,
+    full_path: []const u8,
+    files: std.StringArrayHashMap(File),
+    user_data: ?*anyopaque,
+
+    pub fn deinit(self: *Package) void {
+        self.files.deinit();
+    }
+};
+pub const File = struct {
+    node: Node,
+    id: i32,
+    package: *Package,
+
+    full_path: []const u8,
+    source: []const u8,
+
+    docs: *CommentGroup,
+    package_declaration: *PackageDeclaration,
+    package_token: tokeniser.Token,
+    package_name: tokeniser.Token,
+
+    declarations: std.ArrayList(*Statement),
+    imports: std.ArrayList(*ImportDeclaration),
+    directive_count: i32,
+
+    comments: std.ArrayList(*CommentGroup),
+
+    syntax_warning_count: i32,
+    syntax_error_count: i32,
+
+    pub fn deinit(self: *File) void {
+        self.declarations.deinit();
+        self.imports.deinit();
+        self.comments.deinit();
+    }
+};
+
 pub const Expression = struct {
     node: Node,
     expr: AnyExpression,
@@ -390,6 +436,10 @@ pub const ValueDeclaration = struct {
     comment: *CommentGroup,
     is_using: bool,
     is_mutable: bool,
+
+    pub fn deinit(self: *ValueDeclaration) void {
+        self.attributes.deinit();
+    }
 };
 pub const PackageDeclaration = struct {
     declaration: Declaration,
@@ -401,8 +451,31 @@ pub const PackageDeclaration = struct {
     full_path: []const u8,
     comment: *CommentGroup,
 };
+pub const ImportDeclaration = struct {
+    declaration: Declaration,
+    docs: *CommentGroup,
+    is_using: bool,
+    import_token: tokeniser.Token,
+    name: tokeniser.Token,
+    relative_path: tokeniser.Token,
+    full_path: []const u8,
+    comment: *CommentGroup,
+};
 
-pub const FieldFlag = enum {};
+pub const FieldFlag = enum {
+    invalid,
+    unknown,
+    elipsis,
+    using,
+    no_alias,
+    @"const",
+    any_int,
+    subtype,
+    by_ptr,
+    results,
+    tags,
+    default_paramters,
+};
 pub const FieldFlags = packed struct(u12) {
     invalid: bool = false,
     unknown: bool = false,
@@ -492,7 +565,184 @@ pub const FieldList = struct {
     close: tokeniser.Token.Pos,
 };
 
-pub const FunctionType = struct {};
+pub const DistinctType = struct {
+    expression: Expression,
+    token_kind: tokeniser.Token.Kind,
+    type: *Expression,
+};
+pub const PolymorphicType = struct {
+    expression: Expression,
+    dollar: tokeniser.Token,
+    type: *Identifier,
+    specialisation: *Expression,
+};
+pub const FunctionType = struct {
+    expression: Expression,
+    token: tokeniser.Token,
+    params: *FieldList,
+    arrow: tokeniser.Token.Pos,
+    results: *FieldList,
+    tags: FunctionTags,
+    generic: bool,
+    divering: bool,
+};
+pub const PointerType = struct {
+    expression: Expression,
+    tag: *Expression,
+    pointer: tokeniser.Token,
+    element: *Expression,
+};
+pub const MultiPointerType = struct {
+    expression: Expression,
+    open: tokeniser.Token.Pos,
+    pointer: tokeniser.Token.Pos,
+    close: tokeniser.Token.Pos,
+    element: *Expression,
+};
+pub const ArrayType = struct {
+    expression: Expression,
+    open: tokeniser.Token.Pos,
+    tag: *Expression,
+    len: ?*Expression,
+    close: tokeniser.Token.Pos,
+    element: *Expression,
+};
+pub const DynamicArrayType = struct {
+    expression: Expression,
+    tag: *Expression,
+    open: tokeniser.Token.Pos,
+    dynamic_pos: tokeniser.Token.Pos,
+    close: tokeniser.Token.Pos,
+    element: *Expression,
+};
+pub const StructType = struct {
+    expression: Expression,
+    token_pos: tokeniser.Token.Pos,
+    poly_params: *FieldList,
+    alignment: *Expression,
+    where_token: tokeniser.Token,
+    where_clauses: []*Expression,
+    is_packed: bool,
+    is_raw_union: bool,
+    is_no_copy: bool,
+    fields: *FieldList,
+    name_count: bool,
+};
+pub const UnionTypeKind = enum {
+    normal,
+    maybe,
+    no_nil,
+    shared_nil,
+};
+pub const UnionType = struct {
+    expression: Expression,
+    token_pos: tokeniser.Token.Pos,
+    poly_params: *FieldList,
+    alignment: *Expression,
+    kind: UnionTypeKind,
+    where_token: tokeniser.Token,
+    where_clauses: []*Expression,
+    variants: []*Expression,
+};
+pub const EnumType = struct {
+    expression: Expression,
+    token_pos: tokeniser.Token.Pos,
+    base_type: *Expression,
+    open: tokeniser.Token.Pos,
+    fields: []*Expression,
+    close: tokeniser.Token.Pos,
+    is_using: bool,
+};
+pub const BitSetType = struct {
+    expression: Expression,
+    token_pos: tokeniser.Token.Pos,
+    open: tokeniser.Token.Pos,
+    element: *Expression,
+    underlying: *Expression,
+    close: tokeniser.Token.Pos,
+};
+pub const MapType = struct {
+    expression: Expression,
+    token_pos: tokeniser.Token.Pos,
+    key: *Expression,
+    value: *Expression,
+};
+
+pub const AnyNode = union {
+    comment_group: *CommentGroup,
+
+    bad_expression: *BadExpression,
+    identifier: *Identifier,
+    implicit: *Implicit,
+    undef: *Undef,
+    basic_literal: *BasicLiteral,
+    basic_directive: *BasicDirective,
+    ellipsis: *Ellipsis,
+    function_literal: *FunctionLiteral,
+    comp_literal: *CompLiteral,
+    tag_expression: *TagExpression,
+    unary_expression: *UnaryExpression,
+    binary_expression: *BinaryExpression,
+    paren_expression: *ParenExpression,
+    selector_expression: *SelectorExpression,
+    implicit_selector_expression: *ImplicitSelectorExpression,
+    selector_call_expression: *SelectorCallExpression,
+    index_expression: *IndexExpression,
+    deref_expression: *DerefExpression,
+    slice_expression: *SliceExpression,
+    call_expression: *CallExpression,
+    field_value: *FieldValue,
+    ternary_if_expression: *TernaryIfExpression,
+    or_else_expression: *OrElseExpression,
+    or_return_expression: *OrReturnExpression,
+    or_branch_expression: *OrBranchExpression,
+    type_assertion: *TypeAssertion,
+    type_cast: *TypeCast,
+    auto_cast: *AutoCast,
+
+    function_group: *FunctionGroup,
+
+    distinct_type: *DistinctType,
+    polymorphic_type: *PolymorphicType,
+    function_type: *FunctionType,
+    pointer_type: *PointerType,
+    multi_pointer_type: *MultiPointerType,
+    array_type: *ArrayType,
+    dynamic_array_type: *DynamicArrayType,
+    struct_type: *StructType,
+    union_type: *UnionType,
+    enum_type: *EnumType,
+    bit_set_type: *BitSetType,
+    map_type: *MapType,
+
+    bad_statement: *BadStatement,
+    empty_statement: *EmptyStatement,
+    expression_statement: *ExpressionStatement,
+    tag_statement: *TagStatement,
+    assign_statement: *AssignStatement,
+    block_statement: *BlockStatement,
+    if_statement: *IfStatement,
+    when_statement: *WhenStatement,
+    return_statement: *ReturnStatement,
+    defer_statement: *DeferStatement,
+    for_statement: *ForStatement,
+    range_statement: *RangeStatement,
+    inline_range_statement: *InlineRangeStatement,
+    case_clause: *CaseClause,
+    switch_statement: *SwitchStatement,
+    type_switch_statement: *TypeSwitchStatement,
+    branch_statement: *BranchStatement,
+    using_statement: *UsingStatement,
+
+    bad_declaration: *BadDeclaration,
+    value_declaration: *ValueDeclaration,
+    package_declaration: *PackageDeclaration,
+    import_declaration: *ImportDeclaration,
+
+    attribute: *Attribute,
+    field: *Field,
+    field_list: *FieldList,
+};
 
 pub const AnyExpression = union {
     bad: *BadExpression,
@@ -524,9 +774,42 @@ pub const AnyExpression = union {
     type_cast: *TypeCast,
     auto_cast: *AutoCast,
 
+    distinct_type: *DistinctType,
+    polymorphic_type: *PolymorphicType,
     function_type: *FunctionType,
+    pointer_type: *PointerType,
+    multi_pointer_type: *MultiPointerType,
+    array_type: *ArrayType,
+    dynamic_array_type: *DynamicArrayType,
+    struct_type: *StructType,
+    union_type: *UnionType,
+    enum_type: *EnumType,
+    bit_set_type: *BitSetType,
+    map_type: *MapType,
 };
 
-pub const AnyStatement = struct {};
+pub const AnyStatement = struct {
+    bad: *BadStatement,
+    empty: *EmptyStatement,
+    expression: *ExpressionStatement,
+    tag: *TagStatement,
+    assign: *AssignStatement,
+    block: *BlockStatement,
+    @"if": *IfStatement,
+    when: *WhenStatement,
+    @"return": *ReturnStatement,
+    @"defer": *DeferStatement,
+    @"for": *ForStatement,
+    range: *RangeStatement,
+    inline_range: *InlineRangeStatement,
+    case: *CaseClause,
+    @"switch": *SwitchStatement,
+    type_switch: *TypeSwitchStatement,
+    branch: *BranchStatement,
+    using: *UsingStatement,
 
-pub const AnyNode = union {};
+    bad_declaration: *BadDeclaration,
+    value_declaration: *ValueDeclaration,
+    package_declaration: *PackageDeclaration,
+    import_declaration: *ImportDeclaration,
+};
