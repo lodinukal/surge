@@ -9,8 +9,8 @@ pub const Source = struct {
 };
 
 pub const Location = struct {
-    column: i32,
-    line: i32,
+    column: i32 = 0,
+    line: i32 = 0,
 };
 
 pub const Token = struct {
@@ -49,25 +49,25 @@ pub const Input = struct {
     end: usize,
 };
 
+/// this will not clean up it's memory
+/// use an arena or something to clean up
 pub const Lexer = struct {
-    arena: std.heap.ArenaAllocator,
-    allocator: std.mem.Allocator,
+    allocator: std.mem.Allocator = undefined,
     err_handler: ?*const fn (msg: []const u8) void = null,
 
-    input: Input,
-    this_location: Location,
-    last_location: Location,
-    here: usize,
-    codepoint: codepoint,
-    asi: bool,
-    peek: std.ArrayList(Token),
+    input: Input = undefined,
+    this_location: Location = .{},
+    last_location: Location = .{},
+    here: usize = 0,
+    codepoint: codepoint = 0,
+    asi: bool = false,
+    peek_list: std.ArrayList(Token) = undefined,
 
-    pub fn init(allocator: std.mem.Allocator, source: *const Source) !Lexer {
+    pub fn init(lexer: *Lexer, allocator: std.mem.Allocator, source: *const Source) !void {
         if (source.code.len == 0) return error.LexerEmptySource;
 
-        var lexer = Lexer{
-            .arena = std.heap.ArenaAllocator.init(allocator),
-            .allocator = undefined,
+        lexer.* = Lexer{
+            .allocator = allocator,
             .input = Input{
                 .source = source,
                 .current = 0,
@@ -84,39 +84,38 @@ pub const Lexer = struct {
             .here = 0,
             .codepoint = 0,
             .asi = false,
-            .peek = std.ArrayList(Token).init(allocator),
+            .peek_list = std.ArrayList(Token).init(allocator),
         };
-        lexer.advance();
-
-        return lexer;
+        _ = lexer.advance();
     }
 
     pub fn deinit(self: *Lexer) void {
-        self.arena.deinit();
+        _ = self; // autofix
+
     }
 
     pub fn next(self: *Lexer) Token {
-        if (self.peek.items.len != 0) {
-            const token = self.peek.items[0];
-            self.peek.orderedRemove(0);
+        if (self.peek_list.items.len != 0) {
+            const token = self.peek_list.items[0];
+            self.peek_list.orderedRemove(0);
             return token;
         }
         return self.rawNext();
     }
 
     pub fn peek(self: *Lexer) !Token {
-        try self.peek.append(self.rawNext());
-        return self.peek.getLast();
+        try self.peek_list.append(self.rawNext());
+        return self.peek_list.getLast();
     }
 
-    fn err(self: *Lexer, msg: []const u8, args: anytype) void {
+    fn err(self: *Lexer, comptime msg: []const u8, args: anytype) void {
         var buf = std.mem.zeroes([1024]u8);
         var fba = std.heap.FixedBufferAllocator.init(&buf);
         const temp_allocator = fba.allocator();
 
         if (self.err_handler) |handler| {
             const fmtted = std.fmt.allocPrint(temp_allocator, msg, args) catch unreachable;
-            handler.*(fmtted);
+            handler(fmtted);
         }
     }
 
@@ -156,6 +155,7 @@ pub const Lexer = struct {
             self.here = input.end;
             self.codepoint = 0;
         }
+        return self.codepoint;
     }
 
     fn skipLine(self: *Lexer) void {
