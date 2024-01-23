@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const Tree = @import("tree.zig").Tree;
+const CallingConvention = @import("tree.zig").CallingConvention;
 const ProcedureType = @import("tree.zig").ProcedureType;
 const Identifier = @import("tree.zig").Identifier;
 const Expression = @import("tree.zig").Expression;
@@ -18,19 +19,106 @@ const LiteralExpression = @import("tree.zig").LiteralExpression;
 const TypeExpression = @import("tree.zig").TypeExpression;
 const StructFlags = @import("tree.zig").StructFlags;
 const UnionFlags = @import("tree.zig").UnionFlags;
+const CaseClause = @import("tree.zig").CaseClause;
 
 const Type = @import("tree.zig").Type;
 
 const lexer = @import("lexer.zig");
 const lexemes = @import("lexemes.zig");
 
+const Error = error{
+    ParseStatement,
+    OutOfMemory,
+    ExpectOperator,
+    ParseIdentifier,
+    ParseLiteralExpression,
+    ExpectKind,
+    ParseExpression,
+    ParseCompoundLiteralExpression,
+    ExpectAssignment,
+    ExpectClosing,
+    ParseType,
+    ParseDirectivePrefix,
+    ParseCallExpression,
+    ExpectKeyword,
+    ExpectLiteral,
+    ParseProcedureType,
+    ParseFieldFlagsparseFieldFlags,
+    ParseFieldList,
+    ParseProcedureResults,
+    ParseProcedure,
+    ParseStructTypeExpression,
+    ParseUnionTypeExpression,
+    ParseEnumTypeExpression,
+    ParseOperand,
+    ParseAtomExpression,
+    ParseIndexExpression,
+    ParseCaseExpression,
+    ParseForignDeclarationStatement,
+    ParseIfStatement,
+    ParseWhenStatement,
+    ParseImportStatement,
+    ParseForStatement,
+    ParseSwitchStatement,
+    ParseDeferStatement,
+    ParseReturnStatement,
+    ParseBranchStatement,
+    ParseUsingStatement,
+    ParsePackageStatement,
+    ParseAttributesForStatement,
+    ParseBasicSimpleStatement,
+    ParseTupleExpression,
+    ParseDistinctTypeExpression,
+    ParseBitSetTypeExpression,
+    ParseTypeidTypeExpression,
+    ParseMapTypeExpression,
+    ParseMatrixTypeExpression,
+    ParsePointerTypeExpression,
+    ParseMultiPointerTypeExpression,
+    ParseArrayTypeExpression,
+    ParseDynamicArrayTypeExpression,
+    ParseSliceTypeExpression,
+    ParseIdentifierExpression,
+    ParseUndefinedExpression,
+    ParseProcedureGroupExpression,
+    ParseTypeExpression,
+    ParseValue,
+    ParseVariableNameOrType,
+    ParseDirective,
+    ParseAssignmentStatement,
+    ParseSimpleStatement,
+    ParseDeclarationStatement,
+    ParseDeclarationStatementTail,
+    ExpectSemicolon,
+    ParseUnaryStemExpression,
+    ParseCastExpression,
+    ParseTernaryExpression,
+    ParseBinaryExpression,
+    ConvertStatementToExpression,
+    ParseDoBody,
+    ConvertStatementToBody,
+    ParseBodyBlock,
+    ParseBlockStatement,
+    ParseDirectiveForStatement,
+};
+
 pub fn parse(tree: *Tree, source: []const u8) !void {
     tree.source.code = source;
     var parser = Parser{};
     try parser.init(tree.allocator, tree);
-    parser.deinit();
+    defer parser.deinit();
 
-    try parser.advance();
+    _ = try parser.advance();
+
+    while (!isKind(parser.this_token, .eof)) {
+        if (try parser.parseStatement(BlockFlags{})) |statement| {
+            if (statement.* != .empty) {
+                try tree.statements.append(statement);
+            }
+        }
+    }
+
+    return;
 }
 
 pub const precedence = blk: {
@@ -97,11 +185,14 @@ pub const Parser = struct {
             const fmtted = std.fmt.allocPrint(temp_allocator, msg, args) catch unreachable;
             handler(fmtted);
         }
+
+        std.log.warn("{}:{}", .{ self.lexer.this_location.line, self.lexer.this_location.column });
+        std.log.warn(msg, args);
     }
 
     fn acceptedOperator(self: *Parser, op: lexemes.OperatorKind) bool {
         if (isOperator(self.this_token, op)) {
-            self.advance();
+            _ = try self.advance();
             return true;
         }
         return false;
@@ -109,7 +200,7 @@ pub const Parser = struct {
 
     fn acceptedAssignment(self: *Parser, op: lexemes.AssignmentKind) bool {
         if (isAssignment(self.this_token, op)) {
-            self.advance();
+            _ = try self.advance();
             return true;
         }
         return false;
@@ -117,7 +208,7 @@ pub const Parser = struct {
 
     fn acceptedKind(self: *Parser, kind: lexemes.TokenKind) bool {
         if (isKind(self.this_token, kind)) {
-            self.advance();
+            _ = try self.advance();
             return true;
         }
         return false;
@@ -125,7 +216,7 @@ pub const Parser = struct {
 
     fn acceptedKeyword(self: *Parser, kind: lexemes.KeywordKind) bool {
         if (isKeyword(self.this_token, kind)) {
-            self.advance();
+            _ = try self.advance();
             return true;
         }
         return false;
@@ -139,29 +230,29 @@ pub const Parser = struct {
         return token;
     }
 
-    fn acceptedSeparator(self: *Parser) !void {
+    fn acceptedSeparator(self: *Parser) bool {
         const token = self.this_token;
         if (self.acceptedOperator(.comma)) return true;
         if (isKind(token, .semicolon)) {
             if (isNewline(token)) {
-                const pk = try self.peek();
+                const pk = self.peek() catch return false;
                 if (isKind(pk, .rbrace) or isOperator(pk, .rparen)) {
                     _ = try self.advance();
                     return true;
                 }
             }
             self.err("Expected comma", .{});
-            return error.AcceptedSeparator;
+            return false;
         }
         return false;
     }
 
-    fn acceptedControlStatementSeparator(self: *Parser) !void {
-        const token = try self.peek();
+    fn acceptedControlStatementSeparator(self: *Parser) bool {
+        const token = self.peek() catch return false;
         if (!isKind(token, .lbrace)) {
             return self.acceptedKind(.semicolon);
         }
-        if (std.mem.eql(u8, self.this_token.string[0], ";")) {
+        if (std.mem.eql(u8, self.this_token.string, ";")) {
             return self.acceptedKind(.semicolon);
         }
         return false;
@@ -171,7 +262,7 @@ pub const Parser = struct {
         return self.expression_depth > 0;
     }
 
-    fn advancePossibleNewline(self: *Parser) !void {
+    fn advancePossibleNewline(self: *Parser) !bool {
         if (isNewline(self.this_token)) {
             _ = try self.advance();
             return true;
@@ -179,7 +270,7 @@ pub const Parser = struct {
         return false;
     }
 
-    fn advancePossibleNewlineWithin(self: *Parser) !void {
+    fn advancePossibleNewlineWithin(self: *Parser) !bool {
         const token = self.this_token;
         if (!isNewline(token)) return false;
         const next = try self.peek();
@@ -192,9 +283,9 @@ pub const Parser = struct {
     fn advance(self: *Parser) !lexer.Token {
         const last = self.this_token;
         self.last_token = last;
-        self.this_token = try self.lexer.next();
+        self.this_token = self.lexer.next();
         while (isKind(self.this_token, .comment)) {
-            self.this_token = try self.lexer.next();
+            self.this_token = self.lexer.next();
         }
         if (isKind(self.this_token, .semicolon)) {
             if (self.ignoreNewline() and std.mem.eql(u8, self.this_token.string, "\n")) {
@@ -207,7 +298,7 @@ pub const Parser = struct {
     fn expectKind(self: *Parser, kind: lexemes.TokenKind) !lexer.Token {
         const token = self.this_token;
         if (!isKind(token, kind)) {
-            self.err("Expected token of kind `{}`, got `{}`", .{ @tagName(kind), @tagName(token.un) });
+            self.err("Expected token of kind `{s}`, got `{s}`", .{ @tagName(kind), @tagName(token.un) });
             return error.ExpectKind;
         }
         return try self.advance();
@@ -220,7 +311,7 @@ pub const Parser = struct {
         {
             // empty
         } else if (!isOperator(token, kind)) {
-            self.err("Expected operator `{}`, got `{}`", .{ lexemes.operatorName(kind), lexemes.operatorName(token.un) });
+            self.err("Expected operator `{s}`, got `{s}`", .{ lexemes.operatorName(kind), @tagName(token.un) });
             return error.ExpectOperator;
         }
         return try self.advance();
@@ -229,7 +320,7 @@ pub const Parser = struct {
     fn expectKeyword(self: *Parser, kind: lexemes.KeywordKind) !lexer.Token {
         const token = self.this_token;
         if (!isKeyword(token, kind)) {
-            self.err("Expected keyword `{}`, got `{}`", .{ @tagName(kind), @tagName(token.un) });
+            self.err("Expected keyword `{s}`, got `{s}`", .{ @tagName(kind), @tagName(token.un) });
             return error.ExpectKeyword;
         }
         return try self.advance();
@@ -238,9 +329,9 @@ pub const Parser = struct {
     fn expectAssignment(self: *Parser, kind: lexemes.AssignmentKind) !lexer.Token {
         const token = self.this_token;
         if (!isAssignment(token, kind)) {
-            self.err("Expected assignment `{}`, got `{}`", .{
+            self.err("Expected assignment `{s}`, got `{s}`", .{
                 lexemes.assignment_tokens.get(kind),
-                lexemes.assignment_tokens.get(token.un),
+                @tagName(token.un),
             });
             return error.ExpectAssignment;
         }
@@ -250,7 +341,7 @@ pub const Parser = struct {
     fn expectLiteral(self: *Parser, kind: lexemes.LiteralKind) !lexer.Token {
         const token = self.this_token;
         if (!isLiteral(token, kind)) {
-            self.err("Expected literal `{}`, got `{}`", .{ @tagName(kind), @tagName(token.un) });
+            self.err("Expected literal `{s}`, got `{s}`", .{ @tagName(kind), @tagName(token.un) });
             return error.ExpectLiteral;
         }
         return try self.advance();
@@ -268,13 +359,13 @@ pub const Parser = struct {
         if (isKind(self.this_token, .eof)) return;
 
         if (token.location.line == self.last_token.location.line) {
-            self.err("Expected semicolon, got `{}`", .{@tagName(token.un)});
+            self.err("Expected semicolon, got `{s}`", .{@tagName(token.un)});
             return error.ExpectSemicolon;
         }
     }
 
     fn parseIdentifier(self: *Parser, poly: bool) !*Identifier {
-        self.record();
+        try self.record();
 
         var token = self.this_token;
         if (isKind(token, .identifier)) {
@@ -282,12 +373,12 @@ pub const Parser = struct {
         } else if (isKind(token, .@"const")) {
             _ = try self.advance();
             if (!self.acceptedKind(.identifier)) {
-                self.err("Expected identifier after `const`, got `{}`", .{@tagName(self.this_token.un)});
+                self.err("Expected identifier after `const`, got `{s}`", .{@tagName(self.this_token.un)});
                 return error.ParseIdentifier;
             }
             token = self.this_token;
         } else {
-            self.err("Expected identifier or `$`, got `{}`", .{@tagName(token.un)});
+            self.err("Expected identifier or `$`, got `{s}`", .{@tagName(token.un)});
             return error.ParseIdentifier;
         }
 
@@ -327,6 +418,7 @@ pub const Parser = struct {
                     _ = try self.expectKeyword(.context);
                     return try self.tree.newContextExpression();
                 },
+                else => {},
             },
             .operator => |op| switch (op) {
                 .lparen => {
@@ -351,7 +443,7 @@ pub const Parser = struct {
                     if (isOperator(self.this_token, .pointer)) {
                         return try self.parseMultiPointerTypeExpression();
                     } else if (isOperator(self.this_token, .question)) {
-                        return try self.parseArrayTypeExpression();
+                        return try self.parseArrayTypeExpression(false);
                     } else if (self.acceptedKeyword(.dynamic)) {
                         return try self.parseDynamicArrayTypeExpression();
                     } else if (!isOperator(self.this_token, .rbracket)) {
@@ -368,7 +460,7 @@ pub const Parser = struct {
     }
 
     fn parseExpression(self: *Parser, lhs: bool) !*Expression {
-        return self.parseBinaryExpression(lhs, 1);
+        return self.parseBinaryExpression(lhs, 1) catch return error.ParseExpression;
     }
 
     fn parseAtomExpression(self: *Parser, opt_operand: ?*Expression, lhs: bool) !?*Expression {
@@ -376,7 +468,7 @@ pub const Parser = struct {
             if (self.allow_type) {
                 return null;
             }
-            self.err("Expected operand, got `{}`", .{@tagName(self.this_token.un)});
+            self.err("Expected operand, got `{s}`", .{@tagName(self.this_token.un)});
         }
         var operand = opt_operand.?;
 
@@ -452,10 +544,12 @@ pub const Parser = struct {
         self.allow_type = allow_type;
 
         if (expression) |ex| {
-            return switch (ex.*) {
-                .type => |t| t.type,
-                else => try self.tree.newExpressionType(expression),
-            };
+            if (ex) |inner_ex| {
+                return switch (inner_ex.*) {
+                    .type => |t| t.type,
+                    else => try self.tree.newExpressionType(inner_ex),
+                };
+            }
         } else |_| {
             // ignore error
         }
@@ -463,13 +557,13 @@ pub const Parser = struct {
         return null;
     }
 
-    fn parseType(self: *Parser) !*Type {
-        const ty = try self.parseTypeOrIdentifier();
+    fn parseType(self: *Parser) Error!*Type {
+        const ty = self.parseTypeOrIdentifier() catch return error.ParseType;
         if (ty == null) {
-            self.err("Expected type, got `{}`", .{@tagName(self.this_token.un)});
+            self.err("Expected type, got `{s}`", .{@tagName(self.this_token.un)});
             return error.ParseType;
         }
-        return ty;
+        return ty.?;
     }
 
     fn parseCompoundLiteralExpression(self: *Parser, ty: ?*Type) !*Expression {
@@ -479,11 +573,11 @@ pub const Parser = struct {
 
         _ = try self.expectKind(.lbrace);
         while (!isKind(self.this_token, .rbrace) and !isKind(self.this_token, .eof)) {
-            const element = try self.parseValue();
-            const name = try evaluateIdentifierExpression(element);
+            const element = self.parseValue() catch return error.ParseCompoundLiteralExpression;
+            const name = evaluateIdentifierExpression(element);
             if (isAssignment(self.this_token, .eq)) {
                 _ = try self.expectAssignment(.eq);
-                const value = try self.parseValue();
+                const value = self.parseValue() catch return error.ParseCompoundLiteralExpression;
                 const field = try self.tree.newField(null, name, value, null, FieldFlags{});
                 try fields.append(field);
             } else {
@@ -493,22 +587,22 @@ pub const Parser = struct {
             if (!self.acceptedSeparator()) break;
         }
 
-        _ = self.expectClosing(.rbrace);
+        _ = try self.expectClosing(.rbrace);
         self.expression_depth = depth;
 
         return try self.tree.newCompoundLiteralExpression(ty, fields);
     }
 
-    fn parseVariableNameOrType(self: *Parser) !*Type {
+    fn parseVariableNameOrType(self: *Parser) Error!*Type {
         if (isOperator(self.this_token, .ellipsis)) {
-            _ = self.advance();
+            _ = try self.advance();
             if (try self.parseTypeOrIdentifier()) |ty| {
                 return ty;
             }
-            self.err("Expected type after `...`, got `{}`", .{@tagName(self.this_token.un)});
+            self.err("Expected type after `...`, got `{s}`", .{@tagName(self.this_token.un)});
             return error.ParseVariableNameOrType;
         } else if (isKeyword(self.this_token, .typeid)) {
-            try self.expectKeyword(.typeid);
+            _ = try self.expectKeyword(.typeid);
             var spec: ?*Type = null;
             if (self.acceptedOperator(.quo)) {
                 spec = try self.parseType();
@@ -519,10 +613,10 @@ pub const Parser = struct {
         return try self.parseType();
     }
 
-    fn evaluateIdentifierExpression(expression: *const Expression) !?*Identifier {
+    fn evaluateIdentifierExpression(expression: *const Expression) ?*Identifier {
         return switch (expression.*) {
             .identifier => |id| id.identifier,
-            .type => |ty| try evaluateIdentifierType(ty.type),
+            .type => |ty| evaluateIdentifierType(ty.type),
             .selector => |s| blk: {
                 if (s.operand == null) break :blk s.field;
                 break :blk null;
@@ -531,9 +625,9 @@ pub const Parser = struct {
         };
     }
 
-    fn evaluateIdentifierType(ty: *const Type) !?*Identifier {
+    fn evaluateIdentifierType(ty: *const Type) ?*Identifier {
         return switch (ty.*.derived) {
-            .expression => |ex| try evaluateIdentifierExpression(ex),
+            .expression => |*ex| evaluateIdentifierExpression(ex.expression),
             .poly => |ply| blk: {
                 if (ply.specialisation == null) break :blk evaluateIdentifierType(ply.type);
                 break :blk null;
@@ -557,7 +651,7 @@ pub const Parser = struct {
                 .subtype => flags.subtype = true,
                 .@"const" => flags.@"const" = true,
                 else => {
-                    self.err("Unknown field flag `{}`", .{@tagName(self.this_token.un.directive)});
+                    self.err("Unknown field flag `{s}`", .{@tagName(self.this_token.un.directive)});
                     return error.ParseFieldFlagsparseFieldFlags;
                 },
             }
@@ -567,7 +661,8 @@ pub const Parser = struct {
         return flags;
     }
 
-    fn parseFieldList(self: *Parser, is_struct: bool) std.ArrayList(*Field) {
+    // TODO: make this work properly
+    fn parseFieldList(self: *Parser, is_struct: bool) !std.ArrayList(*Field) {
         var fields = std.ArrayList(*Field).init(self.allocator);
         if (isOperator(self.this_token, .rparen)) return fields;
 
@@ -580,6 +675,14 @@ pub const Parser = struct {
         while ((if (is_struct) !isKind(self.this_token, .rbrace) else isOperator(self.this_token, .colon)) and
             !isKind(self.this_token, .eof))
         {
+            // check for attributes
+            if (self.acceptedKind(.attribute)) {
+                const attributes = try self.parseAttributes();
+                for (attributes.items) |a| {
+                    std.log.warn("{s}={?}", .{ a.name.?.contents, a.value });
+                }
+            }
+
             const flags = try self.parseFieldFlags();
             const name_or_type = try self.parseVariableNameOrType();
             try type_list.append(name_or_type);
@@ -588,7 +691,7 @@ pub const Parser = struct {
         }
 
         if (isOperator(self.this_token, .colon)) {
-            self.expectOperator(.colon);
+            _ = try self.expectOperator(.colon);
             if (!isAssignment(self.this_token, .eq)) {
                 f_type = try self.parseVariableNameOrType();
             }
@@ -610,25 +713,26 @@ pub const Parser = struct {
             for (0..n_elements) |i| {
                 const name = type_list.items[i];
                 const flags = field_flags.items[i];
-                const ident = try evaluateIdentifierType(name);
+                const ident = evaluateIdentifierType(name);
                 if (ident == null) {
-                    self.err("Expected identifier, got `{}`", .{@tagName(name.derived)});
+                    self.err("Expected identifier, got `{s}`", .{@tagName(name.derived)});
                     return error.ParseFieldList;
                 }
                 try fields.append(try self.tree.newField(ty, ident, default_value, tag, flags));
             }
         } else {
-            self.record();
+            try self.record();
 
             for (0..n_elements) |i| {
                 const ty = type_list.items[i];
                 const flags = field_flags.items[i];
-                const name = std.fmt.allocPrint(self.allocator, "_unnamed_{}", .{i});
+                const name = std.fmt.allocPrint(self.allocator, "_unnamed_{}", .{i}) catch return error.OutOfMemory;
                 const ident = try self.tree.newIdentifier(name, false);
                 try fields.append(try self.tree.newField(ty, ident, default_value, tag, flags));
             }
         }
 
+        // std.log.warn("{s}", .{self.lexer.input.source.code[self.lexer.input.current..]});
         if (!self.acceptedSeparator()) {
             self.allow_newline = allow_newline;
             return fields;
@@ -646,7 +750,7 @@ pub const Parser = struct {
                 _ = try self.advance();
             }
 
-            self.expectOperator(.colon);
+            _ = try self.expectOperator(.colon);
             if (!isAssignment(self.this_token, .eq)) {
                 f_type = try self.parseVariableNameOrType();
             }
@@ -668,16 +772,20 @@ pub const Parser = struct {
         }
 
         self.allow_newline = allow_newline;
+
+        for (fields.items) |i| {
+            std.log.warn("{} {s}", .{ is_struct, i.name.?.contents });
+        }
+
         return fields;
     }
 
     fn parseProcedureResults(self: *Parser, no_return: *bool) !std.ArrayList(*Field) {
+        var fields = std.ArrayList(*Field).init(self.allocator);
         if (!self.acceptedOperator(.arrow)) {
-            self.err("Expected `->`, got `{}`", .{@tagName(self.this_token.un)});
-            return error.ParseProcedureResults;
+            return fields;
         }
 
-        var fields = std.ArrayList(*Field).init(self.allocator);
         if (self.acceptedOperator(.not)) {
             no_return.* = true;
             // this won't allocate anything
@@ -687,7 +795,7 @@ pub const Parser = struct {
         // not a tuple
         if (!isOperator(self.this_token, .lparen)) {
             const ty = try self.parseType();
-            self.record();
+            try self.record();
             const ident = try self.tree.newIdentifier("_unnamed", false);
             const field = try self.tree.newField(ty, ident, null, null, FieldFlags{});
             try fields.append(field);
@@ -699,33 +807,33 @@ pub const Parser = struct {
 
         fields.deinit();
         fields = try self.parseFieldList(false);
-        try self.advancePossibleNewline();
+        _ = try self.advancePossibleNewline();
         _ = try self.expectOperator(.rparen);
 
         return fields;
     }
 
-    fn parseProcedureType(self: *Parser) !*ProcedureType {
-        var cc = lexemes.CallingConvention.rlth;
+    fn parseProcedureType(self: *Parser) !*Type {
+        var cc = CallingConvention.rlth;
         if (isLiteral(self.this_token, .string)) {
             const token = try self.expectLiteral(.string);
-            cc = std.meta.stringToEnum(lexemes.CallingConvention, token.string) orelse {
-                self.err("Unknown calling convention `{}`", .{token.string});
+            cc = std.meta.stringToEnum(CallingConvention, token.string) orelse {
+                self.err("Unknown calling convention `{s}`", .{token.string});
                 return error.ParseProcedureType;
             };
         }
 
         _ = try self.expectOperator(.lparen);
-        const params = self.parseFieldList(false);
-        try self.advancePossibleNewline();
+        const params = try self.parseFieldList(false);
+        _ = try self.advancePossibleNewline();
         _ = try self.expectOperator(.rparen);
 
         var is_generic = false;
         for (params.items) |param| {
-            if (param.name.poly) {
+            if (param.name) |n| if (n.poly) {
                 is_generic = true;
                 break;
-            }
+            };
             if (if (param.type) |ty| ty.poly else false) {
                 is_generic = true;
                 break;
@@ -763,15 +871,15 @@ pub const Parser = struct {
         return try self.tree.newBlockStatement(block_flags, statements, null);
     }
 
-    fn parseRhsTupleExpression(self: *Parser) !*TupleExpression {
+    fn parseRhsTupleExpression(self: *Parser) !*Expression {
         return try self.parseTupleExpression(false);
     }
 
     fn parseProcedure(self: *Parser) !*Expression {
         const ty = try self.parseProcedureType();
-        try self.advancePossibleNewline();
+        _ = try self.advancePossibleNewline();
 
-        var where_clauses: ?*TupleExpression = null;
+        var where_clauses: ?*Expression = null;
         if (isKeyword(self.this_token, .where)) {
             _ = try self.expectKeyword(.where);
             const depth = self.expression_depth;
@@ -780,7 +888,7 @@ pub const Parser = struct {
             self.expression_depth = depth;
         }
 
-        var flags = ty.flags;
+        var flags = ty.derived.procedure.flags;
 
         while (isKind(self.this_token, .directive)) {
             const token = try self.expectKind(.directive);
@@ -792,36 +900,36 @@ pub const Parser = struct {
                 .no_type_assert => flags.type_assert = false,
                 .type_assert => flags.type_assert = true,
                 else => {
-                    self.err("Unknown procedure flag `{}`", .{@tagName(token.un.directive)});
+                    self.err("Unknown procedure flag `{s}`", .{@tagName(token.un.directive)});
                     return error.ParseProcedure;
                 },
             }
         }
 
-        ty.flags = flags;
+        ty.derived.procedure.flags = flags;
 
         if (self.acceptedKind(.undefined)) {
             if (where_clauses) |_| {
                 self.err("Procedures with `where` clauses need bodies", .{});
                 return error.ParseProcedure;
             }
-            return try self.tree.newProcedureExpression(ty, null, null);
+            return try self.tree.newProcedureExpression(&ty.derived.procedure, null, null);
         } else if (isKind(self.this_token, .lbrace)) {
             const block_flags = BlockFlags{
                 .bounds_check = flags.bounds_check,
                 .type_assert = flags.type_assert,
             };
-            self.this_procedure = ty;
-            const body = self.parseBody(block_flags);
-            return try self.tree.newProcedureExpression(ty, body, where_clauses);
+            self.this_procedure = &ty.derived.procedure;
+            const body = try self.parseBody(block_flags);
+            return try self.tree.newProcedureExpression(&ty.derived.procedure, if (where_clauses) |wc| &wc.tuple else null, &body.block);
         }
 
         // no body or equivalent, must be a type
-        return try self.tree.newTypeExpression(@fieldParentPtr(Type, "procedure", ty));
+        return try self.tree.newTypeExpression(ty);
     }
 
     fn parseCallExpression(self: *Parser, operand: *Expression) !*Expression {
-        var arguments = std.ArrayList(*Expression).init(self.allocator);
+        var arguments = std.ArrayList(*Field).init(self.allocator);
         const depth = self.expression_depth;
         const allow_newline = self.allow_newline;
         self.expression_depth = 0;
@@ -852,12 +960,12 @@ pub const Parser = struct {
                     self.err("Cannot apply `..`", .{});
                     return error.ParseCallExpression;
                 }
-                if (try self.evaluateIdentifierExpression(argument)) |name| {
+                if (evaluateIdentifierExpression(argument)) |name| {
                     try arguments.append(
                         try self.tree.newField(null, name, try self.parseValue(), null, FieldFlags{}),
                     );
                 } else {
-                    self.err("Expected identifier, got `{}`", .{@tagName(argument.*)});
+                    self.err("Expected identifier, got `{s}`", .{@tagName(argument.*)});
                 }
             } else {
                 if (seen_ellipsis) {
@@ -882,9 +990,51 @@ pub const Parser = struct {
         return try self.tree.newCallExpression(operand, arguments);
     }
 
-    fn parseStatement(self: *Parser, block_flags: BlockFlags) !?*Statement {
-        _ = self; // autofix
-        _ = block_flags; // autofix
+    fn parseStatement(self: *Parser, block_flags: BlockFlags) Error!?*Statement {
+        const token = self.this_token;
+        return switch (token.un) {
+            .eof => {
+                self.err("Unexpected end of file", .{});
+                return error.ParseStatement;
+            },
+            .literal => |lit| switch (lit) {
+                inline else => return try self.parseBasicSimpleStatement(block_flags),
+            },
+            .keyword => |kw| switch (kw) {
+                .context, .proc => return try self.parseBasicSimpleStatement(block_flags),
+                .foreign => return try self.parseForignDeclarationStatement(),
+                .@"if" => return try self.parseIfStatement(block_flags),
+                .when => return try self.parseWhenStatement(),
+                .import => return try self.parseImportStatement(false),
+                .@"for" => return try self.parseForStatement(block_flags),
+                .@"switch" => return try self.parseSwitchStatement(block_flags),
+                .@"defer" => return try self.parseDeferStatement(block_flags),
+                .@"return" => return try self.parseReturnStatement(),
+                .@"break", .@"continue", .fallthrough => |in_kw| return try self.parseBranchStatement(in_kw),
+                .using => return try self.parseUsingStatement(),
+                .package => return try self.parsePackageStatement(),
+                else => {
+                    self.err("Unexpected keyword `{s}`", .{@tagName(kw)});
+                    return error.ParseStatement;
+                },
+            },
+            .identifier => return try self.parseBasicSimpleStatement(block_flags),
+            .operator => |op| switch (op) {
+                .lparen, .pointer, .add, .sub, .xor, .not, .@"and" => return try self.parseBasicSimpleStatement(block_flags),
+                else => {
+                    self.err("Unexpected operator `{s}`", .{@tagName(op)});
+                    return error.ParseStatement;
+                },
+            },
+            .attribute => return try self.parseAttributesForStatement(block_flags),
+            .directive => return try self.parseDirectiveForStatement(block_flags),
+            .lbrace => return try self.parseBlockStatement(block_flags, false),
+            .semicolon => return try self.parseEmptyStatement(),
+            else => {
+                self.err("Unexpected token `{s}` in statement", .{@tagName(token.un)});
+                return error.ParseStatement;
+            },
+        };
     }
 
     fn parseUnaryExpression(self: *Parser, lhs: bool) !*Expression {
@@ -899,11 +1049,11 @@ pub const Parser = struct {
         }
 
         const operand = try self.parseOperand(lhs);
-        return try self.parseAtomExpression(operand, lhs);
+        return (try self.parseAtomExpression(operand, lhs)).?;
     }
 
     fn parseDirectiveCallExpression(self: *Parser, name: []const u8) !*Expression {
-        self.record();
+        try self.record();
         const intrinsics = try self.tree.newIdentifier("intrinsics", false);
         const directive = try self.tree.newIdentifier(name, false);
         const ident = try self.tree.newIdentifierExpression(intrinsics);
@@ -918,7 +1068,7 @@ pub const Parser = struct {
 
     fn parseDirectiveForStatement(self: *Parser, block_flags: BlockFlags) !*Statement {
         const token = try self.expectKind(.directive);
-        return switch (token.un.directive) {
+        const stmt = try switch (token.un.directive) {
             .bounds_check => self.parseStatement(blk: {
                 var flags = block_flags;
                 flags.bounds_check = true;
@@ -954,29 +1104,61 @@ pub const Parser = struct {
                 // flags.partial = true;
                 break :blk block_flags;
             }),
-            .force_inline, .no_inline => self.parseStatement(blk: {
+            .force_inline, .force_no_inline => self.parseStatement(blk: {
                 // TODO: force_inline, no_inline
                 // var flags = block_flags;
                 // flags.partial = true;
                 break :blk block_flags;
             }),
             else => {
-                self.err("Unknown statement directive `{}`", .{@tagName(token.un.directive)});
+                self.err("Unknown statement directive `{s}`", .{@tagName(token.un.directive)});
                 return error.ParseDirectiveForStatement;
             },
         };
+
+        return stmt orelse {
+            self.err("Expected statement after directive `{s}`", .{@tagName(token.un.directive)});
+            return error.ParseDirectiveForStatement;
+        };
     }
 
-    fn parseValue(self: *Parser) !*Expression {
+    fn parseValue(self: *Parser) Error!*Expression {
         if (isKind(self.this_token, .lbrace)) {
-            return self.parseCompoundLiteralExpression(null);
+            return self.parseCompoundLiteralExpression(null) catch return error.ParseCompoundLiteralExpression;
         }
-        return self.parseExpression(false);
+        return self.parseExpression(false) catch return error.ParseExpression;
     }
 
-    fn parseAttributesForStatement(self: *Parser, block_flags: BlockFlags) !*Expression {
+    fn parseAttributesStatementTail(
+        self: *Parser,
+        block_flags: BlockFlags,
+        attributes: std.ArrayList(*Field),
+    ) !*Statement {
+        _ = try self.advancePossibleNewline();
+        const stmt = (try self.parseStatement(block_flags)) orelse {
+            self.err("Attributes must be followed by statements", .{});
+            return error.ParseAttributesForStatement;
+        };
+        switch (stmt.*) {
+            .declaration => |*dcl| dcl.attributes = attributes,
+            .foreign_block => |*fb| fb.attributes = attributes,
+            .foreign_import => |*fi| fi.attributes = attributes,
+            else => {
+                self.err("Attributes can only be applied to declarations", .{});
+                return error.ParseAttributesForStatement;
+            },
+        }
+
+        return stmt;
+    }
+
+    fn parseAttributesForStatement(self: *Parser, block_flags: BlockFlags) !*Statement {
+        return try self.parseAttributesStatementTail(block_flags, try self.parseAttributes());
+    }
+
+    fn parseAttributes(self: *Parser) !std.ArrayList(*Field) {
         _ = try self.expectKind(.attribute);
-        var attributes = std.ArrayList(*Expression).init(self.allocator);
+        var attributes = std.ArrayList(*Field).init(self.allocator);
         if (isKind(self.this_token, .identifier)) {
             const ident = try self.parseIdentifier(false);
             try attributes.append(try self.tree.newField(null, ident, null, null, FieldFlags{}));
@@ -984,7 +1166,7 @@ pub const Parser = struct {
             _ = try self.expectOperator(.lparen);
             self.expression_depth += 1;
             while (!isOperator(self.this_token, .rparen) and !isKind(self.this_token, .eof)) {
-                const ident = self.parseIdentifier(false);
+                const ident = try self.parseIdentifier(false);
                 try attributes.append(try self.tree.newField(null, ident, blk: {
                     if (isAssignment(self.this_token, .eq)) {
                         _ = try self.expectAssignment(.eq);
@@ -997,29 +1179,17 @@ pub const Parser = struct {
             self.expression_depth -= 1;
             _ = try self.expectOperator(.rparen);
         }
-
-        try self.advancePossibleNewline();
-        const stmt = try self.parseStatement(block_flags);
-        switch (stmt.*) {
-            .declaration => |dcl| dcl.attributes = attributes,
-            .foreign_block => |fb| fb.attributes = attributes,
-            .foreign_import => |fi| fi.attributes = attributes,
-            else => {
-                self.err("Attributes can only be applied to declarations", .{});
-                return error.ParseAttributesForStatement;
-            },
-        }
-        return stmt;
+        return attributes;
     }
 
-    fn parseIdentifierExpression(self: *Parser) !*IdentifierExpression {
+    fn parseIdentifierExpression(self: *Parser) !*Expression {
         return try self.tree.newIdentifierExpression(try self.parseIdentifier(false));
     }
 
     fn parseLiteralExpression(self: *Parser) !*Expression {
         const token = try self.advance();
         if (token.un != .literal) {
-            self.err("Expected literal, got `{}`", .{@tagName(token.un)});
+            self.err("Expected literal, got `{s}`", .{@tagName(token.un)});
             return error.ParseLiteralExpression;
         }
         return try self.tree.newLiteralExpression(token.un.literal, token.string);
@@ -1029,14 +1199,14 @@ pub const Parser = struct {
         _ = try self.expectKeyword(.bit_set);
         _ = try self.expectOperator(.lbracket);
         const expression = try self.parseExpression(false);
-        const underlying: ?*Type = blk: {
+        const underlying_ty: ?*Type = blk: {
             if (self.acceptedKind(.semicolon)) {
                 break :blk try self.parseType();
             }
             break :blk null;
         };
         _ = try self.expectOperator(.rbracket);
-        return try self.tree.newTypeExpression(try self.tree.newBitSetType(expression, underlying));
+        return try self.tree.newTypeExpression(try self.tree.newBitSetType(underlying_ty, expression));
     }
 
     fn parseTypeidTypeExpression(self: *Parser) !*Expression {
@@ -1131,7 +1301,7 @@ pub const Parser = struct {
         var parameters = std.ArrayList(*Field).init(self.allocator);
         // parapoly
         if (self.acceptedOperator(.lparen)) {
-            parameters = self.parseFieldList(false);
+            parameters = try self.parseFieldList(false);
             _ = try self.expectOperator(.rparen);
         }
 
@@ -1151,15 +1321,15 @@ pub const Parser = struct {
                 .raw_union => flags.@"union" = true,
                 .no_copy => flags.uncopyable = true,
                 else => |d| {
-                    self.err("Unknown struct flag `{}`", .{@tagName(d)});
+                    self.err("Unknown struct flag `{s}`", .{@tagName(d)});
                     return error.ParseStructTypeExpression;
                 },
             }
         }
 
-        try self.advancePossibleNewline();
+        _ = try self.advancePossibleNewline();
 
-        const where_clauses: ?*TupleExpression = blk: {
+        const where_clauses_expr: ?*Expression = blk: {
             if (self.acceptedKeyword(.where)) {
                 const depth = self.expression_depth;
                 self.expression_depth = -1;
@@ -1169,11 +1339,12 @@ pub const Parser = struct {
             }
             break :blk null;
         };
+        const where_clauses = if (where_clauses_expr) |wc| &wc.tuple else null;
 
-        try self.advancePossibleNewline();
+        _ = try self.advancePossibleNewline();
 
         _ = try self.expectKind(.lbrace);
-        const fields = self.parseFieldList(true);
+        const fields = try self.parseFieldList(true);
         _ = try self.expectKind(.rbrace);
 
         const ty = try (if (parameters.items.len == 0)
@@ -1186,10 +1357,10 @@ pub const Parser = struct {
     fn parseUnionTypeExpression(self: *Parser) !*Expression {
         _ = try self.expectKeyword(.@"union");
 
-        const parameters = std.ArrayList(*Field).init(self.allocator);
+        var parameters = std.ArrayList(*Field).init(self.allocator);
         // parapoly
         if (self.acceptedOperator(.lparen)) {
-            parameters = self.parseFieldList(false);
+            parameters = try self.parseFieldList(false);
             _ = try self.expectOperator(.rparen);
         }
 
@@ -1209,15 +1380,15 @@ pub const Parser = struct {
                 .shared_nil => flags.shared_nil = true,
                 .maybe => flags.maybe = true,
                 else => |d| {
-                    self.err("Unknown union flag `{}`", .{@tagName(d)});
+                    self.err("Unknown union flag `{s}`", .{@tagName(d)});
                     return error.ParseUnionTypeExpression;
                 },
             }
         }
 
-        try self.advancePossibleNewline();
+        _ = try self.advancePossibleNewline();
 
-        const where_clauses: ?*TupleExpression = blk: {
+        const where_clause_expr: ?*Expression = blk: {
             if (self.acceptedKeyword(.where)) {
                 const depth = self.expression_depth;
                 self.expression_depth = -1;
@@ -1227,11 +1398,12 @@ pub const Parser = struct {
             }
             break :blk null;
         };
+        const where_clauses = if (where_clause_expr) |wc| &wc.tuple else null;
 
-        try self.advancePossibleNewline();
+        _ = try self.advancePossibleNewline();
 
         _ = try self.expectKind(.lbrace);
-        const variants = self.parseFieldList(true);
+        const variants = try self.parseFieldList(true);
         _ = try self.expectKind(.rbrace);
 
         const ty = try (if (parameters.items.len == 0)
@@ -1250,14 +1422,14 @@ pub const Parser = struct {
             break :blk null;
         };
 
-        try self.advancePossibleNewline();
+        _ = try self.advancePossibleNewline();
 
         var fields = std.ArrayList(*Field).init(self.allocator);
         _ = try self.expectKind(.lbrace);
         while (!isKind(self.this_token, .rbrace) and !isKind(self.this_token, .eof)) {
             const name = try self.parseValue();
-            if (name != .identifier) {
-                self.err("Expected identifier for enumerator, got `{}`", .{@tagName(name)});
+            if (name.* != .identifier) {
+                self.err("Expected identifier for enumerator, got `{s}`", .{@tagName(name.*)});
                 return error.ParseEnumTypeExpression;
             }
 
@@ -1279,7 +1451,7 @@ pub const Parser = struct {
     fn parsePolyTypeExpression(self: *Parser) !*Expression {
         _ = try self.expectKind(.@"const");
         const ident = try self.tree.newIdentifierExpression(try self.parseIdentifier(true));
-        const expr_ty = self.tree.newExpressionType(ident);
+        const expr_ty = try self.tree.newExpressionType(ident);
 
         var specialisation: ?*Type = null;
         if (self.acceptedOperator(.quo)) {
@@ -1303,7 +1475,7 @@ pub const Parser = struct {
             .simd => {
                 const ty = try self.parseType();
                 if (ty.derived != .array) {
-                    self.err("Expected array type for `simd`, got `{}`", .{@tagName(ty.derived)});
+                    self.err("Expected array type for `simd`, got `{s}`", .{@tagName(ty.derived)});
                     return error.ParseDirectivePrefix;
                 }
                 // TODO: simd
@@ -1343,7 +1515,7 @@ pub const Parser = struct {
                 return try self.tree.newSelectorExpression(operand, caller_location);
             },
             else => {
-                self.err("Unknown directive `{}`", .{@tagName(self.last_token.un.directive)});
+                self.err("Unknown directive `{s}`", .{@tagName(self.last_token.un.directive)});
                 return error.ParseDirectivePrefix;
             },
         }
@@ -1376,11 +1548,11 @@ pub const Parser = struct {
         }
 
         if (!isOperator(self.this_token, .ellipsis) or !isOperator(self.this_token, .rangefull) or !isOperator(self.this_token, .rangehalf)) {
-            self.err("Expected `:` in indexing expression, got {}", .{@tagName(self.this_token.un)});
+            self.err("Expected `:` in indexing expression, got {s}", .{@tagName(self.this_token.un)});
             return error.ParseIndexExpression;
         }
 
-        const interval: ?lexer.Token = null;
+        var interval: ?lexer.Token = null;
         if (isOperator(self.this_token, .comma) or isOperator(self.this_token, .colon)) {
             interval = try self.advance();
             if (!isOperator(self.this_token, .rbracket) and !isKind(self.this_token, .eof)) {
@@ -1404,7 +1576,7 @@ pub const Parser = struct {
         return try self.tree.newIndexExpression(operand, lhs, rhs);
     }
 
-    fn parseCastExpression(self: *Parser, lhs: bool) !*Expression {
+    fn parseCastExpression(self: *Parser, lhs: bool) Error!*Expression {
         const token = try self.advance();
 
         var ty: ?*Type = null;
@@ -1414,19 +1586,22 @@ pub const Parser = struct {
             _ = try self.expectOperator(.rparen);
         }
 
-        const operand = try self.parseUnaryExpression(lhs);
+        const operand = self.parseUnaryExpression(lhs) catch return error.ParseCastExpression;
         if (token.un != .operator) {
-            self.err("Expected operator, got `{}`", .{@tagName(token.un)});
+            self.err("Expected operator, got `{s}`", .{@tagName(token.un)});
             return error.ParseCastExpression;
         }
-        return try self.tree.newCastExpression(token.un.operator, ty, operand);
+        return try self.tree.newCastExpression(token.un.keyword, ty orelse {
+            self.err("Expected type in cast expression", .{});
+            return error.ParseCastExpression;
+        }, operand);
     }
 
-    fn parseUnaryStemExpression(self: *Parser, lhs: bool) !*Expression {
+    fn parseUnaryStemExpression(self: *Parser, lhs: bool) Error!*Expression {
         const token = try self.advance();
         const operand = try self.parseUnaryExpression(lhs);
         if (token.un != .operator) {
-            self.err("Expected operator, got `{}`", .{@tagName(token.un)});
+            self.err("Expected operator, got `{s}`", .{@tagName(token.un)});
             return error.ParseUnaryStemExpression;
         }
         return try self.tree.newUnaryExpression(token.un.operator, operand);
@@ -1453,11 +1628,17 @@ pub const Parser = struct {
             _ = try self.expectKeyword(.@"else");
         }
 
-        const on_false = self.parseExpression(lhs);
-        return try self.tree.newTernaryExpression(kind, on_true, condition, on_false);
+        const on_false = try self.parseExpression(lhs);
+        return try self.tree.newTernaryExpression(kind, on_true orelse {
+            self.err("Expected expression on the left-hand side of ternary", .{});
+            return error.ParseTernaryExpression;
+        }, condition orelse {
+            self.err("Expected expression on the right-hand side of ternary", .{});
+            return error.ParseTernaryExpression;
+        }, on_false);
     }
 
-    fn parseBinaryExpression(self: *Parser, lhs: bool, prec: i32) !*Expression {
+    fn parseBinaryExpression(self: *Parser, lhs: bool, prec: i32) Error!*Expression {
         var expr = try self.parseUnaryExpression(lhs);
         var still_lhs = lhs;
         while (true) {
@@ -1487,7 +1668,7 @@ pub const Parser = struct {
             } else {
                 _ = try self.expectKind(.operator);
                 const rhs = self.parseBinaryExpression(false, op_prec + 1) catch {
-                    self.err("Expected expression on the right-hand side");
+                    self.err("Expected expression on the right-hand side", .{});
                     return error.ParseBinaryExpression;
                 };
                 expr = try self.tree.newBinaryExpression(token.un.operator, expr, rhs);
@@ -1526,7 +1707,7 @@ pub const Parser = struct {
             !isKind(self.this_token, .eof))
         {
             if (try self.parseStatement(block_flags)) |statement| {
-                if (statement != .empty) {
+                if (statement.* != .empty) {
                     try statements.append(statement);
                 }
             }
@@ -1536,7 +1717,7 @@ pub const Parser = struct {
     }
 
     fn parseBlockStatement(self: *Parser, block_flags: BlockFlags, when: bool) !*Statement {
-        try self.advancePossibleNewlineWithin();
+        _ = try self.advancePossibleNewlineWithin();
 
         if (!when and self.this_procedure == null) {
             self.err("Blocks can only be used in procedures", .{});
@@ -1547,7 +1728,7 @@ pub const Parser = struct {
     }
 
     fn parseDeclarationStatementTail(self: *Parser, names: std.ArrayList(*Identifier), is_using: bool) !*Statement {
-        var values: ?*TupleExpression = null;
+        var values: ?*Expression = null;
         const ty = try self.parseTypeOrIdentifier();
         const token = self.this_token;
         var constant = false;
@@ -1556,9 +1737,9 @@ pub const Parser = struct {
         if (isAssignment(token, .eq) or isOperator(token, .colon)) {
             const seperator = try self.advance();
             constant = isOperator(seperator, .colon);
-            try self.advancePossibleNewline();
+            _ = try self.advancePossibleNewline();
             values = try self.parseRhsTupleExpression();
-            const n_values = values.?.expressions.items.len;
+            const n_values = values.?.tuple.expressions.items.len;
             if (n_values > n_names) {
                 self.err("Too many values for declaration, expected `{}`, got `{}`", .{ n_names, n_values });
                 return error.ParseDeclarationStatementTail;
@@ -1571,7 +1752,7 @@ pub const Parser = struct {
             }
         }
 
-        const n_values = if (values) |v| v.expressions.items.len else 0;
+        const n_values = if (values) |v| v.tuple.expressions.items.len else 0;
         if (ty == null) {
             if (constant and n_values == 0) {
                 self.err("Expected type for constant declaration", .{});
@@ -1596,7 +1777,7 @@ pub const Parser = struct {
         }
 
         if (ty != null and n_values == 0) {
-            const expressions = std.ArrayList(*Expression).init(self.allocator);
+            var expressions = std.ArrayList(*Expression).init(self.allocator);
             for (0..n_names) |_| {
                 try expressions.append(try self.tree.newCompoundLiteralExpression(
                     ty,
@@ -1609,7 +1790,7 @@ pub const Parser = struct {
         return try self.tree.newDeclarationStatement(
             ty,
             names,
-            values,
+            if (values) |v| &v.tuple else null,
             std.ArrayList(*Field).init(self.allocator),
             is_using,
         );
@@ -1618,10 +1799,10 @@ pub const Parser = struct {
     fn parseDeclarationStatement(self: *Parser, lhs: *TupleExpression, is_using: bool) !*Statement {
         var names = std.ArrayList(*Identifier).init(self.allocator);
         for (lhs.expressions.items) |expr| {
-            if (try evaluateIdentifierExpression(expr)) |ident| {
+            if (evaluateIdentifierExpression(expr)) |ident| {
                 try names.append(ident);
             } else {
-                self.err("Expected identifier, got `{}`", .{@tagName(expr.*)});
+                self.err("Expected identifier, got `{s}`", .{@tagName(expr.*)});
                 return error.ParseDeclarationStatement;
             }
         }
@@ -1636,33 +1817,34 @@ pub const Parser = struct {
         }
 
         if (self.this_token.un != .assignment) {
-            self.err("Expected assignment operator, got `{}`", .{@tagName(self.this_token.un)});
+            self.err("Expected assignment operator, got `{s}`", .{@tagName(self.this_token.un)});
             return error.ParseAssignmentStatement;
         }
         const kind = self.this_token.un.assignment;
 
         _ = try self.advance();
         const rhs = try self.parseRhsTupleExpression();
-        if (rhs.expressions.items.len == 0) {
+        if (rhs.tuple.expressions.items.len == 0) {
             self.err("Missing right-hand side of assignment", .{});
             return error.ParseAssignmentStatement;
         }
 
-        return try self.tree.newAssignmentStatement(kind, lhs, rhs);
+        return try self.tree.newAssignmentStatement(kind, lhs, &rhs.tuple);
     }
 
     fn parseSimpleStatement(self: *Parser, block_flags: BlockFlags, allow_in: bool, allow_label: bool) !*Statement {
         const lhs = try self.parseLhsTupleExpression();
+
         switch (self.this_token.un) {
-            .assignment => return try self.parseAssignmentStatement(lhs),
+            .assignment => return try self.parseAssignmentStatement(&lhs.tuple),
             .operator => |op| switch (op) {
                 .in => {
                     if (allow_in) {
                         const prev_allow_in = self.allow_in;
                         self.allow_in = false;
-                        try self.expectOperator(.in);
+                        _ = try self.expectOperator(.in);
                         const rhs = try self.parseExpression(true);
-                        const expression = self.tree.newBinaryExpression(.in, lhs, rhs);
+                        const expression = try self.tree.newBinaryExpression(.in, lhs, rhs);
                         const statement = try self.tree.newExpressionStatement(expression);
                         self.allow_in = prev_allow_in;
                         return statement;
@@ -1671,17 +1853,17 @@ pub const Parser = struct {
                 .colon => {
                     _ = try self.advance();
 
-                    if (allow_label and lhs.tuple.expressions.items == 1) {
+                    if (allow_label and lhs.tuple.expressions.items.len == 1) {
                         const token = self.this_token;
                         if (isKind(token, .lbrace) or isKeyword(token, .@"if") or isKeyword(token, .@"for") or isKeyword(token, .@"switch")) {
                             const name = lhs.tuple.expressions.items[0];
-                            if (name != .identifier) {
-                                self.err("Expected identifier for label, got `{}`", .{@tagName(name.*)});
+                            if (name.* != .identifier) {
+                                self.err("Expected identifier for label, got `{s}`", .{@tagName(name.*)});
                                 return error.ParseSimpleStatement;
                             }
                             const label = name.identifier.identifier;
                             const statement = (try self.parseStatement(block_flags)) orelse {
-                                self.err("Expected statement after label `{}`", .{label});
+                                self.err("Expected statement after label `{s}`", .{label.contents});
                                 return error.ParseSimpleStatement;
                             };
                             switch (statement.*) {
@@ -1690,14 +1872,14 @@ pub const Parser = struct {
                                 .@"for" => |*f| f.label = label,
                                 .@"switch" => |*s| s.label = label,
                                 else => {
-                                    self.err("Cannot apply block `{}` to `{}`", .{ label, @tagName(statement.*) });
+                                    self.err("Cannot apply block `{s}` to `{s}`", .{ label.contents, @tagName(statement.*) });
                                     return error.ParseSimpleStatement;
                                 },
                             }
                             return statement;
                         }
 
-                        return try self.parseDeclarationStatement(lhs, false);
+                        return try self.parseDeclarationStatement(&lhs.tuple, false);
                     }
                 },
                 else => {},
@@ -1714,8 +1896,433 @@ pub const Parser = struct {
         return try self.tree.newExpressionStatement(expressions.items[0]);
     }
 
-    fn record(self: *Parser) void {
-        self.tree.recordToken(self.this_token);
+    fn parseImportStatement(self: *Parser, is_using: bool) !*Statement {
+        try self.tree.recordToken(try self.expectKeyword(.import));
+
+        const token: ?lexer.Token = blk: {
+            if (isKind(self.this_token, .identifier)) {
+                break :blk try self.advance();
+            }
+            break :blk null;
+        };
+
+        const path = try self.expectLiteral(.string);
+
+        try self.expectSemicolon();
+
+        const name = if (token) |t| t.string else "";
+        const next = path.string;
+
+        if (std.mem.indexOfScalar(u8, next, ':')) |idx| {
+            const collection = next[0..idx];
+            const pathname = next[idx + 1 ..];
+            return try self.tree.newImportStatement(name, collection, pathname, is_using);
+        } else {
+            return try self.tree.newImportStatement(name, "", next, is_using);
+        }
+    }
+
+    fn convertStatementToBody(self: *Parser, block_flags: BlockFlags, statement: *Statement) !*Statement {
+        if (statement.* == .block or statement.* == .empty) {
+            self.err("Expected regular statement, got `{s}`", .{@tagName(statement.*)});
+            return error.ConvertStatementToBody;
+        }
+        var statements = std.ArrayList(*Statement).init(self.allocator);
+        try statements.append(statement);
+        return try self.tree.newBlockStatement(block_flags, statements, null);
+    }
+
+    fn convertStatementToExpression(self: *Parser, statement: ?*Statement) !?*Expression {
+        if (statement) |stmt| {
+            if (stmt.* != .expression) {
+                self.err("Expected expression statement, got `{s}`", .{@tagName(stmt.*)});
+                return error.ConvertStatementToExpression;
+            }
+            return stmt.expression.expression;
+        } else {
+            return null;
+        }
+    }
+
+    fn parseDoBody(self: *Parser, block_flags: BlockFlags) !*Statement {
+        const depth = self.expression_depth;
+        const allow_newline = self.allow_newline;
+        self.expression_depth = 0;
+        self.allow_newline = false;
+
+        const statement = try self.parseStatement(block_flags) orelse {
+            self.err("Expected body", .{});
+            return error.ParseDoBody;
+        };
+        const body = try self.convertStatementToBody(block_flags, statement);
+
+        self.expression_depth = depth;
+        self.allow_newline = allow_newline;
+
+        return body;
+    }
+
+    fn parseIfStatement(self: *Parser, block_flags: BlockFlags) !*Statement {
+        _ = try self.expectKeyword(.@"if");
+
+        const depth = self.expression_depth;
+        const allow_in = self.allow_in;
+        self.expression_depth = -1;
+        self.allow_in = true;
+
+        var init_stmt: ?*Statement = try self.parseSimpleStatement(block_flags, false, false);
+        var condition: ?*Expression = null;
+        if (self.acceptedControlStatementSeparator()) {
+            condition = try self.parseExpression(false);
+        } else {
+            condition = try self.convertStatementToExpression(init_stmt);
+            init_stmt = null;
+        }
+
+        self.expression_depth = depth;
+        self.allow_in = allow_in;
+
+        if (condition == null) {
+            self.err("Expected condition for `if` statement", .{});
+            return error.ParseIfStatement;
+        }
+
+        var body: ?*Statement = null;
+        if (self.acceptedKeyword(.do)) {
+            body = try self.parseDoBody(block_flags);
+        } else {
+            body = try self.parseBlockStatement(block_flags, false);
+        }
+
+        _ = try self.advancePossibleNewlineWithin();
+
+        var elif: ?*Statement = null;
+        if (isKeyword(self.this_token, .@"else")) {
+            _ = try self.expectKeyword(.@"else");
+            if (isKeyword(self.this_token, .@"if")) {
+                const statement = try self.parseIfStatement(block_flags);
+                var statements = std.ArrayList(*Statement).init(self.allocator);
+                try statements.append(statement);
+                elif = try self.tree.newBlockStatement(block_flags, statements, null);
+            } else if (isKind(self.this_token, .lbrace)) {
+                elif = try self.parseBlockStatement(block_flags, false);
+            } else if (isKeyword(self.this_token, .do)) {
+                _ = try self.expectKeyword(.do);
+                elif = try self.parseDoBody(block_flags);
+            } else {
+                self.err("Expected block on `else` statement", .{});
+                return error.ParseIfStatement;
+            }
+        }
+
+        return try self.tree.newIfStatement(init_stmt, condition orelse {
+            self.err("Expected condition for `if` statement", .{});
+            return error.ParseIfStatement;
+        }, &(body orelse {
+            self.err("Expected body for `if` statement", .{});
+            return error.ParseIfStatement;
+        }).block, if (elif) |e| &e.block else null, null);
+    }
+
+    fn parseWhenStatement(self: *Parser) !*Statement {
+        _ = try self.expectKeyword(.when);
+
+        const expression_depth = self.expression_depth;
+        self.expression_depth = -1;
+        const condition = self.parseExpression(false);
+        self.expression_depth = expression_depth;
+
+        if (condition) |_| {
+            // nothing
+        } else |_| {
+            self.err("Expected condition in `when` statement", .{});
+            return error.ParseWhenStatement;
+        }
+
+        var body: ?*Statement = null;
+        const flags = BlockFlags{};
+        if (self.acceptedKeyword(.do)) {
+            body = try self.parseDoBody(flags);
+        } else {
+            body = try self.parseBlockStatement(flags, true);
+        }
+
+        _ = try self.advancePossibleNewlineWithin();
+
+        var elif: ?*Statement = null;
+        if (isKeyword(self.this_token, .@"else")) {
+            _ = try self.expectKeyword(.@"else");
+            if (isKeyword(self.this_token, .when)) {
+                const statement = try self.parseWhenStatement();
+                var statements = std.ArrayList(*Statement).init(self.allocator);
+                try statements.append(statement);
+                elif = try self.tree.newBlockStatement(flags, statements, null);
+            } else if (isKeyword(self.this_token, .do)) {
+                _ = try self.expectKeyword(.do);
+                elif = try self.parseDoBody(flags);
+            } else if (isKind(self.this_token, .lbrace)) {
+                elif = try self.parseBlockStatement(flags, true);
+            } else {
+                self.err("Expected block on `else` statement", .{});
+                return error.ParseWhenStatement;
+            }
+        }
+
+        return try self.tree.newWhenStatement(try condition, &(body orelse {
+            self.err("Expected body for `when` statement", .{});
+            return error.ParseWhenStatement;
+        }).block, if (elif) |e| &e.block else null);
+    }
+
+    fn parseForStatement(self: *Parser, block_flags: BlockFlags) !*Statement {
+        var init_stmt: ?*Statement = null;
+        var condition: ?*Expression = null;
+        var body: ?*Statement = null;
+        var post_stmt: ?*Statement = null;
+
+        _ = try self.expectKeyword(.@"for");
+
+        var range = false;
+
+        const token = self.this_token;
+        if (!isKind(token, .lbrace) and !isKeyword(token, .do)) {
+            const depth = self.expression_depth;
+            self.expression_depth = -1;
+
+            if (isOperator(token, .in)) {
+                self.err("Use for `for in` not allowed. use `for _ in`", .{});
+                return error.ParseForStatement;
+            }
+
+            if (!isKind(token, .semicolon)) {
+                const statement = try self.parseSimpleStatement(block_flags, true, false);
+                if (statement.* == .expression) {
+                    condition = statement.expression.expression;
+                    if (condition.?.* == .binary and condition.?.binary.operation == .in) {
+                        range = true;
+                    }
+                } else {
+                    init_stmt = statement;
+                    condition = null;
+                }
+            }
+
+            if (!range and self.acceptedControlStatementSeparator()) {
+                const in_token = self.this_token;
+                if (isKind(in_token, .lbrace) or isKeyword(in_token, .do)) {
+                    self.err("Expected `;`", .{});
+                    return error.ParseForStatement;
+                } else {
+                    if (!isKind(token, .semicolon)) {
+                        condition = try self.convertStatementToExpression(
+                            try self.parseSimpleStatement(block_flags, false, false),
+                        );
+                    }
+                    try self.expectSemicolon();
+                    if (!isKind(self.this_token, .lbrace) and !isKeyword(self.this_token, .do)) {
+                        post_stmt = try self.parseSimpleStatement(block_flags, false, false);
+                    }
+                }
+            }
+
+            self.expression_depth = depth;
+        }
+
+        if (self.acceptedKeyword(.do)) {
+            body = try self.parseDoBody(block_flags);
+        } else {
+            body = try self.parseBlockStatement(block_flags, false);
+        }
+
+        return try self.tree.newForStatement(init_stmt, condition, &(body.?).block, post_stmt, null);
+    }
+
+    fn parseCaseClause(self: *Parser, block_flags: BlockFlags, is_type: bool) !*CaseClause {
+        _ = try self.expectKeyword(.case);
+
+        const allow_in = self.allow_in;
+        self.allow_in = !is_type;
+
+        var list: ?*Expression = null;
+        if (!isOperator(self.this_token, .colon)) {
+            list = try self.parseRhsTupleExpression();
+        }
+        self.allow_in = allow_in;
+
+        _ = try self.expectOperator(.colon);
+
+        return try self.tree.newCaseClause(if (list) |l| &l.tuple else null, try self.parseStatementList(block_flags));
+    }
+
+    fn parseSwitchStatement(self: *Parser, block_flags: BlockFlags) !*Statement {
+        _ = try self.expectKeyword(.@"switch");
+
+        var init_stmt: ?*Statement = null;
+        var condition: ?*Expression = null;
+        if (!isKind(self.this_token, .lbrace)) {
+            const depth = self.expression_depth;
+            self.expression_depth = -1;
+
+            const statement = try self.parseSimpleStatement(block_flags, true, false);
+            if (statement.* == .expression) {
+                condition = statement.expression.expression;
+            } else {
+                init_stmt = statement;
+                if (self.acceptedControlStatementSeparator()) {
+                    condition = try self.parseExpression(false);
+                } else {
+                    try self.expectSemicolon();
+                }
+            }
+            self.expression_depth = depth;
+        }
+
+        const is_type_switch = if (condition) |c| (c.* == .binary and c.binary.operation == .in) else false;
+        var clauses = std.ArrayList(*CaseClause).init(self.allocator);
+        _ = try self.advancePossibleNewline();
+        _ = try self.expectKind(.lbrace);
+        while (isKeyword(self.this_token, .case)) {
+            try clauses.append(try self.parseCaseClause(block_flags, is_type_switch));
+        }
+        _ = try self.expectKind(.rbrace);
+
+        return try self.tree.newSwitchStatement(init_stmt, condition, clauses, null);
+    }
+
+    fn parseDeferStatement(self: *Parser, block_flags: BlockFlags) !*Statement {
+        _ = try self.expectKeyword(.@"defer");
+        return try self.tree.newDeferStatement((try self.parseStatement(block_flags)) orelse {
+            self.err("Expected statement after `defer`", .{});
+            return error.ParseDeferStatement;
+        });
+    }
+
+    fn parseReturnStatement(self: *Parser) !*Statement {
+        _ = try self.expectKeyword(.@"return");
+
+        // if (self.expression_depth > 0) {
+        //     self.err("Cannot return from expression", .{});
+        //     return error.ParseReturnStatement;
+        // }
+
+        var results = std.ArrayList(*Expression).init(self.allocator);
+        while (!isKind(self.this_token, .semicolon) and !isKind(self.this_token, .rbrace) and !isKind(self.this_token, .eof)) {
+            try results.append(try self.parseExpression(false));
+            if (!isOperator(self.this_token, .comma) or isKind(self.this_token, .eof)) break;
+            _ = try self.advance();
+        }
+
+        try self.expectSemicolon();
+
+        return try self.tree.newReturnStatement(&(try self.tree.newTupleExpression(results)).tuple);
+    }
+
+    fn parseBasicSimpleStatement(self: *Parser, block_flags: BlockFlags) !*Statement {
+        const statement = try self.parseSimpleStatement(block_flags, false, true);
+        try self.expectSemicolon();
+        return statement;
+    }
+
+    fn parseForeignBlockStatement(self: *Parser) !*Statement {
+        var name: ?*Identifier = null;
+        if (isKind(self.this_token, .identifier)) {
+            name = try self.parseIdentifier(false);
+        }
+
+        var statements = std.ArrayList(*Statement).init(self.allocator);
+        _ = try self.advancePossibleNewlineWithin();
+        _ = try self.expectKind(.lbrace);
+        while (!isKind(self.this_token, .rbrace) and !isKind(self.this_token, .eof)) {
+            try statements.append((try self.parseStatement(BlockFlags{})).?);
+        }
+        _ = try self.expectKind(.rbrace);
+
+        const block = try self.tree.newBlockStatement(BlockFlags{}, statements, null);
+        const statement = try self.tree.newForeignBlockStatement(name, &block.block, std.ArrayList(*Field).init(self.allocator));
+        _ = try self.expectSemicolon();
+
+        return statement;
+    }
+
+    fn parseForiegnImportStatement(self: *Parser) !*Statement {
+        _ = try self.expectKeyword(.import);
+
+        var name: ?lexer.Token = null;
+        if (isKind(self.this_token, .identifier)) {
+            name = try self.advance();
+        }
+
+        var sources = std.ArrayList([]const u8).init(self.allocator);
+        if (self.acceptedKind(.lbrace)) {
+            while (!isKind(self.this_token, .rbrace) and !isKind(self.this_token, .eof)) {
+                try sources.append((try self.expectLiteral(.string)).string);
+                if (!self.acceptedSeparator()) break;
+            }
+            _ = try self.expectClosing(.rbrace);
+        } else {
+            try sources.append((try self.expectLiteral(.string)).string);
+        }
+
+        return try self.tree.newForeignImportStatement(
+            if (name) |n| n.string else "",
+            sources,
+            std.ArrayList(*Field).init(self.allocator),
+        );
+    }
+
+    fn parseForignDeclarationStatement(self: *Parser) !?*Statement {
+        _ = try self.expectKeyword(.foreign);
+        if (isKind(self.this_token, .identifier) or isKind(self.this_token, .lbrace)) {
+            return try self.parseForeignBlockStatement();
+        } else if (isKeyword(self.this_token, .import)) {
+            return try self.parseForiegnImportStatement();
+        }
+
+        return null;
+    }
+
+    fn parseBranchStatement(self: *Parser, kind: lexemes.KeywordKind) !*Statement {
+        _ = try self.advance();
+
+        var label: ?*Identifier = null;
+        if (isKind(self.this_token, .identifier)) {
+            label = try self.parseIdentifier(false);
+        }
+
+        return try self.tree.newBranchStatement(kind, label);
+    }
+
+    fn parseUsingStatement(self: *Parser) !*Statement {
+        _ = try self.expectKeyword(.using);
+
+        if (isKeyword(self.this_token, .import)) {
+            return try self.parseImportStatement(true);
+        }
+
+        const list = try self.parseRhsTupleExpression();
+        if (!isOperator(self.this_token, .colon)) {
+            try self.expectSemicolon();
+            return try self.tree.newUsingStatement(&list.tuple);
+        }
+        _ = try self.expectOperator(.colon);
+        return try self.parseDeclarationStatement(&list.tuple, true);
+    }
+
+    fn parsePackageStatement(self: *Parser) !*Statement {
+        _ = try self.expectKeyword(.package);
+        const package = try self.expectKind(.identifier);
+        try self.tree.recordToken(package);
+        return try self.tree.newPackageStatement(package.string);
+    }
+
+    fn parseEmptyStatement(self: *Parser) !*Statement {
+        const statement = try self.tree.newEmptyStatement();
+        _ = try self.expectSemicolon();
+        return statement;
+    }
+
+    fn record(self: *Parser) !void {
+        try self.tree.recordToken(self.this_token);
     }
 };
 
@@ -1740,7 +2347,7 @@ fn isLiteral(token: lexer.Token, kind: lexemes.LiteralKind) bool {
 }
 
 fn isNewline(token: lexer.Token) bool {
-    return token.un == lexemes.TokenKind.semicolon and std.mem.eql(u8, token.string[0], "\n");
+    return token.un == lexemes.TokenKind.semicolon and std.mem.eql(u8, token.string, "\n");
 }
 
 test {

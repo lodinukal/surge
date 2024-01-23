@@ -97,7 +97,7 @@ pub const Lexer = struct {
     pub fn next(self: *Lexer) Token {
         if (self.peek_list.items.len != 0) {
             const token = self.peek_list.items[0];
-            self.peek_list.orderedRemove(0);
+            _ = self.peek_list.orderedRemove(0);
             return token;
         }
         return self.rawNext();
@@ -322,6 +322,7 @@ pub const Lexer = struct {
                 }
             },
         }
+        unreachable;
     }
 
     fn tokenise(self: *Lexer) Token {
@@ -330,7 +331,7 @@ pub const Lexer = struct {
         self.last_location = self.this_location;
 
         var token = self.tokenHalf();
-        token.string = self.input.source.code[self.here..][0..1];
+        token.string = self.input.source.code[self.here..];
 
         const cp = self.codepoint;
         if (isChar(cp)) {
@@ -391,6 +392,7 @@ pub const Lexer = struct {
                     }
                 }
                 token.string.len = self.here - old_here;
+                return token;
             },
             '`', '"' => {
                 const quote = cp;
@@ -401,6 +403,7 @@ pub const Lexer = struct {
                     }
                     _ = self.advance();
                     if (c == quote) {
+                        _ = self.advance();
                         break;
                     }
                     if (cp == '"' and (c == '\\' and !self.scanEscape())) {
@@ -409,6 +412,8 @@ pub const Lexer = struct {
                 }
                 token.un = .{ .literal = .string };
                 token.string.len = self.here - old_here;
+                token.string = token.string[1..];
+                return token;
             },
             '.' => {
                 if (isDigit(self.codepoint)) {
@@ -534,7 +539,7 @@ pub const Lexer = struct {
                 if (findDirective(token.string)) |dir| {
                     token.un = .{ .directive = dir };
                 } else {
-                    self.err("unknown directive {}", .{token.string});
+                    self.err("unknown directive {s}", .{token.string});
                 }
                 return token;
             },
@@ -647,6 +652,7 @@ pub const Lexer = struct {
             },
             else => unreachable,
         }
+        return NullToken;
     }
 
     pub fn rawNext(self: *Lexer) Token {
@@ -659,7 +665,7 @@ pub const Lexer = struct {
                 self.asi = lexemes.keywords.get(kw).asi;
             },
             else => {
-                self.asi = lexemes.tokens.get(std.meta.activeTag(token)).asi;
+                self.asi = lexemes.tokens.get(std.meta.activeTag(token.un)).asi;
             },
         }
         return token;
@@ -670,18 +676,21 @@ fn findKeyword(string: []const u8) ?lexemes.KeywordKind {
     inline for (std.meta.fields(lexemes.KeywordKind)) |keyword| {
         if (std.mem.eql(u8, string, keyword.name)) return @field(lexemes.KeywordKind, keyword.name);
     }
+    return null;
 }
 
 fn findOperator(string: []const u8) ?lexemes.OperatorKind {
     inline for (lexemes.named_operators) |operator| {
         if (std.mem.eql(u8, string, lexemes.operators.get(operator).name)) return operator;
     }
+    return null;
 }
 
 fn findDirective(string: []const u8) ?lexemes.DirectiveKind {
     inline for (std.meta.fields(lexemes.DirectiveKind)) |directive| {
         if (std.mem.eql(u8, string, directive.name)) return @field(lexemes.DirectiveKind, directive.name);
     }
+    return null;
 }
 
 fn isChar(cp: codepoint) bool {
@@ -702,12 +711,12 @@ fn isDigit(cp: codepoint) bool {
 }
 
 fn numericBase(cp: codepoint) i32 {
-    switch (cp) {
+    return switch (cp) {
         '0'...'9' => cp - '0',
         'a'...'z' => cp - 'a' + 10,
         'A'...'Z' => cp - 'A' + 10,
         else => 16,
-    }
+    };
 }
 
 test {

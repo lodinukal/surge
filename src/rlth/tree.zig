@@ -205,7 +205,7 @@ pub const SelectorExpression = struct {
 
 pub const CallExpression = struct {
     operand: *Expression,
-    arguments: std.ArrayList(*Expression),
+    arguments: std.ArrayList(*Field),
 };
 
 pub const UnwrapExpression = struct {
@@ -225,8 +225,8 @@ pub const TypeExpression = struct {
 
 pub const IndexExpression = struct {
     operand: *Expression,
-    lhs: *Expression,
-    rhs: *Expression,
+    lhs: ?*Expression,
+    rhs: ?*Expression,
 };
 
 pub const SliceExpression = struct {
@@ -304,25 +304,25 @@ pub const AssignmentStatement = struct {
 };
 
 pub const DeclarationStatement = struct {
-    type: *Type,
+    type: ?*Type = null,
     names: std.ArrayList(*Identifier),
-    values: *TupleExpression,
+    values: ?*TupleExpression = null,
     attributes: std.ArrayList(*Field),
     using: bool,
 };
 
 pub const IfStatement = struct {
-    init: *Statement,
+    init: ?*Statement = null,
     condition: *Expression,
     body: *BlockStatement,
-    elif: *BlockStatement,
+    elif: ?*BlockStatement = null,
     label: ?*Identifier,
 };
 
 pub const WhenStatement = struct {
     condition: *Expression,
     body: *BlockStatement,
-    elif: *BlockStatement,
+    elif: ?*BlockStatement = null,
 };
 
 pub const ReturnStatement = struct {
@@ -333,7 +333,7 @@ pub const ForStatement = struct {
     init: ?*Statement,
     condition: ?*Expression,
     body: *BlockStatement,
-    post: *Statement,
+    post: ?*Statement = null,
     label: ?*Identifier,
 };
 
@@ -354,7 +354,7 @@ pub const BranchStatement = struct {
 };
 
 pub const ForeignBlockStatement = struct {
-    name: ?[]const u8,
+    name: ?*Identifier = null,
     body: *BlockStatement,
     attributes: std.ArrayList(*Field),
 };
@@ -370,7 +370,7 @@ pub const UsingStatement = struct {
 };
 
 pub const PackageStatement = struct {
-    name: *Identifier,
+    name: []const u8,
     location: lexer.Location,
 };
 
@@ -465,7 +465,7 @@ pub const DistinctType = struct {
 };
 
 pub const EnumType = struct {
-    type: *Type,
+    type: ?*Type = null,
     fields: std.ArrayList(*Field),
 };
 
@@ -508,24 +508,24 @@ pub const Field = struct {
     name: ?*Identifier = null,
     type: ?*Type = null,
     value: ?*Expression = null,
-    tag: ?*Expression = null,
+    tag: ?[]const u8 = null,
     flags: FieldFlags,
 };
 
 pub const CaseClause = struct {
-    expression: *TupleExpression,
+    expression: ?*TupleExpression = null,
     statements: std.ArrayList(*Statement),
 };
 
 /// this will not clean up it's memory
 /// use an arena or something to clean up
 pub const Tree = struct {
-    allocator: std.mem.Allocator,
+    allocator: std.mem.Allocator = undefined,
 
-    source: lexer.Source,
-    statements: std.ArrayList(*Statement),
-    imports: std.ArrayList(*ImportStatement),
-    tokens: std.ArrayList(lexer.Token),
+    source: lexer.Source = undefined,
+    statements: std.ArrayList(*Statement) = undefined,
+    imports: std.ArrayList(*ImportStatement) = undefined,
+    tokens: std.ArrayList(lexer.Token) = undefined,
 
     pub fn init(tree: *Tree, allocator: std.mem.Allocator, name: []const u8) !void {
         tree.* = Tree{
@@ -629,7 +629,7 @@ pub const Tree = struct {
     pub fn newCallExpression(
         self: *Tree,
         operand: *Expression,
-        arguments: std.ArrayList(*Expression),
+        arguments: std.ArrayList(*Field),
     ) !*Expression {
         const e = try self.allocator.create(Expression);
         e.* = Expression{ .call = .{
@@ -678,8 +678,8 @@ pub const Tree = struct {
     pub fn newIndexExpression(
         self: *Tree,
         operand: *Expression,
-        lhs: *Expression,
-        rhs: *Expression,
+        lhs: ?*Expression,
+        rhs: ?*Expression,
     ) !*Expression {
         const e = try self.allocator.create(Expression);
         e.* = Expression{ .index = .{
@@ -832,9 +832,9 @@ pub const Tree = struct {
 
     pub fn newDeclarationStatement(
         self: *Tree,
-        ty: *Type,
+        ty: ?*Type,
         names: std.ArrayList(*Identifier),
-        values: *TupleExpression,
+        values: ?*TupleExpression,
         attributes: std.ArrayList(*Field),
         using: bool,
     ) !*Statement {
@@ -851,10 +851,10 @@ pub const Tree = struct {
 
     pub fn newIfStatement(
         self: *Tree,
-        _init: *Statement,
+        _init: ?*Statement,
         condition: *Expression,
         body: *BlockStatement,
-        elif: *BlockStatement,
+        elif: ?*BlockStatement,
         label: ?*Identifier,
     ) !*Statement {
         const s = try self.allocator.create(Statement);
@@ -872,7 +872,7 @@ pub const Tree = struct {
         self: *Tree,
         condition: *Expression,
         body: *BlockStatement,
-        elif: *BlockStatement,
+        elif: ?*BlockStatement,
     ) !*Statement {
         const s = try self.allocator.create(Statement);
         s.* = Statement{ .when = .{
@@ -899,7 +899,7 @@ pub const Tree = struct {
         _init: ?*Statement,
         condition: ?*Expression,
         body: *BlockStatement,
-        post: *Statement,
+        post: ?*Statement,
         label: ?*Identifier,
     ) !*Statement {
         const s = try self.allocator.create(Statement);
@@ -956,7 +956,7 @@ pub const Tree = struct {
 
     pub fn newForeignBlockStatement(
         self: *Tree,
-        name: ?[]const u8,
+        name: ?*Identifier,
         body: *BlockStatement,
         attributes: std.ArrayList(*Field),
     ) !*Statement {
@@ -997,7 +997,7 @@ pub const Tree = struct {
 
     pub fn newPackageStatement(
         self: *Tree,
-        name: *Identifier,
+        name: []const u8,
     ) !*Statement {
         const s = try self.allocator.create(Statement);
         s.* = Statement{ .package = .{
@@ -1016,14 +1016,14 @@ pub const Tree = struct {
         i.* = Identifier{
             .contents = contents,
             .poly = poly,
-            .token = self.tokens.items.len - 1,
+            .token = @intCast(self.tokens.items.len - 1),
         };
         return i;
     }
 
     pub fn newCaseClause(
         self: *Tree,
-        expression: *TupleExpression,
+        expression: ?*TupleExpression,
         statements: std.ArrayList(*Statement),
     ) !*CaseClause {
         const c = try self.allocator.create(CaseClause);
@@ -1185,7 +1185,7 @@ pub const Tree = struct {
 
     pub fn newEnumType(
         self: *Tree,
-        value_type: *Type,
+        value_type: ?*Type,
         fields: std.ArrayList(*Field),
     ) !*Type {
         const t = try self.allocator.create(Type);
@@ -1316,14 +1316,16 @@ pub const Tree = struct {
         convention: CallingConvention,
         params: std.ArrayList(*Field),
         results: std.ArrayList(*Field),
-    ) !*ProcedureType {
-        const t = try self.allocator.create(ProcedureType);
-        t.* = ProcedureType{
-            .kind = ProcedureKind.concrete,
-            .flags = flags,
-            .convention = convention,
-            .params = params,
-            .results = results,
+    ) !*Type {
+        const t = try self.allocator.create(Type);
+        t.derived = .{
+            .procedure = .{
+                .kind = ProcedureKind.concrete,
+                .flags = flags,
+                .convention = convention,
+                .params = params,
+                .results = results,
+            },
         };
         return t;
     }
@@ -1334,14 +1336,16 @@ pub const Tree = struct {
         convention: CallingConvention,
         params: std.ArrayList(*Field),
         results: std.ArrayList(*Field),
-    ) !*ProcedureType {
-        const t = try self.allocator.create(ProcedureType);
-        t.* = ProcedureType{
-            .kind = ProcedureKind.generic,
-            .flags = flags,
-            .convention = convention,
-            .params = params,
-            .results = results,
+    ) !*Type {
+        const t = try self.allocator.create(Type);
+        t.derived = .{
+            .procedure = .{
+                .kind = ProcedureKind.generic,
+                .flags = flags,
+                .convention = convention,
+                .params = params,
+                .results = results,
+            },
         };
         return t;
     }
