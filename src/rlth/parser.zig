@@ -1,25 +1,6 @@
 const std = @import("std");
 
-const Tree = @import("tree.zig").Tree;
-const CallingConvention = @import("tree.zig").CallingConvention;
-const ProcedureType = @import("tree.zig").ProcedureType;
-const Identifier = @import("tree.zig").Identifier;
-const Expression = @import("tree.zig").Expression;
-const CompoundLiteralExpression = @import("tree.zig").CompoundLiteralExpression;
-const FieldFlags = @import("tree.zig").FieldFlags;
-const Field = @import("tree.zig").Field;
-const ProcedureFlags = @import("tree.zig").ProcedureFlags;
-const BlockFlags = @import("tree.zig").BlockFlags;
-const BlockStatement = @import("tree.zig").BlockStatement;
-const TupleExpression = @import("tree.zig").TupleExpression;
-const CallExpression = @import("tree.zig").CallExpression;
-const Statement = @import("tree.zig").Statement;
-const IdentifierExpression = @import("tree.zig").IdentifierExpression;
-const LiteralExpression = @import("tree.zig").LiteralExpression;
-const TypeExpression = @import("tree.zig").TypeExpression;
-const StructFlags = @import("tree.zig").StructFlags;
-const UnionFlags = @import("tree.zig").UnionFlags;
-const CaseClause = @import("tree.zig").CaseClause;
+const Tree = @import("Tree.zig");
 
 const Type = @import("tree.zig").Type;
 
@@ -43,7 +24,7 @@ const Error = error{
     ExpectKeyword,
     ExpectLiteral,
     ParseProcedureType,
-    ParseFieldFlagsparseFieldFlags,
+    ParseFieldFlags,
     ParseFieldList,
     ParseProcedureResults,
     ParseProcedure,
@@ -111,8 +92,8 @@ pub fn parse(tree: *Tree, source: []const u8) !void {
     _ = try parser.advance();
 
     while (!isKind(parser.this_token, .eof)) {
-        if (try parser.parseStatement(BlockFlags{})) |statement| {
-            if (statement.* != .empty) {
+        if (try parser.parseStatement(Tree.BlockFlags{})) |statement| {
+            if (tree.getStatement(statement).* != .empty) {
                 try tree.statements.append(statement);
             }
         }
@@ -131,10 +112,11 @@ pub const precedence = blk: {
     break :blk list;
 };
 
+const Context = @import("Context.zig");
+
 pub const Parser = struct {
     arena: std.heap.ArenaAllocator = undefined,
     allocator: std.mem.Allocator = undefined,
-    err_handler: ?*const fn (msg: []const u8) void = null,
 
     tree: *Tree = undefined,
     lexer: lexer.Lexer = .{},
@@ -142,7 +124,7 @@ pub const Parser = struct {
     this_token: lexer.Token = undefined,
     last_token: lexer.Token = undefined,
 
-    this_procedure: ?*ProcedureType = null,
+    this_procedure: ?Tree.TypeIndex = null,
 
     trace_depth: i32 = 0,
     expression_depth: i32 = 0,
@@ -176,19 +158,10 @@ pub const Parser = struct {
         self.arena.deinit();
     }
 
-    fn err(self: *Parser, comptime msg: []const u8, args: anytype) void {
-        var buf = std.mem.zeroes([1024]u8);
-        var fba = std.heap.FixedBufferAllocator.init(&buf);
-        const temp_allocator = fba.allocator();
-
-        if (self.err_handler) |handler| {
-            const fmtted = std.fmt.allocPrint(temp_allocator, msg, args) catch unreachable;
-            handler(fmtted);
+    fn err(self: *const Parser, comptime msg: []const u8, args: anytype) void {
+        if (self.tree.context) |ctx| {
+            ctx.err(self.this_token.location, msg, args);
         }
-
-        std.log.warn(msg, args);
-        std.log.warn("code: {s}", .{self.lexer.input.source.code[self.lexer.input.current .. self.lexer.input.current + 10]});
-        std.log.warn("{}:{}", .{ self.lexer.this_location.line, self.lexer.this_location.column });
     }
 
     fn acceptedOperator(self: *Parser, op: lexemes.OperatorKind) bool {
@@ -365,7 +338,7 @@ pub const Parser = struct {
         }
     }
 
-    fn parseIdentifier(self: *Parser, poly: bool) !*Identifier {
+    fn parseIdentifier(self: *Parser, poly: bool) !Tree.IdentifierIndex {
         try self.record();
 
         var token = self.this_token;
@@ -386,7 +359,7 @@ pub const Parser = struct {
         return try self.tree.newIdentifier(token.string, poly);
     }
 
-    fn parseOperand(self: *Parser, lhs: bool) !?*Expression {
+    fn parseOperand(self: *Parser, lhs: bool) !?Tree.ExpressionIndex {
         switch (self.this_token.un) {
             .identifier => return try self.parseIdentifierExpression(),
             .literal => return try self.parseLiteralExpression(),
@@ -460,11 +433,11 @@ pub const Parser = struct {
         return null;
     }
 
-    fn parseExpression(self: *Parser, lhs: bool) !*Expression {
+    fn parseExpression(self: *Parser, lhs: bool) !Tree.ExpressionIndex {
         return self.parseBinaryExpression(lhs, 1) catch return error.ParseExpression;
     }
 
-    fn parseAtomExpression(self: *Parser, opt_operand: ?*Expression, lhs: bool) !?*Expression {
+    fn parseAtomExpression(self: *Parser, opt_operand: ?Tree.ExpressionIndex, lhs: bool) !?Tree.ExpressionIndex {
         if (opt_operand == null) {
             if (self.allow_type) {
                 return null;
@@ -532,7 +505,7 @@ pub const Parser = struct {
         return operand;
     }
 
-    fn parseTypeOrIdentifier(self: *Parser) !?*Type {
+    fn parseTypeOrIdentifier(self: *Parser) !?Tree.TypeIndex {
         const depth = self.expression_depth;
         const allow_type = self.allow_type;
         self.expression_depth = -1;
@@ -546,7 +519,8 @@ pub const Parser = struct {
 
         if (expression) |ex| {
             if (ex) |inner_ex| {
-                return switch (inner_ex.*) {
+                const got_inner_ex = self.tree.getExpressionConst(inner_ex);
+                return switch (got_inner_ex.*) {
                     .type => |t| t.type,
                     else => try self.tree.newExpressionType(inner_ex),
                 };
@@ -558,7 +532,7 @@ pub const Parser = struct {
         return null;
     }
 
-    fn parseType(self: *Parser) Error!*Type {
+    fn parseType(self: *Parser) Error!Tree.TypeIndex {
         const ty = self.parseTypeOrIdentifier() catch return error.ParseType;
         if (ty == null) {
             self.err("Expected type, got `{s}`", .{@tagName(self.this_token.un)});
@@ -567,22 +541,22 @@ pub const Parser = struct {
         return ty.?;
     }
 
-    fn parseCompoundLiteralExpression(self: *Parser, ty: ?*Type) !*Expression {
-        var fields = std.ArrayList(*Field).init(self.allocator);
+    fn parseCompoundLiteralExpression(self: *Parser, ty: ?Tree.TypeIndex) !Tree.ExpressionIndex {
+        var fields = std.ArrayList(Tree.FieldIndex).init(self.allocator);
         const depth = self.expression_depth;
         self.expression_depth = 0;
 
         _ = try self.expectKind(.lbrace);
         while (!isKind(self.this_token, .rbrace) and !isKind(self.this_token, .eof)) {
             const element = self.parseValue() catch return error.ParseCompoundLiteralExpression;
-            const name = evaluateIdentifierExpression(element);
+            const name = self.evaluateIdentifierExpression(element);
             if (isAssignment(self.this_token, .eq)) {
                 _ = try self.expectAssignment(.eq);
                 const value = self.parseValue() catch return error.ParseCompoundLiteralExpression;
-                const field = try self.tree.newField(null, name, value, null, FieldFlags{});
+                const field = try self.tree.newField(null, name, value, null, Tree.FieldFlags{});
                 try fields.append(field);
             } else {
-                const field = try self.tree.newField(null, name, null, null, FieldFlags{});
+                const field = try self.tree.newField(null, name, null, null, Tree.FieldFlags{});
                 try fields.append(field);
             }
             if (!self.acceptedSeparator()) break;
@@ -594,7 +568,7 @@ pub const Parser = struct {
         return try self.tree.newCompoundLiteralExpression(ty, fields);
     }
 
-    fn parseVariableNameOrType(self: *Parser) Error!*Type {
+    fn parseVariableNameOrType(self: *Parser) Error!Tree.TypeIndex {
         if (isOperator(self.this_token, .ellipsis)) {
             _ = try self.advance();
             if (try self.parseTypeOrIdentifier()) |ty| {
@@ -604,7 +578,7 @@ pub const Parser = struct {
             return error.ParseVariableNameOrType;
         } else if (isKeyword(self.this_token, .typeid)) {
             _ = try self.expectKeyword(.typeid);
-            var spec: ?*Type = null;
+            var spec: ?Tree.TypeIndex = null;
             if (self.acceptedOperator(.quo)) {
                 spec = try self.parseType();
             }
@@ -614,10 +588,10 @@ pub const Parser = struct {
         return try self.parseType();
     }
 
-    fn evaluateIdentifierExpression(expression: *const Expression) ?*Identifier {
-        return switch (expression.*) {
+    fn evaluateIdentifierExpression(self: *Parser, expression: Tree.ExpressionIndex) ?Tree.IdentifierIndex {
+        return switch (self.tree.getExpression(expression).*) {
             .identifier => |id| id.identifier,
-            .type => |ty| evaluateIdentifierType(ty.type),
+            .type => |ty| self.evaluateIdentifierType(ty.type),
             .selector => |s| blk: {
                 if (s.operand == null) break :blk s.field;
                 break :blk null;
@@ -626,19 +600,19 @@ pub const Parser = struct {
         };
     }
 
-    fn evaluateIdentifierType(ty: *const Type) ?*Identifier {
-        return switch (ty.*.derived) {
-            .expression => |*ex| evaluateIdentifierExpression(ex.expression),
+    fn evaluateIdentifierType(self: *Parser, ty: Tree.TypeIndex) ?Tree.IdentifierIndex {
+        return switch (self.tree.getType(ty).derived) {
+            .expression => |*ex| self.evaluateIdentifierExpression(ex.expression),
             .poly => |ply| blk: {
-                if (ply.specialisation == null) break :blk evaluateIdentifierType(ply.type);
+                if (ply.specialisation == null) break :blk self.evaluateIdentifierType(ply.type);
                 break :blk null;
             },
             else => null,
         };
     }
 
-    fn parseFieldFlags(self: *Parser) !FieldFlags {
-        var flags = FieldFlags{};
+    fn parseFieldFlags(self: *Parser) !Tree.FieldFlags {
+        var flags = Tree.FieldFlags{};
         if (isKeyword(self.this_token, .using)) {
             _ = try self.advance();
             flags.using = true;
@@ -653,7 +627,7 @@ pub const Parser = struct {
                 .@"const" => flags.@"const" = true,
                 else => {
                     self.err("Unknown field flag `{s}`", .{@tagName(self.this_token.un.directive)});
-                    return error.ParseFieldFlagsparseFieldFlags;
+                    return error.ParseFieldFlags;
                 },
             }
             _ = try self.advance();
@@ -667,19 +641,19 @@ pub const Parser = struct {
             !isKind(self.this_token, .eof);
     }
 
-    fn parseFieldList(self: *Parser, is_struct: bool) !std.ArrayList(*Field) {
-        var fields = std.ArrayList(*Field).init(self.allocator);
+    fn parseFieldList(self: *Parser, is_struct: bool) !std.ArrayList(Tree.FieldIndex) {
+        var fields = std.ArrayList(Tree.FieldIndex).init(self.allocator);
         if (isOperator(self.this_token, .rparen)) return fields;
 
         const allow_newline = self.allow_newline;
         self.allow_newline = true;
 
-        var type_list = std.ArrayList(*Type).init(self.allocator);
-        var attributes = std.ArrayList(std.ArrayList(*Field)).init(self.allocator);
-        var field_flags = std.ArrayList(FieldFlags).init(self.allocator);
+        var type_list = std.ArrayList(Tree.TypeIndex).init(self.allocator);
+        var attributes = std.ArrayList(std.ArrayList(Tree.FieldIndex)).init(self.allocator);
+        var field_flags = std.ArrayList(Tree.FieldFlags).init(self.allocator);
 
         while (self.parseContinue(is_struct)) {
-            var f_type: ?*Type = null;
+            var f_type: ?Tree.TypeIndex = null;
             const start_type_index = type_list.items.len;
             while (self.parseContinue(is_struct)) {
                 // check for attributes
@@ -700,7 +674,7 @@ pub const Parser = struct {
                 }
             }
 
-            var default_value: ?*Expression = null;
+            var default_value: ?Tree.ExpressionIndex = null;
             if (self.acceptedAssignment(.eq)) {
                 default_value = try self.parseExpression(true);
             }
@@ -714,13 +688,13 @@ pub const Parser = struct {
             for (start_type_index..end_type_index) |i| {
                 const name = type_list.items[i];
                 const flags = field_flags.items[i];
-                const ident = evaluateIdentifierType(name);
+                const ident = self.evaluateIdentifierType(name);
                 if (ident == null) {
-                    self.err("Expected identifier, got `{s}`", .{@tagName(name.derived)});
+                    self.err("Expected identifier, got `{s}`", .{@tagName(self.tree.getTypeConst(name).derived)});
                     return error.ParseFieldList;
                 }
                 const field = try self.tree.newField(f_type, ident, default_value, tag, flags);
-                field.attributes = attributes.items[i];
+                self.tree.getField(field).attributes = attributes.items[i];
                 try fields.append(field);
             }
 
@@ -734,8 +708,8 @@ pub const Parser = struct {
         return fields;
     }
 
-    fn parseProcedureResults(self: *Parser, no_return: *bool) !std.ArrayList(*Field) {
-        var fields = std.ArrayList(*Field).init(self.allocator);
+    fn parseProcedureResults(self: *Parser, no_return: *bool) !std.ArrayList(Tree.FieldIndex) {
+        var fields = std.ArrayList(Tree.FieldIndex).init(self.allocator);
         if (!self.acceptedOperator(.arrow)) {
             return fields;
         }
@@ -752,8 +726,8 @@ pub const Parser = struct {
             const ty = try self.parseType();
             try self.record();
             const ident = try self.tree.newIdentifier("_unnamed", false);
-            const field = try self.tree.newField(ty, ident, null, null, FieldFlags{});
-            field.attributes = attributes;
+            const field = try self.tree.newField(ty, ident, null, null, Tree.FieldFlags{});
+            self.tree.getField(field).attributes = attributes;
             try fields.append(field);
             return fields;
         }
@@ -769,11 +743,11 @@ pub const Parser = struct {
         return fields;
     }
 
-    fn parseProcedureType(self: *Parser) !*Type {
-        var cc = CallingConvention.rlth;
+    fn parseProcedureType(self: *Parser) !Tree.TypeIndex {
+        var cc = Tree.CallingConvention.rlth;
         if (isLiteral(self.this_token, .string)) {
             const token = try self.expectLiteral(.string);
-            cc = std.meta.stringToEnum(CallingConvention, token.string) orelse {
+            cc = std.meta.stringToEnum(Tree.CallingConvention, token.string) orelse {
                 self.err("Unknown calling convention `{s}`", .{token.string});
                 return error.ParseProcedureType;
             };
@@ -786,16 +760,17 @@ pub const Parser = struct {
 
         var is_generic = false;
         for (params.items) |param| {
-            if (param.name) |n| if (n.poly) {
-                is_generic = true;
-                break;
-            };
+            if (self.tree.getFieldConst(param).name) |n|
+                if (self.tree.getIdentifierConst(n).poly) {
+                    is_generic = true;
+                    break;
+                };
         }
 
         var diverging = false;
         const results = try self.parseProcedureResults(&diverging);
 
-        const flags = ProcedureFlags{
+        const flags = Tree.ProcedureFlags{
             .bounds_check = true,
             .type_assert = true,
             .diverging = diverging,
@@ -807,7 +782,7 @@ pub const Parser = struct {
             self.tree.newConcreteProcedureType(flags, cc, params, results));
     }
 
-    fn parseBody(self: *Parser, block_flags: BlockFlags) !*Statement {
+    fn parseBody(self: *Parser, block_flags: Tree.BlockFlags) !Tree.StatementIndex {
         const depth = self.expression_depth;
         const allow_newline = self.allow_newline;
         self.expression_depth = 0;
@@ -823,15 +798,15 @@ pub const Parser = struct {
         return try self.tree.newBlockStatement(block_flags, statements, null);
     }
 
-    fn parseRhsTupleExpression(self: *Parser) !*Expression {
+    fn parseRhsTupleExpression(self: *Parser) !Tree.ExpressionIndex {
         return try self.parseTupleExpression(false);
     }
 
-    fn parseProcedure(self: *Parser) !*Expression {
+    fn parseProcedure(self: *Parser) !Tree.ExpressionIndex {
         const ty = try self.parseProcedureType();
         _ = try self.advancePossibleNewline();
 
-        var where_clauses: ?*Expression = null;
+        var where_clauses: ?Tree.ExpressionIndex = null;
         if (isKeyword(self.this_token, .where)) {
             _ = try self.expectKeyword(.where);
             const depth = self.expression_depth;
@@ -840,7 +815,7 @@ pub const Parser = struct {
             self.expression_depth = depth;
         }
 
-        var flags = ty.derived.procedure.flags;
+        var flags = self.tree.getType(ty).derived.procedure.flags;
 
         while (isKind(self.this_token, .directive)) {
             const token = try self.expectKind(.directive);
@@ -858,30 +833,30 @@ pub const Parser = struct {
             }
         }
 
-        ty.derived.procedure.flags = flags;
+        self.tree.getType(ty).derived.procedure.flags = flags;
 
         if (self.acceptedKind(.undefined)) {
             if (where_clauses) |_| {
                 self.err("Procedures with `where` clauses need bodies", .{});
                 return error.ParseProcedure;
             }
-            return try self.tree.newProcedureExpression(&ty.derived.procedure, null, null);
+            return try self.tree.newProcedureExpression(ty, null, null);
         } else if (isKind(self.this_token, .lbrace)) {
-            const block_flags = BlockFlags{
+            const block_flags = Tree.BlockFlags{
                 .bounds_check = flags.bounds_check,
                 .type_assert = flags.type_assert,
             };
-            self.this_procedure = &ty.derived.procedure;
+            self.this_procedure = ty;
             const body = try self.parseBody(block_flags);
-            return try self.tree.newProcedureExpression(&ty.derived.procedure, if (where_clauses) |wc| &wc.tuple else null, &body.block);
+            return try self.tree.newProcedureExpression(ty, where_clauses, body);
         }
 
         // no body or equivalent, must be a type
         return try self.tree.newTypeExpression(ty);
     }
 
-    fn parseCallExpression(self: *Parser, operand: *Expression) !*Expression {
-        var arguments = std.ArrayList(*Field).init(self.allocator);
+    fn parseCallExpression(self: *Parser, operand: Tree.ExpressionIndex) !Tree.ExpressionIndex {
+        var arguments = std.ArrayList(Tree.FieldIndex).init(self.allocator);
         const depth = self.expression_depth;
         const allow_newline = self.allow_newline;
         self.expression_depth = 0;
@@ -912,19 +887,19 @@ pub const Parser = struct {
                     self.err("Cannot apply `..`", .{});
                     return error.ParseCallExpression;
                 }
-                if (evaluateIdentifierExpression(argument)) |name| {
+                if (self.evaluateIdentifierExpression(argument)) |name| {
                     try arguments.append(
-                        try self.tree.newField(null, name, try self.parseValue(), null, FieldFlags{}),
+                        try self.tree.newField(null, name, try self.parseValue(), null, Tree.FieldFlags{}),
                     );
                 } else {
-                    self.err("Expected identifier, got `{s}`", .{@tagName(argument.*)});
+                    self.err("Expected identifier, got `{s}`", .{@tagName(self.tree.getExpression(argument).*)});
                 }
             } else {
                 if (seen_ellipsis) {
                     self.err("Positional arguments not allowed after `..`", .{});
                     return error.ParseCallExpression;
                 }
-                try arguments.append(try self.tree.newField(null, null, argument, null, FieldFlags{}));
+                try arguments.append(try self.tree.newField(null, null, argument, null, Tree.FieldFlags{}));
             }
 
             if (has_ellipsis) {
@@ -942,7 +917,7 @@ pub const Parser = struct {
         return try self.tree.newCallExpression(operand, arguments);
     }
 
-    fn parseStatement(self: *Parser, block_flags: BlockFlags) Error!?*Statement {
+    fn parseStatement(self: *Parser, block_flags: Tree.BlockFlags) Error!?Tree.StatementIndex {
         const token = self.this_token;
         return switch (token.un) {
             .eof => {
@@ -989,7 +964,7 @@ pub const Parser = struct {
         };
     }
 
-    fn parseUnaryExpression(self: *Parser, lhs: bool) !*Expression {
+    fn parseUnaryExpression(self: *Parser, lhs: bool) !Tree.ExpressionIndex {
         switch (self.this_token.un) {
             .operator => |op| switch (op) {
                 .transmute, .auto_cast, .cast => return try self.parseCastExpression(lhs),
@@ -1004,7 +979,7 @@ pub const Parser = struct {
         return (try self.parseAtomExpression(operand, lhs)).?;
     }
 
-    fn parseDirectiveCallExpression(self: *Parser, name: []const u8) !*Expression {
+    fn parseDirectiveCallExpression(self: *Parser, name: []const u8) !Tree.ExpressionIndex {
         try self.record();
         const intrinsics = try self.tree.newIdentifier("intrinsics", false);
         const directive = try self.tree.newIdentifier(name, false);
@@ -1013,50 +988,50 @@ pub const Parser = struct {
         return try self.parseCallExpression(selector);
     }
 
-    fn parseDirectiveCallStatement(self: *Parser, name: []const u8) !*Statement {
+    fn parseDirectiveCallStatement(self: *Parser, name: []const u8) !Tree.StatementIndex {
         const expression = try self.parseDirectiveCallExpression(name);
         return try self.tree.newExpressionStatement(expression);
     }
 
-    fn parseDirectiveForStatement(self: *Parser, block_flags: BlockFlags) !*Statement {
+    fn parseDirectiveForStatement(self: *Parser, block_flags: Tree.BlockFlags) !Tree.StatementIndex {
         const token = try self.expectKind(.directive);
-        const stmt = try switch (token.un.directive) {
-            .bounds_check => self.parseStatement(blk: {
+        const stmt: ?Tree.StatementIndex = switch (token.un.directive) {
+            .bounds_check => try self.parseStatement(blk: {
                 var flags = block_flags;
                 flags.bounds_check = true;
                 break :blk flags;
             }),
-            .no_bounds_check => self.parseStatement(blk: {
+            .no_bounds_check => try self.parseStatement(blk: {
                 var flags = block_flags;
                 flags.bounds_check = false;
                 break :blk flags;
             }),
-            .type_assert => self.parseStatement(blk: {
+            .type_assert => try self.parseStatement(blk: {
                 var flags = block_flags;
                 flags.type_assert = true;
                 break :blk flags;
             }),
-            .no_type_assert => self.parseStatement(blk: {
+            .no_type_assert => try self.parseStatement(blk: {
                 var flags = block_flags;
                 flags.type_assert = false;
                 break :blk flags;
             }),
-            .partial => self.parseStatement(blk: {
+            .partial => try self.parseStatement(blk: {
                 // TODO: partial
                 // var flags = block_flags;
                 // flags.partial = true;
                 break :blk block_flags;
             }),
-            .assert => self.parseDirectiveCallStatement("assert"),
-            .panic => self.parseDirectiveCallStatement("panic"),
-            .load => self.parseDirectiveCallStatement("load"),
-            .unroll => self.parseStatement(blk: {
+            .assert => try self.parseDirectiveCallStatement("assert"),
+            .panic => try self.parseDirectiveCallStatement("panic"),
+            .load => try self.parseDirectiveCallStatement("load"),
+            .unroll => try self.parseStatement(blk: {
                 // TODO: unroll
                 // var flags = block_flags;
                 // flags.partial = true;
                 break :blk block_flags;
             }),
-            .force_inline, .force_no_inline => self.parseStatement(blk: {
+            .force_inline, .force_no_inline => try self.parseStatement(blk: {
                 // TODO: force_inline, no_inline
                 // var flags = block_flags;
                 // flags.partial = true;
@@ -1074,7 +1049,7 @@ pub const Parser = struct {
         };
     }
 
-    fn parseValue(self: *Parser) Error!*Expression {
+    fn parseValue(self: *Parser) Error!Tree.ExpressionIndex {
         if (isKind(self.this_token, .lbrace)) {
             return self.parseCompoundLiteralExpression(null) catch return error.ParseCompoundLiteralExpression;
         }
@@ -1083,15 +1058,16 @@ pub const Parser = struct {
 
     fn parseAttributesStatementTail(
         self: *Parser,
-        block_flags: BlockFlags,
-        attributes: std.ArrayList(*Field),
-    ) !*Statement {
+        block_flags: Tree.BlockFlags,
+        attributes: std.ArrayList(Tree.FieldIndex),
+    ) !Tree.StatementIndex {
         _ = try self.advancePossibleNewline();
         const stmt = (try self.parseStatement(block_flags)) orelse {
             self.err("Attributes must be followed by statements", .{});
             return error.ParseAttributesForStatement;
         };
-        switch (stmt.*) {
+        const got_stmt = self.tree.getStatement(stmt);
+        switch (got_stmt.*) {
             .declaration => |*dcl| dcl.attributes = attributes,
             .foreign_block => |*fb| fb.attributes = attributes,
             .foreign_import => |*fi| fi.attributes = attributes,
@@ -1104,16 +1080,16 @@ pub const Parser = struct {
         return stmt;
     }
 
-    fn parseAttributesForStatement(self: *Parser, block_flags: BlockFlags) !*Statement {
+    fn parseAttributesForStatement(self: *Parser, block_flags: Tree.BlockFlags) !Tree.StatementIndex {
         return try self.parseAttributesStatementTail(block_flags, try self.parseAttributes());
     }
 
-    fn parseAttributes(self: *Parser) !std.ArrayList(*Field) {
+    fn parseAttributes(self: *Parser) !std.ArrayList(Tree.FieldIndex) {
         _ = try self.expectKind(.attribute);
-        var attributes = std.ArrayList(*Field).init(self.allocator);
+        var attributes = std.ArrayList(Tree.FieldIndex).init(self.allocator);
         if (isKind(self.this_token, .identifier)) {
             const ident = try self.parseIdentifier(false);
-            try attributes.append(try self.tree.newField(null, ident, null, null, FieldFlags{}));
+            try attributes.append(try self.tree.newField(null, ident, null, null, Tree.FieldFlags{}));
         } else {
             _ = try self.expectOperator(.lparen);
             self.expression_depth += 1;
@@ -1125,7 +1101,7 @@ pub const Parser = struct {
                         break :blk try self.parseValue();
                     }
                     break :blk null;
-                }, null, FieldFlags{}));
+                }, null, Tree.FieldFlags{}));
                 if (!self.acceptedSeparator()) break;
             }
             self.expression_depth -= 1;
@@ -1134,16 +1110,16 @@ pub const Parser = struct {
         return attributes;
     }
 
-    fn parseSomeAttributes(self: *Parser) !std.ArrayList(*Field) {
-        if (!isKind(self.this_token, .attribute)) return std.ArrayList(*Field).init(self.allocator);
+    fn parseSomeAttributes(self: *Parser) !std.ArrayList(Tree.FieldIndex) {
+        if (!isKind(self.this_token, .attribute)) return std.ArrayList(Tree.FieldIndex).init(self.allocator);
         return try self.parseAttributes();
     }
 
-    fn parseIdentifierExpression(self: *Parser) !*Expression {
+    fn parseIdentifierExpression(self: *Parser) !Tree.ExpressionIndex {
         return try self.tree.newIdentifierExpression(try self.parseIdentifier(false));
     }
 
-    fn parseLiteralExpression(self: *Parser) !*Expression {
+    fn parseLiteralExpression(self: *Parser) !Tree.ExpressionIndex {
         const token = try self.advance();
         if (token.un != .literal) {
             self.err("Expected literal, got `{s}`", .{@tagName(token.un)});
@@ -1152,11 +1128,11 @@ pub const Parser = struct {
         return try self.tree.newLiteralExpression(token.un.literal, token.string);
     }
 
-    fn parseBitSetTypeExpression(self: *Parser) !*Expression {
+    fn parseBitSetTypeExpression(self: *Parser) !Tree.ExpressionIndex {
         _ = try self.expectKeyword(.bit_set);
         _ = try self.expectOperator(.lbracket);
         const expression = try self.parseExpression(false);
-        const underlying_ty: ?*Type = blk: {
+        const underlying_ty: ?Tree.TypeIndex = blk: {
             if (self.acceptedKind(.semicolon)) {
                 break :blk try self.parseType();
             }
@@ -1166,12 +1142,12 @@ pub const Parser = struct {
         return try self.tree.newTypeExpression(try self.tree.newBitSetType(underlying_ty, expression));
     }
 
-    fn parseTypeidTypeExpression(self: *Parser) !*Expression {
+    fn parseTypeidTypeExpression(self: *Parser) !Tree.ExpressionIndex {
         _ = try self.expectKeyword(.typeid);
         return try self.tree.newTypeExpression(try self.tree.newTypeidType(null));
     }
 
-    fn parseMapTypeExpression(self: *Parser) !*Expression {
+    fn parseMapTypeExpression(self: *Parser) !Tree.ExpressionIndex {
         _ = try self.expectKeyword(.map);
         _ = try self.expectOperator(.lbracket);
         const key_expression = try self.parseExpression(true);
@@ -1181,7 +1157,7 @@ pub const Parser = struct {
         return try self.tree.newTypeExpression(try self.tree.newMapType(key, value));
     }
 
-    fn parseMatrixTypeExpression(self: *Parser) !*Expression {
+    fn parseMatrixTypeExpression(self: *Parser) !Tree.ExpressionIndex {
         _ = try self.expectKeyword(.matrix);
         _ = try self.expectOperator(.lbracket);
         const rows_expression = try self.parseExpression(true);
@@ -1193,13 +1169,13 @@ pub const Parser = struct {
         return try self.tree.newTypeExpression(try self.tree.newMatrixType(rows_expression, columns_expression, base_ty));
     }
 
-    fn parsePointerTypeExpression(self: *Parser) !*Expression {
+    fn parsePointerTypeExpression(self: *Parser) !Tree.ExpressionIndex {
         _ = try self.expectOperator(.pointer);
         const ty = try self.parseType();
         return try self.tree.newTypeExpression(try self.tree.newPointerType(ty));
     }
 
-    fn parseMultiPointerTypeExpression(self: *Parser) !*Expression {
+    fn parseMultiPointerTypeExpression(self: *Parser) !Tree.ExpressionIndex {
         _ = try self.expectOperator(.pointer);
         _ = try self.expectOperator(.rbracket);
 
@@ -1207,8 +1183,8 @@ pub const Parser = struct {
         return try self.tree.newTypeExpression(try self.tree.newMultiPointerType(ty));
     }
 
-    fn parseArrayTypeExpression(self: *Parser, parse_count: bool) !*Expression {
-        const count: ?*Expression = blk: {
+    fn parseArrayTypeExpression(self: *Parser, parse_count: bool) !Tree.ExpressionIndex {
+        const count: ?Tree.ExpressionIndex = blk: {
             if (parse_count) {
                 self.expression_depth += 1;
                 const c = try self.parseExpression(false);
@@ -1224,25 +1200,25 @@ pub const Parser = struct {
         return try self.tree.newTypeExpression(try self.tree.newArrayType(ty, count));
     }
 
-    fn parseDynamicArrayTypeExpression(self: *Parser) !*Expression {
+    fn parseDynamicArrayTypeExpression(self: *Parser) !Tree.ExpressionIndex {
         _ = try self.expectOperator(.rbracket);
         const ty = try self.parseType();
         return try self.tree.newTypeExpression(try self.tree.newDynamicArrayType(ty));
     }
 
-    fn parseSliceTypeExpression(self: *Parser) !*Expression {
+    fn parseSliceTypeExpression(self: *Parser) !Tree.ExpressionIndex {
         const ty = try self.parseType();
         return try self.tree.newTypeExpression(try self.tree.newSliceType(ty));
     }
 
-    fn parseDistinctTypeExpression(self: *Parser) !*Expression {
+    fn parseDistinctTypeExpression(self: *Parser) !Tree.ExpressionIndex {
         _ = try self.expectKeyword(.distinct);
         const ty = try self.parseType();
         return try self.tree.newTypeExpression(try self.tree.newDistinctType(ty));
     }
 
-    fn parseProcedureGroupExpression(self: *Parser) !*Expression {
-        var expressions = std.ArrayList(*Expression).init(self.allocator);
+    fn parseProcedureGroupExpression(self: *Parser) !Tree.ExpressionIndex {
+        var expressions = std.ArrayList(Tree.ExpressionIndex).init(self.allocator);
         _ = try self.expectKind(.lbrace);
         while (!isKind(self.this_token, .rbrace) and !isKind(self.this_token, .eof)) {
             try expressions.append(try self.parseExpression(false));
@@ -1253,17 +1229,17 @@ pub const Parser = struct {
         return try self.tree.newProcedureGroupExpression(expressions);
     }
 
-    fn parseStructTypeExpression(self: *Parser) !*Expression {
+    fn parseStructTypeExpression(self: *Parser) !Tree.ExpressionIndex {
         _ = try self.expectKeyword(.@"struct");
-        var parameters = std.ArrayList(*Field).init(self.allocator);
+        var parameters = std.ArrayList(Tree.FieldIndex).init(self.allocator);
         // parapoly
         if (self.acceptedOperator(.lparen)) {
             parameters = try self.parseFieldList(false);
             _ = try self.expectOperator(.rparen);
         }
 
-        var alignment: ?*Expression = null;
-        var flags = StructFlags{};
+        var alignment: ?Tree.ExpressionIndex = null;
+        var flags = Tree.StructFlags{};
         while (self.acceptedKind(.directive)) {
             switch (self.last_token.un.directive) {
                 .@"packed" => flags.@"packed" = true,
@@ -1286,7 +1262,7 @@ pub const Parser = struct {
 
         _ = try self.advancePossibleNewline();
 
-        const where_clauses_expr: ?*Expression = blk: {
+        const where_clauses: ?Tree.ExpressionIndex = blk: {
             if (self.acceptedKeyword(.where)) {
                 const depth = self.expression_depth;
                 self.expression_depth = -1;
@@ -1296,7 +1272,6 @@ pub const Parser = struct {
             }
             break :blk null;
         };
-        const where_clauses = if (where_clauses_expr) |wc| &wc.tuple else null;
 
         _ = try self.advancePossibleNewline();
 
@@ -1311,18 +1286,18 @@ pub const Parser = struct {
         return try self.tree.newTypeExpression(ty);
     }
 
-    fn parseUnionTypeExpression(self: *Parser) !*Expression {
+    fn parseUnionTypeExpression(self: *Parser) !Tree.ExpressionIndex {
         _ = try self.expectKeyword(.@"union");
 
-        var parameters = std.ArrayList(*Field).init(self.allocator);
+        var parameters = std.ArrayList(Tree.FieldIndex).init(self.allocator);
         // parapoly
         if (self.acceptedOperator(.lparen)) {
             parameters = try self.parseFieldList(false);
             _ = try self.expectOperator(.rparen);
         }
 
-        var flags = UnionFlags{};
-        var alignment: ?*Expression = null;
+        var flags = Tree.UnionFlags{};
+        var alignment: ?Tree.ExpressionIndex = null;
         while (self.acceptedKind(.directive)) {
             switch (self.last_token.un.directive) {
                 .@"align" => {
@@ -1345,7 +1320,7 @@ pub const Parser = struct {
 
         _ = try self.advancePossibleNewline();
 
-        const where_clause_expr: ?*Expression = blk: {
+        const where_clauses: ?Tree.ExpressionIndex = blk: {
             if (self.acceptedKeyword(.where)) {
                 const depth = self.expression_depth;
                 self.expression_depth = -1;
@@ -1355,7 +1330,6 @@ pub const Parser = struct {
             }
             break :blk null;
         };
-        const where_clauses = if (where_clause_expr) |wc| &wc.tuple else null;
 
         _ = try self.advancePossibleNewline();
 
@@ -1370,9 +1344,9 @@ pub const Parser = struct {
         return try self.tree.newTypeExpression(ty);
     }
 
-    fn parseEnumTypeExpression(self: *Parser) !*Expression {
+    fn parseEnumTypeExpression(self: *Parser) !Tree.ExpressionIndex {
         _ = try self.expectKeyword(.@"enum");
-        const base_ty: ?*Type = blk: {
+        const base_ty: ?Tree.TypeIndex = blk: {
             if (!isKind(self.this_token, .lbrace)) {
                 break :blk try self.parseType();
             }
@@ -1381,22 +1355,23 @@ pub const Parser = struct {
 
         _ = try self.advancePossibleNewline();
 
-        var fields = std.ArrayList(*Field).init(self.allocator);
+        var fields = std.ArrayList(Tree.FieldIndex).init(self.allocator);
         _ = try self.expectKind(.lbrace);
         while (!isKind(self.this_token, .rbrace) and !isKind(self.this_token, .eof)) {
             const name = try self.parseValue();
-            if (name.* != .identifier) {
-                self.err("Expected identifier for enumerator, got `{s}`", .{@tagName(name.*)});
+            const got_name = self.tree.getExpressionConst(name);
+            if (got_name.* != .identifier) {
+                self.err("Expected identifier for enumerator, got `{s}`", .{@tagName(got_name.*)});
                 return error.ParseEnumTypeExpression;
             }
 
-            var value: ?*Expression = null;
+            var value: ?Tree.ExpressionIndex = null;
             if (isAssignment(self.this_token, .eq)) {
                 _ = try self.expectAssignment(.eq);
                 value = try self.parseValue();
             }
 
-            try fields.append(try self.tree.newField(null, name.identifier.identifier, value, null, FieldFlags{}));
+            try fields.append(try self.tree.newField(null, got_name.identifier.identifier, value, null, Tree.FieldFlags{}));
             if (!self.acceptedSeparator()) break;
         }
         _ = try self.expectKind(.rbrace);
@@ -1405,12 +1380,12 @@ pub const Parser = struct {
         return try self.tree.newTypeExpression(ty);
     }
 
-    fn parsePolyTypeExpression(self: *Parser) !*Expression {
+    fn parsePolyTypeExpression(self: *Parser) !Tree.ExpressionIndex {
         _ = try self.expectKind(.@"const");
         const ident = try self.tree.newIdentifierExpression(try self.parseIdentifier(true));
         const expr_ty = try self.tree.newExpressionType(ident);
 
-        var specialisation: ?*Type = null;
+        var specialisation: ?Tree.TypeIndex = null;
         if (self.acceptedOperator(.quo)) {
             specialisation = try self.parseType();
         }
@@ -1419,20 +1394,21 @@ pub const Parser = struct {
         return try self.tree.newTypeExpression(poly);
     }
 
-    fn parseUndefinedExpression(self: *Parser) !*Expression {
+    fn parseUndefinedExpression(self: *Parser) !Tree.ExpressionIndex {
         _ = try self.expectKind(.undefined);
         return try self.tree.newUndefinedExpression();
     }
 
-    fn parseDirectivePrefix(self: *Parser, lhs: bool) !*Expression {
+    fn parseDirectivePrefix(self: *Parser, lhs: bool) !Tree.ExpressionIndex {
         switch ((try self.expectKind(.directive)).un.directive) {
             .type => {
                 return try self.tree.newTypeExpression(try self.parseType());
             },
             .simd => {
                 const ty = try self.parseType();
-                if (ty.derived != .array) {
-                    self.err("Expected array type for `simd`, got `{s}`", .{@tagName(ty.derived)});
+                const got_ty = self.tree.getTypeConst(ty);
+                if (got_ty.derived != .array) {
+                    self.err("Expected array type for `simd`, got `{s}`", .{@tagName(got_ty.derived)});
                     return error.ParseDirectivePrefix;
                 }
                 // TODO: simd
@@ -1492,9 +1468,9 @@ pub const Parser = struct {
         return self.expectKind(kind);
     }
 
-    fn parseIndexExpression(self: *Parser, operand: *Expression) !*Expression {
-        var lhs: ?*Expression = null;
-        var rhs: ?*Expression = null;
+    fn parseIndexExpression(self: *Parser, operand: Tree.ExpressionIndex) !Tree.ExpressionIndex {
+        var lhs: ?Tree.ExpressionIndex = null;
+        var rhs: ?Tree.ExpressionIndex = null;
 
         self.expression_depth += 1;
 
@@ -1533,10 +1509,10 @@ pub const Parser = struct {
         return try self.tree.newIndexExpression(operand, lhs, rhs);
     }
 
-    fn parseCastExpression(self: *Parser, lhs: bool) Error!*Expression {
+    fn parseCastExpression(self: *Parser, lhs: bool) Error!Tree.ExpressionIndex {
         const token = try self.advance();
 
-        var ty: ?*Type = null;
+        var ty: ?Tree.TypeIndex = null;
         if (!isOperator(token, .auto_cast)) {
             _ = try self.expectOperator(.lparen);
             ty = try self.parseType();
@@ -1554,7 +1530,7 @@ pub const Parser = struct {
         }, operand);
     }
 
-    fn parseUnaryStemExpression(self: *Parser, lhs: bool) Error!*Expression {
+    fn parseUnaryStemExpression(self: *Parser, lhs: bool) Error!Tree.ExpressionIndex {
         const token = try self.advance();
         const operand = try self.parseUnaryExpression(lhs);
         if (token.un != .operator) {
@@ -1564,15 +1540,15 @@ pub const Parser = struct {
         return try self.tree.newUnaryExpression(token.un.operator, operand);
     }
 
-    fn parseImplicitSelectorExpression(self: *Parser) !*Expression {
+    fn parseImplicitSelectorExpression(self: *Parser) !Tree.ExpressionIndex {
         _ = try self.expectOperator(.period);
         const ident = try self.parseIdentifier(false);
         return try self.tree.newSelectorExpression(null, ident);
     }
 
-    fn parseTernaryExpression(self: *Parser, expression: *Expression, lhs: bool) !*Expression {
-        var condition: ?*Expression = null;
-        var on_true: ?*Expression = null;
+    fn parseTernaryExpression(self: *Parser, expression: Tree.ExpressionIndex, lhs: bool) !Tree.ExpressionIndex {
+        var condition: ?Tree.ExpressionIndex = null;
+        var on_true: ?Tree.ExpressionIndex = null;
         var kind: lexemes.KeywordKind = .@"if";
         if (self.acceptedOperator(.question)) {
             condition = expression;
@@ -1595,7 +1571,7 @@ pub const Parser = struct {
         }, on_false);
     }
 
-    fn parseBinaryExpression(self: *Parser, lhs: bool, prec: i32) Error!*Expression {
+    fn parseBinaryExpression(self: *Parser, lhs: bool, prec: i32) Error!Tree.ExpressionIndex {
         var expr = try self.parseUnaryExpression(lhs);
         var still_lhs = lhs;
         while (true) {
@@ -1637,11 +1613,11 @@ pub const Parser = struct {
         return expr;
     }
 
-    fn parseTupleExpression(self: *Parser, lhs: bool) !*Expression {
+    fn parseTupleExpression(self: *Parser, lhs: bool) !Tree.ExpressionIndex {
         const allow_newline = self.allow_newline;
         self.allow_newline = true;
 
-        var expressions = std.ArrayList(*Expression).init(self.allocator);
+        var expressions = std.ArrayList(Tree.ExpressionIndex).init(self.allocator);
         while (true) {
             try expressions.append(try self.parseExpression(lhs));
             if (!isOperator(self.this_token, .comma) or isKind(self.this_token, .eof)) break;
@@ -1652,19 +1628,19 @@ pub const Parser = struct {
         return try self.tree.newTupleExpression(expressions);
     }
 
-    fn parseLhsTupleExpression(self: *Parser) !*Expression {
+    fn parseLhsTupleExpression(self: *Parser) !Tree.ExpressionIndex {
         return try self.parseTupleExpression(true);
     }
 
-    fn parseStatementList(self: *Parser, block_flags: BlockFlags) !std.ArrayList(*Statement) {
-        var statements = std.ArrayList(*Statement).init(self.allocator);
+    fn parseStatementList(self: *Parser, block_flags: Tree.BlockFlags) !std.ArrayList(Tree.StatementIndex) {
+        var statements = std.ArrayList(Tree.StatementIndex).init(self.allocator);
 
         while (!isKeyword(self.this_token, .case) and
             !isKind(self.this_token, .rbrace) and
             !isKind(self.this_token, .eof))
         {
             if (try self.parseStatement(block_flags)) |statement| {
-                if (statement.* != .empty) {
+                if (self.tree.getStatementConst(statement).* != .empty) {
                     try statements.append(statement);
                 }
             }
@@ -1673,7 +1649,7 @@ pub const Parser = struct {
         return statements;
     }
 
-    fn parseBlockStatement(self: *Parser, block_flags: BlockFlags, when: bool) !*Statement {
+    fn parseBlockStatement(self: *Parser, block_flags: Tree.BlockFlags, when: bool) !Tree.StatementIndex {
         _ = try self.advancePossibleNewlineWithin();
 
         if (!when and self.this_procedure == null) {
@@ -1684,8 +1660,8 @@ pub const Parser = struct {
         return try self.parseBody(block_flags);
     }
 
-    fn parseDeclarationStatementTail(self: *Parser, names: std.ArrayList(*Identifier), is_using: bool) !*Statement {
-        var values: ?*Expression = null;
+    fn parseDeclarationStatementTail(self: *Parser, names: std.ArrayList(Tree.IdentifierIndex), is_using: bool) !Tree.StatementIndex {
+        var values: ?Tree.ExpressionIndex = null;
         const ty = try self.parseTypeOrIdentifier();
         const token = self.this_token;
         var constant = false;
@@ -1696,7 +1672,8 @@ pub const Parser = struct {
             constant = isOperator(seperator, .colon);
             _ = try self.advancePossibleNewline();
             values = try self.parseRhsTupleExpression();
-            const n_values = values.?.tuple.expressions.items.len;
+            const got_values = self.tree.getExpressionConst(values.?);
+            const n_values = got_values.tuple.expressions.items.len;
             if (n_values > n_names) {
                 self.err("Too many values for declaration, expected `{}`, got `{}`", .{ n_names, n_values });
                 return error.ParseDeclarationStatementTail;
@@ -1709,7 +1686,7 @@ pub const Parser = struct {
             }
         }
 
-        const n_values = if (values) |v| v.tuple.expressions.items.len else 0;
+        const n_values = if (values) |v| self.tree.getExpressionConst(v).tuple.expressions.items.len else 0;
         if (ty == null) {
             if (constant and n_values == 0) {
                 self.err("Expected type for constant declaration", .{});
@@ -1734,11 +1711,11 @@ pub const Parser = struct {
         }
 
         if (ty != null and n_values == 0) {
-            var expressions = std.ArrayList(*Expression).init(self.allocator);
+            var expressions = std.ArrayList(Tree.ExpressionIndex).init(self.allocator);
             for (0..n_names) |_| {
                 try expressions.append(try self.tree.newCompoundLiteralExpression(
                     ty,
-                    std.ArrayList(*Field).init(self.allocator),
+                    std.ArrayList(Tree.FieldIndex).init(self.allocator),
                 ));
             }
             values = try self.tree.newTupleExpression(expressions);
@@ -1747,19 +1724,19 @@ pub const Parser = struct {
         return try self.tree.newDeclarationStatement(
             ty,
             names,
-            if (values) |v| &v.tuple else null,
-            std.ArrayList(*Field).init(self.allocator),
+            values,
+            std.ArrayList(Tree.FieldIndex).init(self.allocator),
             is_using,
         );
     }
 
-    fn parseDeclarationStatement(self: *Parser, lhs: *TupleExpression, is_using: bool) !*Statement {
-        var names = std.ArrayList(*Identifier).init(self.allocator);
-        for (lhs.expressions.items) |expr| {
-            if (evaluateIdentifierExpression(expr)) |ident| {
+    fn parseDeclarationStatement(self: *Parser, lhs: Tree.ExpressionIndex, is_using: bool) !Tree.StatementIndex {
+        var names = std.ArrayList(Tree.IdentifierIndex).init(self.allocator);
+        for (self.tree.getExpressionConst(lhs).tuple.expressions.items) |expr| {
+            if (self.evaluateIdentifierExpression(expr)) |ident| {
                 try names.append(ident);
             } else {
-                self.err("Expected identifier, got `{s}`", .{@tagName(expr.*)});
+                self.err("Expected identifier, got `{s}`", .{@tagName(self.tree.getExpressionConst(expr).*)});
                 return error.ParseDeclarationStatement;
             }
         }
@@ -1767,7 +1744,7 @@ pub const Parser = struct {
         return try self.parseDeclarationStatementTail(names, is_using);
     }
 
-    fn parseAssignmentStatement(self: *Parser, lhs: *TupleExpression) !*Statement {
+    fn parseAssignmentStatement(self: *Parser, lhs: Tree.ExpressionIndex) !Tree.StatementIndex {
         if (self.this_procedure == null) {
             self.err("Assignment statements can only be used in procedures", .{});
             return error.ParseAssignmentStatement;
@@ -1781,19 +1758,19 @@ pub const Parser = struct {
 
         _ = try self.advance();
         const rhs = try self.parseRhsTupleExpression();
-        if (rhs.tuple.expressions.items.len == 0) {
+        if (self.tree.getExpressionConst(rhs).tuple.expressions.items.len == 0) {
             self.err("Missing right-hand side of assignment", .{});
             return error.ParseAssignmentStatement;
         }
 
-        return try self.tree.newAssignmentStatement(kind, lhs, &rhs.tuple);
+        return try self.tree.newAssignmentStatement(kind, lhs, rhs);
     }
 
-    fn parseSimpleStatement(self: *Parser, block_flags: BlockFlags, allow_in: bool, allow_label: bool) !*Statement {
+    fn parseSimpleStatement(self: *Parser, block_flags: Tree.BlockFlags, allow_in: bool, allow_label: bool) !Tree.StatementIndex {
         const lhs = try self.parseLhsTupleExpression();
 
         switch (self.this_token.un) {
-            .assignment => return try self.parseAssignmentStatement(&lhs.tuple),
+            .assignment => return try self.parseAssignmentStatement(lhs),
             .operator => |op| switch (op) {
                 .in => {
                     if (allow_in) {
@@ -1810,33 +1787,41 @@ pub const Parser = struct {
                 .colon => {
                     _ = try self.advance();
 
-                    if (allow_label and lhs.tuple.expressions.items.len == 1) {
+                    const got_lhs = self.tree.getExpressionConst(lhs);
+                    if (allow_label and got_lhs.tuple.expressions.items.len == 1) {
                         const token = self.this_token;
-                        if (isKind(token, .lbrace) or isKeyword(token, .@"if") or isKeyword(token, .@"for") or isKeyword(token, .@"switch")) {
-                            const name = lhs.tuple.expressions.items[0];
-                            if (name.* != .identifier) {
-                                self.err("Expected identifier for label, got `{s}`", .{@tagName(name.*)});
+                        if (isKind(token, .lbrace) or
+                            isKeyword(token, .@"if") or
+                            isKeyword(token, .@"for") or
+                            isKeyword(token, .@"switch"))
+                        {
+                            const name = got_lhs.tuple.expressions.items[0];
+                            const got_name = self.tree.getExpressionConst(name);
+                            if (got_name.* != .identifier) {
+                                self.err("Expected identifier for label, got `{s}`", .{@tagName(got_name.*)});
                                 return error.ParseSimpleStatement;
                             }
-                            const label = name.identifier.identifier;
+                            const label = got_name.identifier.identifier;
+                            const got_label = self.tree.getIdentifierConst(label);
                             const statement = (try self.parseStatement(block_flags)) orelse {
-                                self.err("Expected statement after label `{s}`", .{label.contents});
+                                self.err("Expected statement after label `{s}`", .{got_label.contents});
                                 return error.ParseSimpleStatement;
                             };
-                            switch (statement.*) {
+                            const got_statement = self.tree.getStatement(statement);
+                            switch (got_statement.*) {
                                 .block => |*blk| blk.label = label,
                                 .@"if" => |*i| i.label = label,
                                 .@"for" => |*f| f.label = label,
                                 .@"switch" => |*s| s.label = label,
                                 else => {
-                                    self.err("Cannot apply block `{s}` to `{s}`", .{ label.contents, @tagName(statement.*) });
+                                    self.err("Cannot apply block `{s}` to `{s}`", .{ got_label.contents, @tagName(got_statement.*) });
                                     return error.ParseSimpleStatement;
                                 },
                             }
                             return statement;
                         }
 
-                        return try self.parseDeclarationStatement(&lhs.tuple, false);
+                        return try self.parseDeclarationStatement(lhs, false);
                     }
                 },
                 else => {},
@@ -1844,7 +1829,7 @@ pub const Parser = struct {
             else => {},
         }
 
-        const expressions = lhs.tuple.expressions;
+        const expressions = self.tree.getExpressionConst(lhs).tuple.expressions;
         if (expressions.items.len == 0 or expressions.items.len > 1) {
             self.err("Expected single expression for declaration, got `{}`", .{expressions.items.len});
             return error.ParseSimpleStatement;
@@ -1853,7 +1838,7 @@ pub const Parser = struct {
         return try self.tree.newExpressionStatement(expressions.items[0]);
     }
 
-    fn parseImportStatement(self: *Parser, is_using: bool) !*Statement {
+    fn parseImportStatement(self: *Parser, is_using: bool) !Tree.StatementIndex {
         try self.tree.recordToken(try self.expectKeyword(.import));
 
         const token: ?lexer.Token = blk: {
@@ -1870,38 +1855,44 @@ pub const Parser = struct {
         const name = if (token) |t| t.string else "";
         const next = path.string;
 
-        if (std.mem.indexOfScalar(u8, next, ':')) |idx| {
-            const collection = next[0..idx];
-            const pathname = next[idx + 1 ..];
-            return try self.tree.newImportStatement(name, collection, pathname, is_using);
-        } else {
-            return try self.tree.newImportStatement(name, "", next, is_using);
-        }
+        const stmt = blk: {
+            if (std.mem.indexOfScalar(u8, next, ':')) |idx| {
+                const collection = next[0..idx];
+                const pathname = next[idx + 1 ..];
+                break :blk try self.tree.newImportStatement(name, collection, pathname, is_using);
+            } else {
+                break :blk try self.tree.newImportStatement(name, "", next, is_using);
+            }
+        };
+        try self.tree.imports.append(stmt);
+        return stmt;
     }
 
-    fn convertStatementToBody(self: *Parser, block_flags: BlockFlags, statement: *Statement) !*Statement {
-        if (statement.* == .block or statement.* == .empty) {
-            self.err("Expected regular statement, got `{s}`", .{@tagName(statement.*)});
+    fn convertStatementToBody(self: *Parser, block_flags: Tree.BlockFlags, statement: Tree.StatementIndex) !Tree.StatementIndex {
+        const got_statement = self.tree.getStatementConst(statement);
+        if (got_statement.* == .block or got_statement.* == .empty) {
+            self.err("Expected regular statement, got `{s}`", .{@tagName(got_statement.*)});
             return error.ConvertStatementToBody;
         }
-        var statements = std.ArrayList(*Statement).init(self.allocator);
+        var statements = std.ArrayList(Tree.StatementIndex).init(self.allocator);
         try statements.append(statement);
         return try self.tree.newBlockStatement(block_flags, statements, null);
     }
 
-    fn convertStatementToExpression(self: *Parser, statement: ?*Statement) !?*Expression {
+    fn convertStatementToExpression(self: *Parser, statement: ?Tree.StatementIndex) !?Tree.ExpressionIndex {
         if (statement) |stmt| {
-            if (stmt.* != .expression) {
-                self.err("Expected expression statement, got `{s}`", .{@tagName(stmt.*)});
+            const got_stmt = self.tree.getStatementConst(stmt);
+            if (got_stmt.* != .expression) {
+                self.err("Expected expression statement, got `{s}`", .{@tagName(got_stmt.*)});
                 return error.ConvertStatementToExpression;
             }
-            return stmt.expression.expression;
+            return got_stmt.expression.expression;
         } else {
             return null;
         }
     }
 
-    fn parseDoBody(self: *Parser, block_flags: BlockFlags) !*Statement {
+    fn parseDoBody(self: *Parser, block_flags: Tree.BlockFlags) !Tree.StatementIndex {
         const depth = self.expression_depth;
         const allow_newline = self.allow_newline;
         self.expression_depth = 0;
@@ -1919,7 +1910,7 @@ pub const Parser = struct {
         return body;
     }
 
-    fn parseIfStatement(self: *Parser, block_flags: BlockFlags) !*Statement {
+    fn parseIfStatement(self: *Parser, block_flags: Tree.BlockFlags) !Tree.StatementIndex {
         _ = try self.expectKeyword(.@"if");
 
         const depth = self.expression_depth;
@@ -1927,8 +1918,8 @@ pub const Parser = struct {
         self.expression_depth = -1;
         self.allow_in = true;
 
-        var init_stmt: ?*Statement = try self.parseSimpleStatement(block_flags, false, false);
-        var condition: ?*Expression = null;
+        var init_stmt: ?Tree.StatementIndex = try self.parseSimpleStatement(block_flags, false, false);
+        var condition: ?Tree.ExpressionIndex = null;
         if (self.acceptedControlStatementSeparator()) {
             condition = try self.parseExpression(false);
         } else {
@@ -1944,7 +1935,7 @@ pub const Parser = struct {
             return error.ParseIfStatement;
         }
 
-        var body: ?*Statement = null;
+        var body: ?Tree.StatementIndex = null;
         if (self.acceptedKeyword(.do)) {
             body = try self.parseDoBody(block_flags);
         } else {
@@ -1953,12 +1944,12 @@ pub const Parser = struct {
 
         _ = try self.advancePossibleNewlineWithin();
 
-        var elif: ?*Statement = null;
+        var elif: ?Tree.StatementIndex = null;
         if (isKeyword(self.this_token, .@"else")) {
             _ = try self.expectKeyword(.@"else");
             if (isKeyword(self.this_token, .@"if")) {
                 const statement = try self.parseIfStatement(block_flags);
-                var statements = std.ArrayList(*Statement).init(self.allocator);
+                var statements = std.ArrayList(Tree.StatementIndex).init(self.allocator);
                 try statements.append(statement);
                 elif = try self.tree.newBlockStatement(block_flags, statements, null);
             } else if (isKind(self.this_token, .lbrace)) {
@@ -1975,13 +1966,13 @@ pub const Parser = struct {
         return try self.tree.newIfStatement(init_stmt, condition orelse {
             self.err("Expected condition for `if` statement", .{});
             return error.ParseIfStatement;
-        }, &(body orelse {
+        }, body orelse {
             self.err("Expected body for `if` statement", .{});
             return error.ParseIfStatement;
-        }).block, if (elif) |e| &e.block else null, null);
+        }, elif, null);
     }
 
-    fn parseWhenStatement(self: *Parser) !*Statement {
+    fn parseWhenStatement(self: *Parser) !Tree.StatementIndex {
         _ = try self.expectKeyword(.when);
 
         const expression_depth = self.expression_depth;
@@ -1996,8 +1987,8 @@ pub const Parser = struct {
             return error.ParseWhenStatement;
         }
 
-        var body: ?*Statement = null;
-        const flags = BlockFlags{};
+        var body: ?Tree.StatementIndex = null;
+        const flags = Tree.BlockFlags{};
         if (self.acceptedKeyword(.do)) {
             body = try self.parseDoBody(flags);
         } else {
@@ -2006,12 +1997,12 @@ pub const Parser = struct {
 
         _ = try self.advancePossibleNewlineWithin();
 
-        var elif: ?*Statement = null;
+        var elif: ?Tree.StatementIndex = null;
         if (isKeyword(self.this_token, .@"else")) {
             _ = try self.expectKeyword(.@"else");
             if (isKeyword(self.this_token, .when)) {
                 const statement = try self.parseWhenStatement();
-                var statements = std.ArrayList(*Statement).init(self.allocator);
+                var statements = std.ArrayList(Tree.StatementIndex).init(self.allocator);
                 try statements.append(statement);
                 elif = try self.tree.newBlockStatement(flags, statements, null);
             } else if (isKeyword(self.this_token, .do)) {
@@ -2025,17 +2016,17 @@ pub const Parser = struct {
             }
         }
 
-        return try self.tree.newWhenStatement(try condition, &(body orelse {
+        return try self.tree.newWhenStatement(try condition, body orelse {
             self.err("Expected body for `when` statement", .{});
             return error.ParseWhenStatement;
-        }).block, if (elif) |e| &e.block else null);
+        }, elif);
     }
 
-    fn parseForStatement(self: *Parser, block_flags: BlockFlags) !*Statement {
-        var init_stmt: ?*Statement = null;
-        var condition: ?*Expression = null;
-        var body: ?*Statement = null;
-        var post_stmt: ?*Statement = null;
+    fn parseForStatement(self: *Parser, block_flags: Tree.BlockFlags) !Tree.StatementIndex {
+        var init_stmt: ?Tree.StatementIndex = null;
+        var condition: ?Tree.ExpressionIndex = null;
+        var body: ?Tree.StatementIndex = null;
+        var post_stmt: ?Tree.StatementIndex = null;
 
         _ = try self.expectKeyword(.@"for");
 
@@ -2053,9 +2044,11 @@ pub const Parser = struct {
 
             if (!isKind(token, .semicolon)) {
                 const statement = try self.parseSimpleStatement(block_flags, true, false);
-                if (statement.* == .expression) {
-                    condition = statement.expression.expression;
-                    if (condition.?.* == .binary and condition.?.binary.operation == .in) {
+                const got_statement = self.tree.getStatementConst(statement);
+                if (got_statement.* == .expression) {
+                    condition = got_statement.expression.expression;
+                    const got_condition = self.tree.getExpressionConst(condition.?);
+                    if (got_condition.* == .binary and got_condition.binary.operation == .in) {
                         range = true;
                     }
                 } else {
@@ -2091,16 +2084,19 @@ pub const Parser = struct {
             body = try self.parseBlockStatement(block_flags, false);
         }
 
-        return try self.tree.newForStatement(init_stmt, condition, &(body.?).block, post_stmt, null);
+        return try self.tree.newForStatement(init_stmt, condition, body orelse {
+            self.err("Expected body for `for` statement", .{});
+            return error.ParseForStatement;
+        }, post_stmt, null);
     }
 
-    fn parseCaseClause(self: *Parser, block_flags: BlockFlags, is_type: bool) !*CaseClause {
+    fn parseCaseClause(self: *Parser, block_flags: Tree.BlockFlags, is_type: bool) !Tree.CaseClauseIndex {
         _ = try self.expectKeyword(.case);
 
         const allow_in = self.allow_in;
         self.allow_in = !is_type;
 
-        var list: ?*Expression = null;
+        var list: ?Tree.ExpressionIndex = null;
         if (!isOperator(self.this_token, .colon)) {
             list = try self.parseRhsTupleExpression();
         }
@@ -2108,21 +2104,22 @@ pub const Parser = struct {
 
         _ = try self.expectOperator(.colon);
 
-        return try self.tree.newCaseClause(if (list) |l| &l.tuple else null, try self.parseStatementList(block_flags));
+        return try self.tree.newCaseClause(list, try self.parseStatementList(block_flags));
     }
 
-    fn parseSwitchStatement(self: *Parser, block_flags: BlockFlags) !*Statement {
+    fn parseSwitchStatement(self: *Parser, block_flags: Tree.BlockFlags) !Tree.StatementIndex {
         _ = try self.expectKeyword(.@"switch");
 
-        var init_stmt: ?*Statement = null;
-        var condition: ?*Expression = null;
+        var init_stmt: ?Tree.StatementIndex = null;
+        var condition: ?Tree.ExpressionIndex = null;
         if (!isKind(self.this_token, .lbrace)) {
             const depth = self.expression_depth;
             self.expression_depth = -1;
 
             const statement = try self.parseSimpleStatement(block_flags, true, false);
-            if (statement.* == .expression) {
-                condition = statement.expression.expression;
+            const got_statement = self.tree.getStatementConst(statement);
+            if (got_statement.* == .expression) {
+                condition = got_statement.expression.expression;
             } else {
                 init_stmt = statement;
                 if (self.acceptedControlStatementSeparator()) {
@@ -2134,8 +2131,11 @@ pub const Parser = struct {
             self.expression_depth = depth;
         }
 
-        const is_type_switch = if (condition) |c| (c.* == .binary and c.binary.operation == .in) else false;
-        var clauses = std.ArrayList(*CaseClause).init(self.allocator);
+        const is_type_switch = if (condition) |c| blk: {
+            const got_c = self.tree.getExpressionConst(c);
+            break :blk (got_c.* == .binary and got_c.binary.operation == .in);
+        } else false;
+        var clauses = std.ArrayList(Tree.CaseClauseIndex).init(self.allocator);
         _ = try self.advancePossibleNewline();
         _ = try self.expectKind(.lbrace);
         while (isKeyword(self.this_token, .case)) {
@@ -2146,7 +2146,7 @@ pub const Parser = struct {
         return try self.tree.newSwitchStatement(init_stmt, condition, clauses, null);
     }
 
-    fn parseDeferStatement(self: *Parser, block_flags: BlockFlags) !*Statement {
+    fn parseDeferStatement(self: *Parser, block_flags: Tree.BlockFlags) !Tree.StatementIndex {
         _ = try self.expectKeyword(.@"defer");
         return try self.tree.newDeferStatement((try self.parseStatement(block_flags)) orelse {
             self.err("Expected statement after `defer`", .{});
@@ -2154,7 +2154,7 @@ pub const Parser = struct {
         });
     }
 
-    fn parseReturnStatement(self: *Parser) !*Statement {
+    fn parseReturnStatement(self: *Parser) !Tree.StatementIndex {
         _ = try self.expectKeyword(.@"return");
 
         // if (self.expression_depth > 0) {
@@ -2162,7 +2162,7 @@ pub const Parser = struct {
         //     return error.ParseReturnStatement;
         // }
 
-        var results = std.ArrayList(*Expression).init(self.allocator);
+        var results = std.ArrayList(Tree.ExpressionIndex).init(self.allocator);
         while (!isKind(self.this_token, .semicolon) and !isKind(self.this_token, .rbrace) and !isKind(self.this_token, .eof)) {
             try results.append(try self.parseExpression(false));
             if (!isOperator(self.this_token, .comma) or isKind(self.this_token, .eof)) break;
@@ -2171,37 +2171,37 @@ pub const Parser = struct {
 
         try self.expectSemicolon();
 
-        return try self.tree.newReturnStatement(&(try self.tree.newTupleExpression(results)).tuple);
+        return try self.tree.newReturnStatement(try self.tree.newTupleExpression(results));
     }
 
-    fn parseBasicSimpleStatement(self: *Parser, block_flags: BlockFlags) !*Statement {
+    fn parseBasicSimpleStatement(self: *Parser, block_flags: Tree.BlockFlags) !Tree.StatementIndex {
         const statement = try self.parseSimpleStatement(block_flags, false, true);
         try self.expectSemicolon();
         return statement;
     }
 
-    fn parseForeignBlockStatement(self: *Parser) !*Statement {
-        var name: ?*Identifier = null;
+    fn parseForeignBlockStatement(self: *Parser) !Tree.StatementIndex {
+        var name: ?Tree.IdentifierIndex = null;
         if (isKind(self.this_token, .identifier)) {
             name = try self.parseIdentifier(false);
         }
 
-        var statements = std.ArrayList(*Statement).init(self.allocator);
+        var statements = std.ArrayList(Tree.StatementIndex).init(self.allocator);
         _ = try self.advancePossibleNewlineWithin();
         _ = try self.expectKind(.lbrace);
         while (!isKind(self.this_token, .rbrace) and !isKind(self.this_token, .eof)) {
-            try statements.append((try self.parseStatement(BlockFlags{})).?);
+            try statements.append((try self.parseStatement(Tree.BlockFlags{})).?);
         }
         _ = try self.expectKind(.rbrace);
 
-        const block = try self.tree.newBlockStatement(BlockFlags{}, statements, null);
-        const statement = try self.tree.newForeignBlockStatement(name, &block.block, std.ArrayList(*Field).init(self.allocator));
+        const block = try self.tree.newBlockStatement(Tree.BlockFlags{}, statements, null);
+        const statement = try self.tree.newForeignBlockStatement(name, block, std.ArrayList(Tree.FieldIndex).init(self.allocator));
         _ = try self.expectSemicolon();
 
         return statement;
     }
 
-    fn parseForiegnImportStatement(self: *Parser) !*Statement {
+    fn parseForiegnImportStatement(self: *Parser) !Tree.StatementIndex {
         _ = try self.expectKeyword(.import);
 
         var name: ?lexer.Token = null;
@@ -2223,11 +2223,11 @@ pub const Parser = struct {
         return try self.tree.newForeignImportStatement(
             if (name) |n| n.string else "",
             sources,
-            std.ArrayList(*Field).init(self.allocator),
+            std.ArrayList(Tree.FieldIndex).init(self.allocator),
         );
     }
 
-    fn parseForignDeclarationStatement(self: *Parser) !?*Statement {
+    fn parseForignDeclarationStatement(self: *Parser) !?Tree.StatementIndex {
         _ = try self.expectKeyword(.foreign);
         if (isKind(self.this_token, .identifier) or isKind(self.this_token, .lbrace)) {
             return try self.parseForeignBlockStatement();
@@ -2238,10 +2238,10 @@ pub const Parser = struct {
         return null;
     }
 
-    fn parseBranchStatement(self: *Parser, kind: lexemes.KeywordKind) !*Statement {
+    fn parseBranchStatement(self: *Parser, kind: lexemes.KeywordKind) !Tree.StatementIndex {
         _ = try self.advance();
 
-        var label: ?*Identifier = null;
+        var label: ?Tree.IdentifierIndex = null;
         if (isKind(self.this_token, .identifier)) {
             label = try self.parseIdentifier(false);
         }
@@ -2249,7 +2249,7 @@ pub const Parser = struct {
         return try self.tree.newBranchStatement(kind, label);
     }
 
-    fn parseUsingStatement(self: *Parser) !*Statement {
+    fn parseUsingStatement(self: *Parser) !Tree.StatementIndex {
         _ = try self.expectKeyword(.using);
 
         if (isKeyword(self.this_token, .import)) {
@@ -2259,20 +2259,20 @@ pub const Parser = struct {
         const list = try self.parseRhsTupleExpression();
         if (!isOperator(self.this_token, .colon)) {
             try self.expectSemicolon();
-            return try self.tree.newUsingStatement(&list.tuple);
+            return try self.tree.newUsingStatement(list);
         }
         _ = try self.expectOperator(.colon);
-        return try self.parseDeclarationStatement(&list.tuple, true);
+        return try self.parseDeclarationStatement(list, true);
     }
 
-    fn parsePackageStatement(self: *Parser) !*Statement {
+    fn parsePackageStatement(self: *Parser) !Tree.StatementIndex {
         _ = try self.expectKeyword(.package);
         const package = try self.expectKind(.identifier);
         try self.tree.recordToken(package);
         return try self.tree.newPackageStatement(package.string);
     }
 
-    fn parseEmptyStatement(self: *Parser) !*Statement {
+    fn parseEmptyStatement(self: *Parser) !Tree.StatementIndex {
         const statement = try self.tree.newEmptyStatement();
         _ = try self.expectSemicolon();
         return statement;

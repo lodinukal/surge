@@ -90,8 +90,7 @@ pub const Lexer = struct {
     }
 
     pub fn deinit(self: *Lexer) void {
-        _ = self; // autofix
-
+        self.peek_list.deinit();
     }
 
     pub fn next(self: *Lexer) Token {
@@ -411,7 +410,7 @@ pub const Lexer = struct {
                     }
                 }
                 token.un = .{ .literal = .string };
-                token.string.len = self.here - old_here;
+                token.string.len = self.here - old_here - 1;
                 token.string = token.string[1..];
                 return token;
             },

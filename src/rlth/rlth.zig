@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const parser = @import("parser.zig");
-const Tree = @import("tree.zig").Tree;
+const Tree = @import("Tree.zig");
 
 const test_code =
     \\using import "surge:shader";
@@ -44,15 +44,27 @@ const test_code =
     \\}
 ;
 
-test {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
+const inall_code =
+    \\import "surge:ecs"
+    \\ecs.register_system(.physics, proc (world: ^ecs.World, delta: f32) {
+    \\  for e, pos in ecs.world_query(world, ecs.all_of(.position)) {
+    \\    pos.x += 1.0 * delta;
+    \\  }
+    \\});
+;
 
-    const allocator = arena.allocator();
-    const al = allocator;
+pub fn handle_err(msg: []const u8) void {
+    std.log.warn("ERRORRR {s}", .{msg});
+}
+
+test {
+    const allocator = std.testing.allocator;
 
     var tree = Tree{};
-    try tree.init(al, "hii");
+    try tree.init(allocator, "hii", &.{
+        .err_handler = handle_err,
+    });
+    defer tree.deinit();
 
     try parser.parse(&tree, test_code);
 
