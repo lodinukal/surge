@@ -510,6 +510,7 @@ pub const Field = struct {
     value: ?*Expression = null,
     tag: ?[]const u8 = null,
     flags: FieldFlags,
+    attributes: std.ArrayList(*Field),
 };
 
 pub const CaseClause = struct {
@@ -1365,6 +1366,7 @@ pub const Tree = struct {
             .value = value,
             .tag = tag,
             .flags = flags,
+            .attributes = std.ArrayList(*Field).init(self.allocator),
         };
         return f;
     }

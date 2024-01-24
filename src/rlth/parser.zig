@@ -186,8 +186,9 @@ pub const Parser = struct {
             handler(fmtted);
         }
 
-        std.log.warn("{}:{}", .{ self.lexer.this_location.line, self.lexer.this_location.column });
         std.log.warn(msg, args);
+        std.log.warn("code: {s}", .{self.lexer.input.source.code[self.lexer.input.current .. self.lexer.input.current + 10]});
+        std.log.warn("{}:{}", .{ self.lexer.this_location.line, self.lexer.this_location.column });
     }
 
     fn acceptedOperator(self: *Parser, op: lexemes.OperatorKind) bool {
@@ -661,7 +662,11 @@ pub const Parser = struct {
         return flags;
     }
 
-    // TODO: make this work properly
+    fn parseContinue(self: *Parser, is_struct: bool) bool {
+        return (if (is_struct) !isKind(self.this_token, .rbrace) else !isOperator(self.this_token, .colon)) and
+            !isKind(self.this_token, .eof);
+    }
+
     fn parseFieldList(self: *Parser, is_struct: bool) !std.ArrayList(*Field) {
         var fields = std.ArrayList(*Field).init(self.allocator);
         if (isOperator(self.this_token, .rparen)) return fields;
@@ -670,47 +675,43 @@ pub const Parser = struct {
         self.allow_newline = true;
 
         var type_list = std.ArrayList(*Type).init(self.allocator);
+        var attributes = std.ArrayList(std.ArrayList(*Field)).init(self.allocator);
         var field_flags = std.ArrayList(FieldFlags).init(self.allocator);
-        var f_type: ?*Type = null;
-        while ((if (is_struct) !isKind(self.this_token, .rbrace) else isOperator(self.this_token, .colon)) and
-            !isKind(self.this_token, .eof))
-        {
-            // check for attributes
-            if (self.acceptedKind(.attribute)) {
-                const attributes = try self.parseAttributes();
-                for (attributes.items) |a| {
-                    std.log.warn("{s}={?}", .{ a.name.?.contents, a.value });
+
+        while (self.parseContinue(is_struct)) {
+            var f_type: ?*Type = null;
+            const start_type_index = type_list.items.len;
+            while (self.parseContinue(is_struct)) {
+                // check for attributes
+                try attributes.append(try self.parseSomeAttributes());
+
+                const flags = try self.parseFieldFlags();
+                const name_or_type = try self.parseVariableNameOrType();
+                try type_list.append(name_or_type);
+                try field_flags.append(flags);
+                if (!self.acceptedSeparator()) break;
+            }
+            const end_type_index = type_list.items.len;
+
+            if (isOperator(self.this_token, .colon)) {
+                _ = try self.expectOperator(.colon);
+                if (!isAssignment(self.this_token, .eq)) {
+                    f_type = try self.parseVariableNameOrType();
                 }
             }
 
-            const flags = try self.parseFieldFlags();
-            const name_or_type = try self.parseVariableNameOrType();
-            try type_list.append(name_or_type);
-            try field_flags.append(flags);
-            if (!self.acceptedSeparator()) break;
-        }
-
-        if (isOperator(self.this_token, .colon)) {
-            _ = try self.expectOperator(.colon);
-            if (!isAssignment(self.this_token, .eq)) {
-                f_type = try self.parseVariableNameOrType();
+            var default_value: ?*Expression = null;
+            if (self.acceptedAssignment(.eq)) {
+                default_value = try self.parseExpression(true);
             }
-        }
 
-        var default_value: ?*Expression = null;
-        if (self.acceptedAssignment(.eq)) {
-            default_value = try self.parseExpression(true);
-        }
+            var tag: ?[]const u8 = null;
+            if (f_type != null and default_value == null and isLiteral(self.this_token, .string)) {
+                tag = self.this_token.string;
+                _ = try self.advance();
+            }
 
-        var tag: ?[]const u8 = null;
-        if (f_type != null and default_value == null and isLiteral(self.this_token, .string)) {
-            tag = self.this_token.string;
-            _ = try self.advance();
-        }
-
-        const n_elements = type_list.items.len;
-        if (f_type) |ty| {
-            for (0..n_elements) |i| {
+            for (start_type_index..end_type_index) |i| {
                 const name = type_list.items[i];
                 const flags = field_flags.items[i];
                 const ident = evaluateIdentifierType(name);
@@ -718,64 +719,17 @@ pub const Parser = struct {
                     self.err("Expected identifier, got `{s}`", .{@tagName(name.derived)});
                     return error.ParseFieldList;
                 }
-                try fields.append(try self.tree.newField(ty, ident, default_value, tag, flags));
+                const field = try self.tree.newField(f_type, ident, default_value, tag, flags);
+                field.attributes = attributes.items[i];
+                try fields.append(field);
             }
-        } else {
-            try self.record();
 
-            for (0..n_elements) |i| {
-                const ty = type_list.items[i];
-                const flags = field_flags.items[i];
-                const name = std.fmt.allocPrint(self.allocator, "_unnamed_{}", .{i}) catch return error.OutOfMemory;
-                const ident = try self.tree.newIdentifier(name, false);
-                try fields.append(try self.tree.newField(ty, ident, default_value, tag, flags));
+            if (!self.acceptedSeparator()) {
+                self.allow_newline = allow_newline;
+                return fields;
             }
         }
-
-        // std.log.warn("{s}", .{self.lexer.input.source.code[self.lexer.input.current..]});
-        if (!self.acceptedSeparator()) {
-            self.allow_newline = allow_newline;
-            return fields;
-        }
-
-        while ((if (is_struct) !isKind(self.this_token, .rbrace) else !isOperator(self.this_token, .rparen)) and !isKind(self.this_token, .eof) and !isKind(self.this_token, .semicolon)) {
-            const flags = try self.parseFieldFlags();
-            f_type = null;
-            var names = std.ArrayList(*Identifier).init(self.allocator);
-            while (true) {
-                const name = try self.parseIdentifier(false);
-                try names.append(name);
-                const token = self.this_token;
-                if (!isOperator(token, .comma) or isKind(token, .eof)) break;
-                _ = try self.advance();
-            }
-
-            _ = try self.expectOperator(.colon);
-            if (!isAssignment(self.this_token, .eq)) {
-                f_type = try self.parseVariableNameOrType();
-            }
-            default_value = null;
-            if (self.acceptedAssignment(.eq)) {
-                default_value = try self.parseExpression(false);
-            }
-            tag = null;
-            if (f_type != null and default_value == null and isLiteral(self.this_token, .string)) {
-                tag = self.this_token.string;
-                _ = try self.advance();
-            }
-            const n_names = names.items.len;
-            for (0..n_names) |i| {
-                try fields.append(try self.tree.newField(f_type, names.items[i], default_value, tag, flags));
-            }
-
-            if (!self.acceptedSeparator()) break;
-        }
-
         self.allow_newline = allow_newline;
-
-        for (fields.items) |i| {
-            std.log.warn("{} {s}", .{ is_struct, i.name.?.contents });
-        }
 
         return fields;
     }
@@ -794,10 +748,12 @@ pub const Parser = struct {
 
         // not a tuple
         if (!isOperator(self.this_token, .lparen)) {
+            const attributes = try self.parseSomeAttributes();
             const ty = try self.parseType();
             try self.record();
             const ident = try self.tree.newIdentifier("_unnamed", false);
             const field = try self.tree.newField(ty, ident, null, null, FieldFlags{});
+            field.attributes = attributes;
             try fields.append(field);
             return fields;
         }
@@ -834,10 +790,6 @@ pub const Parser = struct {
                 is_generic = true;
                 break;
             };
-            if (if (param.type) |ty| ty.poly else false) {
-                is_generic = true;
-                break;
-            }
         }
 
         var diverging = false;
@@ -1180,6 +1132,11 @@ pub const Parser = struct {
             _ = try self.expectOperator(.rparen);
         }
         return attributes;
+    }
+
+    fn parseSomeAttributes(self: *Parser) !std.ArrayList(*Field) {
+        if (!isKind(self.this_token, .attribute)) return std.ArrayList(*Field).init(self.allocator);
+        return try self.parseAttributes();
     }
 
     fn parseIdentifierExpression(self: *Parser) !*Expression {
@@ -1547,8 +1504,8 @@ pub const Parser = struct {
             lhs = try self.parseExpression(false);
         }
 
-        if (!isOperator(self.this_token, .ellipsis) or !isOperator(self.this_token, .rangefull) or !isOperator(self.this_token, .rangehalf)) {
-            self.err("Expected `:` in indexing expression, got {s}", .{@tagName(self.this_token.un)});
+        if (isOperator(self.this_token, .ellipsis) or isOperator(self.this_token, .rangefull) or isOperator(self.this_token, .rangehalf)) {
+            self.err("Expected `:` in index expression, not {s}", .{@tagName(self.this_token.un)});
             return error.ParseIndexExpression;
         }
 
