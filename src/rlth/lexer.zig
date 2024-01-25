@@ -63,9 +63,7 @@ pub const Lexer = struct {
     asi: bool = false,
     peek_list: std.ArrayList(Token) = undefined,
 
-    pub fn init(lexer: *Lexer, allocator: std.mem.Allocator, source: *const Source) !void {
-        if (source.code.len == 0) return error.LexerEmptySource;
-
+    pub fn init(lexer: *Lexer, allocator: std.mem.Allocator, source: *const Source) void {
         lexer.* = Lexer{
             .allocator = allocator,
             .input = Input{
@@ -402,7 +400,6 @@ pub const Lexer = struct {
                     }
                     _ = self.advance();
                     if (c == quote) {
-                        _ = self.advance();
                         break;
                     }
                     if (cp == '"' and (c == '\\' and !self.scanEscape())) {
@@ -410,7 +407,7 @@ pub const Lexer = struct {
                     }
                 }
                 token.un = .{ .literal = .string };
-                token.string.len = self.here - old_here - 1;
+                token.string.len = self.here - old_here;
                 token.string = token.string[1..];
                 return token;
             },
@@ -673,7 +670,9 @@ pub const Lexer = struct {
 
 fn findKeyword(string: []const u8) ?lexemes.KeywordKind {
     inline for (std.meta.fields(lexemes.KeywordKind)) |keyword| {
-        if (std.mem.eql(u8, string, keyword.name)) return @field(lexemes.KeywordKind, keyword.name);
+        const e = @field(lexemes.KeywordKind, keyword.name);
+        if (std.mem.eql(u8, string, lexemes.keywords.get(e).match))
+            return @field(lexemes.KeywordKind, keyword.name);
     }
     return null;
 }

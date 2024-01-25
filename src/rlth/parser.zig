@@ -7,7 +7,7 @@ const Type = @import("tree.zig").Type;
 const lexer = @import("lexer.zig");
 const lexemes = @import("lexemes.zig");
 
-const Error = error{
+pub const Error = error{
     ParseStatement,
     OutOfMemory,
     ExpectOperator,
@@ -138,7 +138,7 @@ pub const Parser = struct {
         self.allocator = self.arena.allocator();
         self.tree = tree;
 
-        try self.lexer.init(allocator, &tree.source);
+        self.lexer.init(allocator, &tree.source);
 
         self.this_token = lexer.NullToken;
         self.last_token = lexer.NullToken;
@@ -1170,17 +1170,19 @@ pub const Parser = struct {
     }
 
     fn parsePointerTypeExpression(self: *Parser) !Tree.ExpressionIndex {
+        const is_const = self.acceptedKeyword(.@"const");
         _ = try self.expectOperator(.pointer);
         const ty = try self.parseType();
-        return try self.tree.newTypeExpression(try self.tree.newPointerType(ty));
+        return try self.tree.newTypeExpression(try self.tree.newPointerType(ty, is_const));
     }
 
     fn parseMultiPointerTypeExpression(self: *Parser) !Tree.ExpressionIndex {
         _ = try self.expectOperator(.pointer);
+        const is_const = self.acceptedKeyword(.@"const");
         _ = try self.expectOperator(.rbracket);
 
         const ty = try self.parseType();
-        return try self.tree.newTypeExpression(try self.tree.newMultiPointerType(ty));
+        return try self.tree.newTypeExpression(try self.tree.newMultiPointerType(ty, is_const));
     }
 
     fn parseArrayTypeExpression(self: *Parser, parse_count: bool) !Tree.ExpressionIndex {
@@ -1207,8 +1209,9 @@ pub const Parser = struct {
     }
 
     fn parseSliceTypeExpression(self: *Parser) !Tree.ExpressionIndex {
+        const is_const = self.acceptedKeyword(.@"const");
         const ty = try self.parseType();
-        return try self.tree.newTypeExpression(try self.tree.newSliceType(ty));
+        return try self.tree.newTypeExpression(try self.tree.newSliceType(ty, is_const));
     }
 
     fn parseDistinctTypeExpression(self: *Parser) !Tree.ExpressionIndex {

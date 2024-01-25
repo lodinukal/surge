@@ -428,14 +428,17 @@ pub const ProcedureType = struct {
 
 pub const PointerType = struct {
     type: TypeIndex,
+    is_const: bool = false,
 };
 
 pub const MultiPointerType = struct {
     type: TypeIndex,
+    is_const: bool = false,
 };
 
 pub const SliceType = struct {
     type: TypeIndex,
+    is_const: bool = false,
 };
 
 pub const ArrayType = struct {
@@ -1072,22 +1075,25 @@ pub fn newType(
 pub fn newPointerType(
     self: *Tree,
     ty: TypeIndex,
+    is_const: bool,
 ) !TypeIndex {
-    return try self.createType(.{ .derived = .{ .pointer = .{ .type = ty } } });
+    return try self.createType(.{ .derived = .{ .pointer = .{ .type = ty, .is_const = is_const } } });
 }
 
 pub fn newMultiPointerType(
     self: *Tree,
     ty: TypeIndex,
+    is_const: bool,
 ) !TypeIndex {
-    return try self.createType(.{ .derived = .{ .multi_pointer = .{ .type = ty } } });
+    return try self.createType(.{ .derived = .{ .multi_pointer = .{ .type = ty, .is_const = is_const } } });
 }
 
 pub fn newSliceType(
     self: *Tree,
     ty: TypeIndex,
+    is_const: bool,
 ) !TypeIndex {
-    return try self.createType(.{ .derived = .{ .slice = .{ .type = ty } } });
+    return try self.createType(.{ .derived = .{ .slice = .{ .type = ty, .is_const = is_const } } });
 }
 
 pub fn newArrayType(

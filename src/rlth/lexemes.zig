@@ -222,6 +222,7 @@ pub const KeywordKind = enum {
     context,
     @"asm",
     matrix,
+    @"const",
 };
 pub const KeywordInfo = struct {
     match: []const u8,
@@ -257,6 +258,7 @@ pub const keywords = std.EnumArray(KeywordKind, KeywordInfo).init(.{
     .context = .{ .match = "context", .asi = false },
     .@"asm" = .{ .match = "asm", .asi = false },
     .matrix = .{ .match = "matrix", .asi = false },
+    .@"const" = .{ .match = "const", .asi = false },
 });
 
 // Direcitves

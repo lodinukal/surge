@@ -5,6 +5,9 @@ const math = @import("math.zig");
 
 // const RenderContext = @import("RenderContext.zig");
 
+const util = @import("util.zig");
+const rlth = @import("rlth/rlth.zig");
+
 const image = @import("image.zig");
 
 const Renderer = struct {
@@ -60,7 +63,7 @@ const WindowInfo = struct {
 };
 
 var current_window_info: ?WindowInfo = null;
-pub fn main() !void {
+pub fn main_2() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{
         // .verbose_log = true,
     }){};
