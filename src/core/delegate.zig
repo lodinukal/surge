@@ -1,39 +1,65 @@
 const std = @import("std");
 
-pub fn delegate(comptime S: type, allocator: std.mem.Allocator) Delegate(S) {
-    return Delegate(S).init(allocator);
+pub fn Delegate(comptime S: type, comptime blocks: bool) type {
+    return struct {
+        pub const Delegate = DelegateHolder(S, blocks);
+        pub const Node = DelegateNode(S);
+    };
 }
 
-pub fn Delegate(S: type) type {
+pub fn DelegateNode(comptime S: type) type {
     return struct {
         const Self = @This();
-        allocator: std.mem.Allocator,
-        callbacks: std.ArrayListUnmanaged(S),
+        callback: *const S,
+        previous: ?*Self = null,
+        next: ?*Self = null,
 
-        pub fn init(allocator: std.mem.Allocator) Self {
+        pub inline fn init(callback: anytype) Self {
             return Self{
-                .allocator = allocator,
-                .callbacks = std.ArrayListUnmanaged.init(allocator, S),
+                .callback = callback,
             };
         }
 
-        pub fn connect(self: *Self, callback: S) std.mem.Allocator.Error!void {
-            try self.callbacks.append(self.allocator, callback);
+        pub inline fn disconnect(self: *Self) void {
+            if (self.previous) |previous| {
+                previous.next = self.next;
+            }
+            if (self.next) |next| {
+                next.previous = self.previous;
+            }
+        }
+    };
+}
+
+pub fn DelegateHolder(comptime S: type, comptime blocks: bool) type {
+    return struct {
+        const Self = @This();
+        const Node = DelegateNode(S);
+        callback_list: ?*Node = null,
+
+        pub fn init() Self {
+            return Self{};
         }
 
-        pub fn disconnect(self: *Self, callback: S) std.mem.Allocator.Error!void {
-            if (std.mem.indexOfScalar(
-                S,
-                self.callbacks.items,
-                callback,
-            )) |found| {
-                self.callbacks.swapRemove(found);
+        pub fn connect(self: *Self, callback: *Node) void {
+            if (self.callback_list) |cbl| {
+                cbl.next = callback;
+                callback.previous = cbl;
+            } else {
+                self.callback_list = callback;
             }
         }
 
         pub fn broadcast(self: *Self, args: std.meta.ArgsTuple(S)) void {
-            for (self.callbacks.items) |callback| {
-                @call(.auto, callback, args);
+            var item = self.callback_list;
+            while (item) |i| {
+                const s = i.callback;
+                if (blocks) {
+                    if (@call(.auto, s, args)) return;
+                } else {
+                    @call(.auto, s, args);
+                }
+                item = i.next;
             }
         }
     };

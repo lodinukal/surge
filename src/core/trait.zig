@@ -51,7 +51,7 @@ pub fn implements(comptime trait: anytype) Constraint {
             .Struct => {
                 const fields = @typeInfo(@TypeOf(trait)).Struct.fields;
                 var traitArray: [fields.len]TraitFn = undefined;
-                inline for (fields, traitArray[0..fields.len]) |fld, *traitFn| {
+                for (fields, traitArray[0..fields.len]) |fld, *traitFn| {
                     traitFn.* = @field(trait, fld.name);
                 }
                 return .{ .traits = &traitArray };
@@ -305,7 +305,7 @@ pub const TypeInfo = @Type(std.builtin.Type{ .Union = .{
     .fields = init: {
         const og_uflds = @typeInfo(std.builtin.Type).Union.fields;
         var uflds: [og_uflds.len]std.builtin.Type.UnionField = undefined;
-        inline for (&uflds, og_uflds) |*ufld, og_ufld| {
+        for (&uflds, og_uflds) |*ufld, og_ufld| {
             const type_info = @typeInfo(og_ufld.type);
             if (type_info == .Struct) {
                 const struct_info = type_info.Struct;
@@ -318,7 +318,7 @@ pub const TypeInfo = @Type(std.builtin.Type{ .Union = .{
                         const og_sflds = struct_info.fields;
                         var sflds: [og_sflds.len]std.builtin.Type.StructField = undefined;
                         var i: usize = 0;
-                        inline for (og_sflds) |fld| {
+                        for (og_sflds) |fld| {
                             if (std.mem.eql(u8, fld.name, "fields")) {
                                 continue;
                             } else if (std.mem.eql(u8, fld.name, "decls")) {

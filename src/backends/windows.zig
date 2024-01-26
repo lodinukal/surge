@@ -1,10 +1,8 @@
 const std = @import("std");
 
-const app = @import("../app.zig");
-const math = @import("../../math.zig");
-const util = @import("../../util.zig");
-const trait = @import("../../core/trait.zig");
-const channel = @import("../../core/channel.zig");
+const app = @import("app");
+const math = @import("core").math;
+const util = @import("core").util;
 
 const winapi = @import("win32");
 const winapizig = winapi.zig;
@@ -883,10 +881,7 @@ const WindowsInput = struct {
             win32.ui.windows_and_messaging.WM_SIZE => {
                 const width = LOWORD(@bitCast(lparam));
                 const height = HIWORD(@bitCast(lparam));
-
-                if (self.getBase().window_resized_callback) |cb| {
-                    cb(window.getBase(), .{ width, height });
-                }
+                self.getBase().window_resized.broadcast(.{ window.getBase(), .{ width, height } });
             },
             win32.ui.windows_and_messaging.WM_SETFOCUS => {
                 self.setWindowFocus(window, true);
@@ -1764,7 +1759,7 @@ const RegKey = struct {
 
 const IID_ComMalloc_Value = winapi.zig.Guid.initString("1EA387B1-717E-4403-9815-576541858162");
 pub const IID_ComMalloc = &IID_ComMalloc_Value;
-const ExternAllocator = @import("../../core/common.zig").ExternAllocator;
+const ExternAllocator = @import("core").allocators.ExternAllocator;
 pub const ComAllocator = extern struct {
     pub const vtable = win32.system.com.IMalloc.VTable{
         .Alloc = ComAllocator.Alloc,

@@ -1,13 +1,12 @@
 const std = @import("std");
-const gpu = @import("../gpu.zig");
+const gpu = @import("gpu");
 
 const winapi = @import("win32");
 const win32 = winapi.windows.win32;
-const d3d = win32.graphics.direct3d;
 const d3d12 = win32.graphics.direct3d12;
 
-const d3dcommon = @import("../d3d/common.zig");
-const gpu_allocator = @import("../gpu_allocator.zig");
+const d3d = @import("d3d");
+const gpu_allocator = gpu.allocator;
 
 pub const DescriptorIndex = u64;
 pub const DualHandle = struct {
@@ -48,8 +47,8 @@ pub const GeneralHeap = struct {
             d3d12.IID_ID3D12DescriptorHeap,
             @ptrCast(&heap),
         );
-        if (!d3dcommon.checkHResult(heap_hr)) return Error.GeneralHeapFailedToCreate;
-        errdefer d3dcommon.releaseIUnknown(d3d12.ID3D12DescriptorHeap, &heap);
+        if (!d3d.checkHResult(heap_hr)) return Error.GeneralHeapFailedToCreate;
+        errdefer d3d.releaseIUnknown(d3d12.ID3D12DescriptorHeap, &heap);
 
         const cpu_handle = heapStartCpu(heap.?);
         const gpu_handle = heapStartGpu(heap.?);
@@ -71,7 +70,7 @@ pub const GeneralHeap = struct {
 
     pub fn deinit(self: *GeneralHeap) void {
         self.ranges.deinit();
-        d3dcommon.releaseIUnknown(d3d12.ID3D12DescriptorHeap, &self.heap);
+        d3d.releaseIUnknown(d3d12.ID3D12DescriptorHeap, &self.heap);
     }
 
     pub fn at(self: *const GeneralHeap, index: DescriptorIndex, count: u64) DualHandle {
@@ -139,7 +138,7 @@ pub const D3D12FixedSizeHeap = struct {
             d3d12.IID_ID3D12DescriptorHeap,
             @ptrCast(&heap),
         );
-        if (!d3dcommon.checkHResult(heap_hr)) return Error.FixedSizeHeapFailedToCreate;
+        if (!d3d.checkHResult(heap_hr)) return Error.FixedSizeHeapFailedToCreate;
 
         return .{
             .heap = heap,
@@ -149,7 +148,7 @@ pub const D3D12FixedSizeHeap = struct {
     }
 
     pub fn deinit(self: *D3D12FixedSizeHeap) void {
-        d3dcommon.releaseIUnknown(d3d12.ID3D12DescriptorHeap, &self.heap);
+        d3d.releaseIUnknown(d3d12.ID3D12DescriptorHeap, &self.heap);
     }
 
     pub fn alloc(self: *D3D12FixedSizeHeap) !d3d12.D3D12_CPU_DESCRIPTOR_HANDLE {
@@ -261,7 +260,7 @@ pub const CpuHeap = struct {
             d3d12.IID_ID3D12DescriptorHeap,
             @ptrCast(&heap),
         );
-        if (!d3dcommon.checkHResult(heap_hr)) return Error.CpuHeapFailedToCreate;
+        if (!d3d.checkHResult(heap_hr)) return Error.CpuHeapFailedToCreate;
 
         return .{
             .inner = .{
@@ -275,7 +274,7 @@ pub const CpuHeap = struct {
     }
 
     pub fn deinit(self: *CpuHeap) void {
-        d3dcommon.releaseIUnknown(d3d12.ID3D12DescriptorHeap, &self.inner.heap);
+        d3d.releaseIUnknown(d3d12.ID3D12DescriptorHeap, &self.inner.heap);
         self.inner.stage.deinit();
     }
 

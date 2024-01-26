@@ -1,8 +1,14 @@
 const std = @import("std");
 
 const app = @import("app.zig");
-const math = @import("../math.zig");
+const core = @import("core");
+const math = core.math;
 const platform = @import("platform.zig");
+
+pub const WindowResizedDelegate = core.Delegate(fn (
+    *app.Window,
+    [2]u32,
+) void, false);
 
 pub const Input = struct {
     const MouseState = struct {
@@ -36,7 +42,7 @@ pub const Input = struct {
     touch_ended_callback: ?TouchEndedCallback = null,
     input_type_updated_callback: ?InputTypeUpdatedCallback = null,
     frame_update_callback: ?FrameUpdateCallback = null,
-    window_resized_callback: ?WindowResizedCallback = null,
+    window_resized: WindowResizedDelegate.Delegate = .{},
 
     const FocusedChangedCallback = *const fn (*app.Window, bool) void;
     const InputBeganCallback = *const fn (InputObject) void;
@@ -47,7 +53,6 @@ pub const Input = struct {
     const TouchEndedCallback = *const fn (InputObject) void;
     const InputTypeUpdatedCallback = *const fn (new: InputType, old: InputType) void;
     const FrameUpdateCallback = *const fn (*app.Window) void;
-    const WindowResizedCallback = *const fn (*app.Window, [2]u32) void;
 
     pub fn create(allocator: std.mem.Allocator) !*Input {
         var self: *Input = try allocator.create(Input);

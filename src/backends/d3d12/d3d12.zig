@@ -1,5 +1,5 @@
 const std = @import("std");
-const gpu = @import("../gpu.zig");
+const gpu = @import("gpu");
 
 const winapi = @import("win32");
 const win32 = winapi.windows.win32;
@@ -9,7 +9,7 @@ const dxgi = win32.graphics.dxgi;
 const hlsl = win32.graphics.hlsl;
 const dxc = d3d.dxc;
 
-const gpu_allocator = @import("../gpu_allocator.zig");
+const gpu_allocator = gpu.allocator;
 
 const upload_page_size = 64 * 1024 * 1024; // TODO - split writes and/or support large uploads
 const max_back_buffer_count = 3;
@@ -17,11 +17,11 @@ const max_back_buffer_count = 3;
 const TRUE = win32.foundation.TRUE;
 const FALSE = win32.foundation.FALSE;
 
-const winappimpl = @import("../../app/platform/windows.zig");
+const winappimpl = @import("app").platform.impl;
 
-const d3dcommon = @import("../d3d/common.zig");
+const d3dcommon = @import("d3d");
 
-const common = @import("../../core/common.zig");
+const ScratchSpace = @import("core").allocators.ScratchSpace;
 
 const descriptor = @import("descriptor.zig");
 
@@ -727,7 +727,7 @@ pub const D3D12Buffer = struct {
     pub fn setLabel(self: *D3D12Buffer, name: []const u8) void {
         setDebugName(d3d12.ID3D12Resource, self.buffer.resource, name);
         if (self.staging_buffer) |sb| {
-            var scratch = common.ScratchSpace(2048){};
+            var scratch = ScratchSpace(2048){};
             const temp_allocator = scratch.init().allocator();
             sb.setLabel(std.fmt.allocPrint(
                 temp_allocator,
@@ -842,7 +842,7 @@ pub const D3D12CommandBuffer = struct {
     }
 
     pub fn setLabel(self: *D3D12CommandBuffer, name: []const u8) void {
-        var scratch = common.ScratchSpace(4096){};
+        var scratch = ScratchSpace(4096){};
         const temp_allocator = scratch.init().allocator();
 
         const command_allocator_name = std.fmt.allocPrint(
@@ -1901,7 +1901,7 @@ pub const D3D12PhysicalDevice = struct {
         // get a description of the adapter
         _ = self.adapter.?.IDXGIAdapter_GetDesc(&self.adapter_desc);
 
-        var scratch = common.ScratchSpace(4096){};
+        var scratch = ScratchSpace(4096){};
         const temp_allocator = scratch.init().allocator();
 
         const converted_description = std.unicode.utf16leToUtf8Alloc(
@@ -1950,7 +1950,7 @@ pub const D3D12PipelineLayout = struct {
     pub fn create(allocator: std.mem.Allocator, device: *D3D12Device, desc: *const gpu.PipelineLayout.Descriptor) !*D3D12PipelineLayout {
         var hr: win32.foundation.HRESULT = undefined;
 
-        var scratch = common.ScratchSpace(8192){};
+        var scratch = ScratchSpace(8192){};
         const temp_allocator = scratch.init().allocator();
 
         // Per Bind Group:
@@ -2263,7 +2263,7 @@ pub const D3D12Queue = struct {
     }
 
     pub fn submit(self: *D3D12Queue, command_buffers: []const *gpu.CommandBuffer) gpu.Queue.Error!void {
-        var scratch = common.ScratchSpace(4096){};
+        var scratch = ScratchSpace(4096){};
         const temp_allocator = scratch.init().allocator();
 
         var command_lists = std.ArrayListUnmanaged(
@@ -3673,7 +3673,7 @@ pub const D3D12RenderPipeline = struct {
         device: *D3D12Device,
         desc: *const gpu.RenderPipeline.Descriptor,
     ) gpu.RenderPipeline.Error!void {
-        var scratch = common.ScratchSpace(4096){};
+        var scratch = ScratchSpace(4096){};
         const temp_allocator = scratch.init().allocator();
         _ = temp_allocator;
 
@@ -4297,7 +4297,7 @@ pub const D3D12ShaderCompiler = struct {
     };
 
     pub fn compile(self: *D3D12ShaderCompiler, options: *const Options) !*dxc.IDxcResult {
-        var scratch = common.ScratchSpace(4096){};
+        var scratch = ScratchSpace(4096){};
         const temp_allocator = scratch.init().allocator();
 
         var args = std.ArrayList([]const u8).init(temp_allocator);

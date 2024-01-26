@@ -1,7 +1,7 @@
 const std = @import("std");
-const gpu = @import("../gpu/gpu.zig");
+const gpu = @import("gpu");
 
-const Window = @import("../app/app.zig").Window;
+const Window = @import("app").Window;
 
 const Self = @This();
 

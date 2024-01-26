@@ -92,3 +92,9 @@ pub const Image = struct {
         c.stbi_image_free(@ptrCast(self.data));
     }
 };
+
+comptime {
+    _ = _stbi_free;
+    _ = _stbi_malloc;
+    _ = _stbi_realloc;
+}

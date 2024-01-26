@@ -1,7 +1,7 @@
 const std = @import("std");
-const gpu = @import("../gpu/gpu.zig");
+const gpu = @import("gpu");
 
-const math = @import("../math.zig");
+const math = @import("core").math;
 
 const Self = @This();
 

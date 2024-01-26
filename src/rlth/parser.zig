@@ -83,10 +83,10 @@ pub const Error = error{
     ParseDirectiveForStatement,
 };
 
-pub fn parse(tree: *Tree, source: []const u8) !void {
+pub fn parse(context: *const Context, tree: *Tree, source: []const u8) !void {
     tree.source.code = source;
     var parser = Parser{};
-    try parser.init(tree.allocator, tree);
+    try parser.init(context, tree);
     defer parser.deinit();
 
     _ = try parser.advance();
@@ -94,7 +94,7 @@ pub fn parse(tree: *Tree, source: []const u8) !void {
     while (!isKind(parser.this_token, .eof)) {
         if (try parser.parseStatement(Tree.BlockFlags{})) |statement| {
             if (tree.getStatement(statement).* != .empty) {
-                try tree.statements.append(statement);
+                try tree.statements.append(tree.allocator, statement);
             }
         }
     }
@@ -115,11 +115,12 @@ pub const precedence = blk: {
 const Context = @import("Context.zig");
 
 pub const Parser = struct {
-    arena: std.heap.ArenaAllocator = undefined,
     allocator: std.mem.Allocator = undefined,
+    context: *const Context = undefined,
 
     tree: *Tree = undefined,
     lexer: lexer.Lexer = .{},
+    peek_list: [10]lexer.Token = .{lexer.NullToken} ** 10,
 
     this_token: lexer.Token = undefined,
     last_token: lexer.Token = undefined,
@@ -133,12 +134,12 @@ pub const Parser = struct {
     allow_type: bool = false,
     allow_in: bool = false,
 
-    pub fn init(self: *Parser, allocator: std.mem.Allocator, tree: *Tree) !void {
-        self.arena = std.heap.ArenaAllocator.init(allocator);
-        self.allocator = self.arena.allocator();
-        self.tree = tree;
+    pub fn init(self: *Parser, context: *const Context, tree: *Tree) !void {
+        self.allocator = context.allocator;
+        self.context = context;
 
-        self.lexer.init(allocator, &tree.source);
+        self.tree = tree;
+        self.lexer.init(&self.peek_list, &tree.source);
 
         self.this_token = lexer.NullToken;
         self.last_token = lexer.NullToken;
@@ -155,13 +156,13 @@ pub const Parser = struct {
 
     pub fn deinit(self: *Parser) void {
         self.lexer.deinit();
-        self.arena.deinit();
     }
 
     fn err(self: *const Parser, comptime msg: []const u8, args: anytype) void {
-        if (self.tree.context) |ctx| {
-            ctx.err(self.this_token.location, msg, args);
-        }
+        self.context.err("{}:{}:" ++ msg, .{
+            self.this_token.location.line,
+            self.this_token.location.column,
+        } ++ args);
     }
 
     fn acceptedOperator(self: *Parser, op: lexemes.OperatorKind) bool {
@@ -1867,7 +1868,7 @@ pub const Parser = struct {
                 break :blk try self.tree.newImportStatement(name, "", next, is_using);
             }
         };
-        try self.tree.imports.append(stmt);
+        try self.tree.addImport(stmt);
         return stmt;
     }
 
@@ -2160,10 +2161,10 @@ pub const Parser = struct {
     fn parseReturnStatement(self: *Parser) !Tree.StatementIndex {
         _ = try self.expectKeyword(.@"return");
 
-        // if (self.expression_depth > 0) {
-        //     self.err("Cannot return from expression", .{});
-        //     return error.ParseReturnStatement;
-        // }
+        if (self.expression_depth > 0) {
+            self.err("Cannot return from expression", .{});
+            return error.ParseReturnStatement;
+        }
 
         var results = std.ArrayList(Tree.ExpressionIndex).init(self.allocator);
         while (!isKind(self.this_token, .semicolon) and !isKind(self.this_token, .rbrace) and !isKind(self.this_token, .eof)) {

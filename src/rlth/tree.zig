@@ -529,63 +529,81 @@ pub const CaseClause = struct {
 };
 
 const Tree = @This();
-const Context = @import("Context.zig");
 
 allocator: std.mem.Allocator = undefined,
-context: ?*const Context = null,
 
 source: lexer.Source = undefined,
 
-imports: std.ArrayList(StatementIndex) = undefined,
+imports: std.ArrayListUnmanaged(StatementIndex) = undefined,
 
-tokens: std.ArrayList(lexer.Token) = undefined,
-statements: std.ArrayList(StatementIndex) = undefined,
+tokens: std.ArrayListUnmanaged(lexer.Token) = undefined,
+statements: std.ArrayListUnmanaged(StatementIndex) = undefined,
 
-all_expressions: std.ArrayList(Expression) = undefined,
-all_statements: std.ArrayList(Statement) = undefined,
-all_types: std.ArrayList(Type) = undefined,
-all_case_clauses: std.ArrayList(CaseClause) = undefined,
-all_identifiers: std.ArrayList(Identifier) = undefined,
-all_fields: std.ArrayList(Field) = undefined,
+all_expressions: std.ArrayListUnmanaged(Expression) = undefined,
+all_statements: std.ArrayListUnmanaged(Statement) = undefined,
+all_types: std.ArrayListUnmanaged(Type) = undefined,
+all_case_clauses: std.ArrayListUnmanaged(CaseClause) = undefined,
+all_identifiers: std.ArrayListUnmanaged(Identifier) = undefined,
+all_fields: std.ArrayListUnmanaged(Field) = undefined,
 
-pub fn init(tree: *Tree, allocator: std.mem.Allocator, name: []const u8, context: ?*const Context) !void {
-    tree.* = Tree{
+pub fn init(allocator: std.mem.Allocator, name: []const u8) !Tree {
+    return .{
         .allocator = allocator,
-        .context = context,
         .source = lexer.Source{
             .name = name,
             .code = "",
         },
-        .imports = std.ArrayList(StatementIndex).init(allocator),
+        .imports = std.ArrayListUnmanaged(StatementIndex){},
 
-        .tokens = std.ArrayList(lexer.Token).init(allocator),
-        .statements = std.ArrayList(StatementIndex).init(allocator),
+        .tokens = std.ArrayListUnmanaged(lexer.Token){},
+        .statements = std.ArrayListUnmanaged(StatementIndex){},
 
-        .all_expressions = std.ArrayList(Expression).init(allocator),
-        .all_statements = std.ArrayList(Statement).init(allocator),
-        .all_types = std.ArrayList(Type).init(allocator),
-        .all_case_clauses = std.ArrayList(CaseClause).init(allocator),
-        .all_identifiers = std.ArrayList(Identifier).init(allocator),
-        .all_fields = std.ArrayList(Field).init(allocator),
+        .all_expressions = std.ArrayListUnmanaged(Expression){},
+        .all_statements = std.ArrayListUnmanaged(Statement){},
+        .all_types = std.ArrayListUnmanaged(Type){},
+        .all_case_clauses = std.ArrayListUnmanaged(CaseClause){},
+        .all_identifiers = std.ArrayListUnmanaged(Identifier){},
+        .all_fields = std.ArrayListUnmanaged(Field){},
     };
 }
 
 pub fn deinit(self: *Tree) void {
-    self.all_expressions.deinit();
-    self.all_statements.deinit();
-    self.all_types.deinit();
-    self.all_case_clauses.deinit();
-    self.all_identifiers.deinit();
-    self.all_fields.deinit();
+    self.all_expressions.deinit(self.allocator);
+    self.all_statements.deinit(self.allocator);
+    self.all_types.deinit(self.allocator);
+    self.all_case_clauses.deinit(self.allocator);
+    self.all_identifiers.deinit(self.allocator);
+    self.all_fields.deinit(self.allocator);
 
-    self.tokens.deinit();
-    self.statements.deinit();
-    self.imports.deinit();
+    self.tokens.deinit(self.allocator);
+    self.statements.deinit(self.allocator);
+    self.imports.deinit(self.allocator);
+}
+
+pub fn clone(self: *const Tree, allocator: std.mem.Allocator) !Tree {
+    return .{
+        .allocator = allocator,
+        .source = lexer.Source{
+            .name = self.source.name,
+            .code = "",
+        },
+        .imports = try self.imports.clone(allocator),
+
+        .tokens = try self.tokens.clone(allocator),
+        .statements = try self.statements.clone(allocator),
+
+        .all_expressions = try self.all_expressions.clone(allocator),
+        .all_statements = try self.all_statements.clone(allocator),
+        .all_types = try self.all_types.clone(allocator),
+        .all_case_clauses = try self.all_case_clauses.clone(allocator),
+        .all_identifiers = try self.all_identifiers.clone(allocator),
+        .all_fields = try self.all_fields.clone(allocator),
+    };
 }
 
 fn createExpression(self: *Tree, e: Expression) !ExpressionIndex {
     const index = self.all_expressions.items.len;
-    const set = try self.all_expressions.addOne();
+    const set = try self.all_expressions.addOne(self.allocator);
     set.* = e;
     return index;
 }
@@ -600,7 +618,7 @@ pub fn getExpressionConst(self: *const Tree, index: ExpressionIndex) *const Expr
 
 fn createStatement(self: *Tree, s: Statement) !StatementIndex {
     const index = self.all_statements.items.len;
-    const set = try self.all_statements.addOne();
+    const set = try self.all_statements.addOne(self.allocator);
     set.* = s;
     return index;
 }
@@ -615,7 +633,7 @@ pub fn getStatementConst(self: *const Tree, index: StatementIndex) *const Statem
 
 fn createType(self: *Tree, t: Type) !TypeIndex {
     const index = self.all_types.items.len;
-    const set = try self.all_types.addOne();
+    const set = try self.all_types.addOne(self.allocator);
     set.* = t;
     return index;
 }
@@ -1027,7 +1045,7 @@ pub fn newIdentifier(
     poly: bool,
 ) !IdentifierIndex {
     const index = self.all_identifiers.items.len;
-    const set = try self.all_identifiers.addOne();
+    const set = try self.all_identifiers.addOne(self.allocator);
     set.* = Identifier{
         .contents = contents,
         .poly = poly,
@@ -1050,7 +1068,7 @@ pub fn newCaseClause(
     statements: std.ArrayList(StatementIndex),
 ) !CaseClauseIndex {
     const index = self.all_case_clauses.items.len;
-    const set = try self.all_case_clauses.addOne();
+    const set = try self.all_case_clauses.addOne(self.allocator);
     set.* = CaseClause{
         .expression = expression,
         .statements = statements,
@@ -1289,7 +1307,7 @@ pub fn newField(
     flags: FieldFlags,
 ) !FieldIndex {
     const index = self.all_fields.items.len;
-    const set = try self.all_fields.addOne();
+    const set = try self.all_fields.addOne(self.allocator);
     set.* = Field{
         .type = ty,
         .name = name,
@@ -1310,7 +1328,11 @@ pub fn getFieldConst(self: *const Tree, index: FieldIndex) *const Field {
 }
 
 pub fn recordToken(self: *Tree, token: lexer.Token) !void {
-    try self.tokens.append(token);
+    try self.tokens.append(self.allocator, token);
+}
+
+pub fn addImport(self: *Tree, statement: StatementIndex) !void {
+    try self.imports.append(self.allocator, statement);
 }
 
 test {

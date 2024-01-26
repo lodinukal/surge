@@ -15,6 +15,65 @@ pub fn build(b: *std.Build) !void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
+    const core = b.addModule("core", .{
+        .root_source_file = .{
+            .path = "src/core/core.zig",
+        },
+        .target = target,
+        .optimize = optimize,
+    });
+    const app = b.addModule("app", .{
+        .root_source_file = .{
+            .path = "src/app/app.zig",
+        },
+        .target = target,
+        .optimize = optimize,
+    });
+    app.addImport("core", core);
+
+    const stb = b.addModule("stb", .{
+        .root_source_file = .{
+            .path = "thirdparty/stb/image.zig",
+        },
+        .link_libc = true,
+    });
+    stb.addIncludePath(.{
+        .path = "thirdparty/stb/",
+    });
+    stb.addCSourceFile(.{ .file = .{
+        .path = "thirdparty/stb/stb_image_impl.c",
+    } });
+
+    const gpu = b.addModule("gpu", .{
+        .root_source_file = .{
+            .path = "src/gpu/gpu.zig",
+        },
+        .target = target,
+        .optimize = optimize,
+    });
+    gpu.addImport("core", core);
+    gpu.addImport("app", app);
+
+    const renderer = b.addModule("renderer", .{
+        .root_source_file = .{
+            .path = "src/renderer/renderer.zig",
+        },
+        .target = target,
+        .optimize = optimize,
+    });
+    renderer.addImport("core", core);
+    renderer.addImport("app", app);
+    renderer.addImport("gpu", gpu);
+
+    const rlth = b.addModule("rlth", .{
+        .root_source_file = .{
+            .path = "src/rlth/rlth.zig",
+        },
+        .target = target,
+        .optimize = optimize,
+    });
+    rlth.addImport("core", core);
+
     const exe = b.addExecutable(.{
         .name = "surge",
         .link_libc = false,
@@ -24,7 +83,12 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = optimize,
     });
-    exe.addIncludePath(std.Build.LazyPath.relative("./src/c"));
+    exe.root_module.addImport("core", core);
+    exe.root_module.addImport("app", app);
+    exe.root_module.addImport("gpu", gpu);
+    exe.root_module.addImport("renderer", renderer);
+    exe.root_module.addImport("stb", stb);
+    exe.root_module.addImport("rlth", rlth);
     // exe.addSystemIncludePath("");
     // exe.linkLibC();
 
@@ -76,15 +140,56 @@ pub fn build(b: *std.Build) !void {
     // const sysgpu_module = sysgpu_dep.module("mach-sysgpu");
     // exe.addModule("gpu", sysgpu_module);
 
-    if (target.isWindows()) {
+    if (target.result.os.tag == .windows) {
         const win32_dep = b.dependency("win32", .{});
-        const win32_module = win32_dep.module("zigwin32");
+        const win32 = win32_dep.module("zigwin32");
+        app.addImport("win32", win32);
+
+        app.linkSystemLibrary("Imm32", .{ .needed = true });
+        app.linkSystemLibrary("Gdi32", .{ .needed = true });
+        app.linkSystemLibrary("comctl32", .{ .needed = true });
+
+        const app_windows = b.addModule("app_windows", .{
+            .root_source_file = .{
+                .path = "src/backends/windows.zig",
+            },
+            .target = target,
+            .optimize = optimize,
+        });
+        app_windows.addImport("win32", win32);
+        app_windows.addImport("core", core);
+        app_windows.addImport("app", app);
+        app.addImport("app_windows", app_windows);
+
+        const d3d = b.addModule("d3d", .{
+            .root_source_file = .{
+                .path = "src/backends/d3d/d3d.zig",
+            },
+            .target = target,
+            .optimize = optimize,
+        });
+        d3d.addImport("gpu", gpu);
+        d3d.addImport("win32", win32);
+
+        const d3d12 = b.addSharedLibrary(.{
+            .name = "render_d3d12",
+            .root_source_file = .{
+                .path = "src/backends/d3d12/d3d12.zig",
+            },
+            .target = target,
+            .optimize = optimize,
+        });
+        d3d12.root_module.addImport("core", core);
+        d3d12.root_module.addImport("app", app);
+        d3d12.root_module.addImport("gpu", gpu);
+        d3d12.root_module.addImport("d3d", d3d);
+        d3d12.root_module.addImport("win32", win32);
+        b.getInstallStep().dependOn(&b.addInstallArtifact(d3d12, .{ .dest_dir = .{ .override = .bin } }).step);
+
+        b.installBinFile("thirdparty/dxc/x64/dxil.dll", "dxil.dll");
+        b.installBinFile("thirdparty/dxc/x64/dxcompiler.dll", "dxcompiler.dll");
 
         inline for (.{ exe, unit_tests }) |t| {
-            t.addModule("win32", win32_module);
-            t.linkSystemLibraryName("Imm32");
-            t.linkSystemLibraryName("Gdi32");
-            t.linkSystemLibraryName("comctl32");
 
             // June 2023 Update 3
             linkGdk(b, t, null, "230603", "amd64") catch unreachable;
@@ -95,12 +200,6 @@ pub fn build(b: *std.Build) !void {
         }
 
         // buildD3d11(b, target, optimize);
-        buildD3d12(b, target, optimize);
-    }
-
-    const stbi = stbImage(b, target, optimize);
-    inline for (.{ exe, unit_tests }) |t| {
-        t.addObject(stbi);
     }
 }
 
@@ -141,56 +240,21 @@ fn linkGdk(
     exe.linkLibC();
 }
 
-fn buildBackend(
-    b: *std.Build,
+const DependencyPair = struct {
     name: []const u8,
-    src: []const u8,
-    target: std.zig.CrossTarget,
-    optimize: std.builtin.OptimizeMode,
-) *std.Build.Step.Compile {
-    const lib = b.addSharedLibrary(.{
-        .name = name,
-        .link_libc = false,
-        .root_source_file = .{ .path = src },
-        .main_mod_path = .{ .path = "src" },
-        .target = target,
-        .optimize = optimize,
-    });
-
-    const artifact = b.addInstallArtifact(lib, .{ .dest_dir = .{ .override = .bin } });
-    b.getInstallStep().dependOn(&artifact.step);
-    return lib;
-}
-
-fn buildD3d12(
-    b: *std.Build,
-    target: std.zig.CrossTarget,
-    optimize: std.builtin.OptimizeMode,
-) void {
-    const src = "src/gpu/d3d12/main.zig";
-    const name = "render_d3d12";
-    const d3d12 = buildBackend(b, name, src, target, optimize);
-
-    const win32_dep = b.dependency("win32", .{});
-    const win32_module = win32_dep.module("zigwin32");
-    d3d12.addModule("win32", win32_module);
-    b.installBinFile("libs/x64/dxil.dll", "dxil.dll");
-    b.installBinFile("libs/x64/dxcompiler.dll", "dxcompiler.dll");
-}
-
-fn stbImage(
-    b: *std.Build,
-    target: std.zig.CrossTarget,
-    optimize: std.builtin.OptimizeMode,
-) *std.Build.Step.Compile {
-    const src = "src/c/stb_image_impl.c";
-
-    var stbi = b.addObject(.{
-        .name = "stb_image",
-        .root_source_file = .{ .path = src },
-        .target = target,
-        .optimize = optimize,
-    });
-    stbi.linkLibC();
-    return stbi;
+    module: *const std.Build.Module,
+};
+fn waterfallModules(to: *std.Build.Module, from: []const DependencyPair) void {
+    for (from) |m| {
+        var it = m.module.iterateDependencies(false, false);
+        while (it.next()) |dep| {
+            if (to.import_table.get(dep.name) == null) {
+                to.addImport(dep.name, dep.module);
+                if (dep.compile) |c| to.linkLibrary(c);
+            }
+        }
+        if (to.import_table.get(m.name) == null) {
+            to.addImport(m.name, m.module);
+        }
+    }
 }

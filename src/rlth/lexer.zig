@@ -1,6 +1,8 @@
 const std = @import("std");
 const lexemes = @import("lexemes.zig");
 
+const failing_allocator = @import("core").allocators.FailingAllocator.allocator();
+
 pub const codepoint = u21;
 
 pub const Source = struct {
@@ -33,6 +35,79 @@ pub const Token = struct {
         rbrace,
         undefined,
     },
+
+    pub fn format(
+        value: @This(),
+        comptime _: []const u8,
+        _: std.fmt.FormatOptions,
+        writer: anytype,
+    ) std.os.WriteError!void {
+        switch (value.un) {
+            .invalid => try writer.print("<invalid>", .{}),
+            .eof => try writer.print("<eof>", .{}),
+            .comment => {
+                try writer.print("<comment>({s})", .{value.string[0..@min(10, value.string.len)]});
+            },
+            .identifier => {
+                try writer.print("<identifier>({s})", .{value.string[0..@min(10, value.string.len)]});
+            },
+            .literal => {
+                try writer.print("<literal>({s})", .{value.string[0..@min(10, value.string.len)]});
+            },
+            .operator => |op| try writer.print("<operator>({s})", .{switch (op) {
+                .question => "?",
+                .pointer => "^",
+                .comma => ",",
+                .colon => ":",
+                .lparen => "(",
+                .rparen => ")",
+                .lbracket => "[",
+                .rbracket => "]",
+                .mod => "%",
+                .modmod => "%%",
+                .ellipsis => "...",
+                .period => ".",
+                .rangehalf => "..<",
+                .rangefull => "..=",
+                .quo => "/",
+                .add => "+",
+                .sub => "-",
+                .arrow => "->",
+                .lteq => "<=",
+                .lt => "<",
+                .gteq => ">=",
+                .gt => ">",
+                .andnot => "&~",
+                .cmpand => "&&",
+                .@"and" => "&",
+                .cmpor => "||",
+                .@"or" => "|",
+                .xor => "~",
+                .not => "!",
+                .cmpeq => "==",
+                .noteq => "!=",
+                .shl => "<<",
+                .shr => ">>",
+                .in => "in",
+                .not_in => "not in",
+                .auto_cast => "auto_cast",
+                .cast => "cast",
+                .transmute => "transmute",
+                .or_else => "or_else",
+                .or_return => "or_return",
+                .mul => "*",
+            }}),
+            .keyword => |kw| try writer.print("<keyword>({s})", .{@tagName(kw)}),
+            .assignment => |a| try writer.print("<=>({s})", .{@tagName(a)}),
+            .directive => |d| try writer.print("<#>({s})", .{@tagName(d)}),
+            .attribute => try writer.print("<@>", .{}),
+            .@"const" => try writer.print("<const>", .{}),
+            .semicolon => try writer.print("<;>", .{}),
+            .lbrace => try writer.print("<{{>", .{}),
+            .rbrace => try writer.print("<}}>", .{}),
+            .undefined => try writer.print("<--->", .{}),
+        }
+    }
 };
 pub const NullToken = Token{
     .location = Location{
@@ -52,7 +127,6 @@ pub const Input = struct {
 /// this will not clean up it's memory
 /// use an arena or something to clean up
 pub const Lexer = struct {
-    allocator: std.mem.Allocator = undefined,
     err_handler: ?*const fn (msg: []const u8) void = null,
 
     input: Input = undefined,
@@ -61,11 +135,10 @@ pub const Lexer = struct {
     here: usize = 0,
     codepoint: codepoint = 0,
     asi: bool = false,
-    peek_list: std.ArrayList(Token) = undefined,
+    peek_list: std.ArrayListUnmanaged(Token) = undefined,
 
-    pub fn init(lexer: *Lexer, allocator: std.mem.Allocator, source: *const Source) void {
+    pub fn init(lexer: *Lexer, peek_list: []Token, source: *const Source) void {
         lexer.* = Lexer{
-            .allocator = allocator,
             .input = Input{
                 .source = source,
                 .current = 0,
@@ -82,13 +155,14 @@ pub const Lexer = struct {
             .here = 0,
             .codepoint = 0,
             .asi = false,
-            .peek_list = std.ArrayList(Token).init(allocator),
+            .peek_list = std.ArrayListUnmanaged(Token).fromOwnedSlice(peek_list),
         };
+        lexer.peek_list.clearRetainingCapacity();
         _ = lexer.advance();
     }
 
     pub fn deinit(self: *Lexer) void {
-        self.peek_list.deinit();
+        self.peek_list.deinit(failing_allocator);
     }
 
     pub fn next(self: *Lexer) Token {
@@ -101,7 +175,7 @@ pub const Lexer = struct {
     }
 
     pub fn peek(self: *Lexer) !Token {
-        try self.peek_list.append(self.rawNext());
+        try self.peek_list.append(failing_allocator, self.rawNext());
         return self.peek_list.getLast();
     }
 

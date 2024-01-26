@@ -49,7 +49,7 @@ pub const this_platform = if (@hasDecl(root, "target_override"))
 else
     Platform.fromTag(builtin.target);
 pub const impl = switch (this_platform) {
-    .windows => @import("./platform/windows.zig"),
-    .xboxone => @import("./platform/windows.zig"),
+    .windows => @import("app_windows"),
+    .xboxone => @import("app_windows"),
     inline else => @compileError("Unsupported OS"),
 };

@@ -1,9 +1,9 @@
 pub const std = @import("std");
 
-const math = @import("../math.zig");
+const math = @import("core").math;
 
 const app = @import("app.zig");
-pub const platform = @import("./platform.zig");
+pub const platform = @import("platform.zig");
 
 pub const NativeHandle = struct { wnd: platform.impl.NativeHandle };
 

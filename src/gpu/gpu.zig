@@ -1,11 +1,12 @@
 const std = @import("std");
 
-const commonutil = @import("../../util.zig");
+const commonutil = @import("../util.zig");
 
 pub const impl = @import("impl.zig");
 // pub const impl = @import("d3d11/main.zig");
 pub const procs = @import("procs.zig");
 pub const util = @import("util.zig");
+pub const allocator = @import("gpu_allocator.zig");
 
 pub const loadBackend = if (@hasDecl(impl, "loadBackend")) impl.loadBackend else struct {
     pub fn load(backend: BackendType) bool {
@@ -54,7 +55,7 @@ pub const TextureView = @import("texture_view.zig").TextureView;
 
 pub const Error = blk: {
     var err = error{};
-    inline for (.{
+    for (.{
         BindGroup,
         BindGroupLayout,
         Buffer,
@@ -769,7 +770,7 @@ pub const VertexBufferLayout = struct {
             .step_mode = .vertex,
             .attributes = comptime blk: {
                 var attributes: [fields.len]VertexAttribute = undefined;
-                inline for (fields, 0..) |field, i| {
+                for (fields, 0..) |field, i| {
                     const field_data = if (@hasField(@TypeOf(field_info), field.name))
                         @field(field_info, field.name)
                     else
