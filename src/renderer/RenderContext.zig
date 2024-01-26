@@ -182,7 +182,7 @@ fn recreateSwapchainDependentResources(self: *Self) !void {
     try self.createSwapchainDependentResources();
 }
 
-pub fn resize(self: *Self, size: [2]u32) !void {
+pub fn updateSize(self: *Self, size: [2]u32) !void {
     if (size[0] == self.swapchain_size[0] and size[1] == self.swapchain_size[1]) return;
     if (size[0] == 0 or size[1] == 0) return;
 

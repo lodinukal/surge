@@ -976,9 +976,8 @@ const WindowsInput = struct {
 
             win32.ui.windows_and_messaging.WM_TIMER => {
                 if (wparam == win32_update_timer_id) {
-                    if (self.getBase().frame_update_callback) |cb| {
-                        cb(window.getBase());
-                    }
+                    const wnd = window.getBase();
+                    wnd.application.input.window_frame.broadcast(.{wnd});
                 }
             },
 

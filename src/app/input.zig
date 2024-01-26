@@ -9,6 +9,9 @@ pub const WindowResizedDelegate = core.Delegate(fn (
     *app.Window,
     [2]u32,
 ) void, false);
+pub const WindowFrameDelegate = core.Delegate(fn (
+    *app.Window,
+) void, false);
 
 pub const Input = struct {
     const MouseState = struct {
@@ -41,7 +44,7 @@ pub const Input = struct {
     touch_changed_callback: ?TouchChangedCallback = null,
     touch_ended_callback: ?TouchEndedCallback = null,
     input_type_updated_callback: ?InputTypeUpdatedCallback = null,
-    frame_update_callback: ?FrameUpdateCallback = null,
+    window_frame: WindowFrameDelegate.Delegate = .{},
     window_resized: WindowResizedDelegate.Delegate = .{},
 
     const FocusedChangedCallback = *const fn (*app.Window, bool) void;
@@ -52,7 +55,6 @@ pub const Input = struct {
     const TouchChangedCallback = *const fn (InputObject) void;
     const TouchEndedCallback = *const fn (InputObject) void;
     const InputTypeUpdatedCallback = *const fn (new: InputType, old: InputType) void;
-    const FrameUpdateCallback = *const fn (*app.Window) void;
 
     pub fn create(allocator: std.mem.Allocator) !*Input {
         var self: *Input = try allocator.create(Input);

@@ -18,8 +18,8 @@ pub fn deinit(self: *Self) void {
     self.base_ren.deinit();
 }
 
-pub fn resize(self: *Self, size: [2]u32) !void {
-    try self.base_ren.resize(size);
+pub fn updateSize(self: *Self, size: [2]u32) !void {
+    try self.base_ren.updateSize(size);
 }
 
 pub fn frame(self: *Self) !void {
