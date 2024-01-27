@@ -8,7 +8,7 @@ const util = core.util;
 const WindowRenderer = @import("renderer").WindowRenderer;
 const Deferred = @import("renderer").Deferred;
 
-const rlth = @import("rlth");
+const rl = @import("rl");
 const image = @import("stb");
 
 pub fn main() !void {

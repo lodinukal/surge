@@ -2,12 +2,57 @@ const std = @import("std");
 const lexemes = @import("lexemes.zig");
 const lexer = @import("lexer.zig");
 
-pub const ExpressionIndex = usize;
-pub const StatementIndex = usize;
-pub const TypeIndex = usize;
-pub const CaseClauseIndex = usize;
-pub const IdentifierIndex = usize;
-pub const FieldIndex = usize;
+pub const ExpressionIndex = enum(usize) { none = std.math.maxInt(usize), _ };
+pub const StatementIndex = enum(usize) { none = std.math.maxInt(usize), _ };
+pub const TypeIndex = enum(usize) { none = std.math.maxInt(usize), _ };
+pub const CaseClauseIndex = enum(usize) { none = std.math.maxInt(usize), _ };
+pub const IdentifierIndex = enum(usize) { none = std.math.maxInt(usize), _ };
+pub const FieldIndex = enum(usize) { none = std.math.maxInt(usize), _ };
+pub const RefIndex = enum(usize) { none = std.math.maxInt(usize), _ };
+
+pub const AnyIndex = enum(usize) {
+    none = std.math.maxInt(usize),
+    _,
+
+    pub inline fn from(any: anytype) AnyIndex {
+        return switch (@TypeOf(any)) {
+            ExpressionIndex,
+            StatementIndex,
+            TypeIndex,
+            CaseClauseIndex,
+            IdentifierIndex,
+            FieldIndex,
+            RefIndex,
+            => @enumFromInt(@intFromEnum(any)),
+            else => @compileError("Invalid index type"),
+        };
+    }
+
+    pub inline fn to(self: AnyIndex, comptime T: type) T {
+        return switch (T) {
+            ExpressionIndex,
+            StatementIndex,
+            TypeIndex,
+            CaseClauseIndex,
+            IdentifierIndex,
+            FieldIndex,
+            RefIndex,
+            => @enumFromInt(@intFromEnum(self)),
+            else => @compileError("Invalid index type"),
+        };
+    }
+};
+
+pub const Any = union(enum) {
+    none: void,
+    expression: Expression,
+    statement: Statement,
+    type: Type,
+    case_clause: CaseClause,
+    identifier: Identifier,
+    field: Field,
+    ref: RefIndex,
+};
 
 pub const ExpressionKind = enum(u8) {
     tuple = 0,
@@ -94,6 +139,7 @@ pub const BuiltinTypeKind = enum(u8) {
     cstring = 5, // cstring
     pointer = 6, // rawptr
     uintptr = 7, // uintptr
+    _,
 };
 
 pub const Endianess = enum(u8) {
@@ -139,7 +185,7 @@ pub const FieldFlags = packed struct {
 
 pub const CallingConvention = enum(u8) {
     invalid,
-    rlth,
+    rl,
     contextless,
     cdecl,
     stdcall,
@@ -174,7 +220,7 @@ pub const Expression = union(ExpressionKind) {
 };
 
 pub const TupleExpression = struct {
-    expressions: std.ArrayList(ExpressionIndex),
+    expressions: RefIndex, // std.ArrayList(ExpressionIndex),
 };
 
 pub const UnaryExpression = struct {
@@ -212,7 +258,7 @@ pub const SelectorExpression = struct {
 
 pub const CallExpression = struct {
     operand: ExpressionIndex,
-    arguments: std.ArrayList(FieldIndex),
+    arguments: RefIndex, // std.ArrayList(FieldIndex),
 };
 
 pub const UnwrapExpression = struct {
@@ -249,7 +295,7 @@ pub const LiteralExpression = struct {
 
 pub const CompoundLiteralExpression = struct {
     type: ?TypeIndex = null,
-    fields: std.ArrayList(FieldIndex),
+    fields: RefIndex, // std.ArrayList(FieldIndex),
 };
 
 pub const IdentifierExpression = struct {
@@ -260,7 +306,7 @@ pub const ContextExpression = struct {};
 pub const UndefinedExpression = struct {};
 
 pub const ProcedureGroupExpression = struct {
-    expressions: std.ArrayList(ExpressionIndex),
+    expressions: RefIndex, // std.ArrayList(ExpressionIndex),
 };
 
 // Statements
@@ -300,7 +346,7 @@ pub const ExpressionStatement = struct {
 
 pub const BlockStatement = struct {
     flags: BlockFlags,
-    statements: std.ArrayList(StatementIndex),
+    statements: RefIndex, // std.ArrayList(StatementIndex),
     label: ?IdentifierIndex,
 };
 
@@ -312,10 +358,11 @@ pub const AssignmentStatement = struct {
 
 pub const DeclarationStatement = struct {
     type: ?TypeIndex = null,
-    names: std.ArrayList(IdentifierIndex),
-    values: ?ExpressionIndex = null,
-    attributes: std.ArrayList(FieldIndex),
+    names: RefIndex, // std.ArrayList(IdentifierIndex),
+    values: ExpressionIndex,
+    attributes: RefIndex, // std.ArrayList(FieldIndex),
     using: bool,
+    constant: bool,
 };
 
 pub const IfStatement = struct {
@@ -347,7 +394,7 @@ pub const ForStatement = struct {
 pub const SwitchStatement = struct {
     init: ?StatementIndex,
     condition: ?ExpressionIndex,
-    clauses: std.ArrayList(CaseClauseIndex),
+    clauses: RefIndex, // std.ArrayList(CaseClauseIndex),
     label: ?IdentifierIndex,
 };
 
@@ -363,13 +410,13 @@ pub const BranchStatement = struct {
 pub const ForeignBlockStatement = struct {
     name: ?IdentifierIndex = null,
     body: StatementIndex,
-    attributes: std.ArrayList(FieldIndex),
+    attributes: RefIndex, // std.ArrayList(FieldIndex),
 };
 
 pub const ForeignImportStatement = struct {
     name: []const u8,
     sources: std.ArrayList([]const u8),
-    attributes: std.ArrayList(FieldIndex),
+    attributes: RefIndex, // std.ArrayList(FieldIndex),
 };
 
 pub const UsingStatement = struct {
@@ -422,8 +469,8 @@ pub const ProcedureType = struct {
     kind: ProcedureKind,
     flags: ProcedureFlags,
     convention: CallingConvention,
-    params: std.ArrayList(FieldIndex),
-    results: std.ArrayList(FieldIndex),
+    params: RefIndex, // std.ArrayList(FieldIndex),
+    results: RefIndex, // std.ArrayList(FieldIndex),
 };
 
 pub const PointerType = struct {
@@ -476,7 +523,7 @@ pub const DistinctType = struct {
 
 pub const EnumType = struct {
     type: ?TypeIndex = null,
-    fields: std.ArrayList(FieldIndex),
+    fields: RefIndex, // std.ArrayList(FieldIndex),
 };
 
 pub const ExpressionType = struct {
@@ -487,20 +534,20 @@ pub const StructType = struct {
     kind: StructKind,
     flags: StructFlags,
     @"align": ?ExpressionIndex,
-    fields: std.ArrayList(FieldIndex),
+    fields: RefIndex, // std.ArrayList(FieldIndex),
     where_clauses: ?ExpressionIndex,
 
-    parameters: ?std.ArrayList(FieldIndex) = null,
+    parameters: ?RefIndex = null, // std.ArrayList(FieldIndex) = null,
 };
 
 pub const UnionType = struct {
     kind: UnionKind,
     flags: UnionFlags,
     @"align": ?ExpressionIndex,
-    variants: std.ArrayList(FieldIndex),
+    variants: RefIndex, // std.ArrayList(FieldIndex),
     where_clauses: ?ExpressionIndex,
 
-    parameters: ?std.ArrayList(FieldIndex) = null,
+    parameters: ?RefIndex = null, // std.ArrayList(FieldIndex) = null,
 };
 
 pub const PolyType = struct {
@@ -520,12 +567,12 @@ pub const Field = struct {
     value: ?ExpressionIndex = null,
     tag: ?[]const u8 = null,
     flags: FieldFlags,
-    attributes: std.ArrayList(FieldIndex),
+    attributes: RefIndex, // std.ArrayList(FieldIndex),
 };
 
 pub const CaseClause = struct {
     expression: ?ExpressionIndex = null,
-    statements: std.ArrayList(StatementIndex),
+    statements: RefIndex, // std.ArrayList(StatementIndex),
 };
 
 const Tree = @This();
@@ -539,18 +586,15 @@ imports: std.ArrayListUnmanaged(StatementIndex) = undefined,
 tokens: std.ArrayListUnmanaged(lexer.Token) = undefined,
 statements: std.ArrayListUnmanaged(StatementIndex) = undefined,
 
-all_expressions: std.ArrayListUnmanaged(Expression) = undefined,
-all_statements: std.ArrayListUnmanaged(Statement) = undefined,
-all_types: std.ArrayListUnmanaged(Type) = undefined,
-all_case_clauses: std.ArrayListUnmanaged(CaseClause) = undefined,
-all_identifiers: std.ArrayListUnmanaged(Identifier) = undefined,
-all_fields: std.ArrayListUnmanaged(Field) = undefined,
+all: std.ArrayListUnmanaged(Any) = undefined,
+refs: std.ArrayListUnmanaged(AnyIndex) = undefined,
 
 pub fn init(allocator: std.mem.Allocator, name: []const u8) !Tree {
-    return .{
+    var self: Tree = .{
         .allocator = allocator,
         .source = lexer.Source{
             .name = name,
+            .directory = std.fs.path.dirname(name) orelse "",
             .code = "",
         },
         .imports = std.ArrayListUnmanaged(StatementIndex){},
@@ -558,22 +602,18 @@ pub fn init(allocator: std.mem.Allocator, name: []const u8) !Tree {
         .tokens = std.ArrayListUnmanaged(lexer.Token){},
         .statements = std.ArrayListUnmanaged(StatementIndex){},
 
-        .all_expressions = std.ArrayListUnmanaged(Expression){},
-        .all_statements = std.ArrayListUnmanaged(Statement){},
-        .all_types = std.ArrayListUnmanaged(Type){},
-        .all_case_clauses = std.ArrayListUnmanaged(CaseClause){},
-        .all_identifiers = std.ArrayListUnmanaged(Identifier){},
-        .all_fields = std.ArrayListUnmanaged(Field){},
+        .all = std.ArrayListUnmanaged(Any){},
+        .refs = std.ArrayListUnmanaged(AnyIndex){},
     };
+
+    try self.refs.append(self.allocator, .none);
+
+    return self;
 }
 
 pub fn deinit(self: *Tree) void {
-    self.all_expressions.deinit(self.allocator);
-    self.all_statements.deinit(self.allocator);
-    self.all_types.deinit(self.allocator);
-    self.all_case_clauses.deinit(self.allocator);
-    self.all_identifiers.deinit(self.allocator);
-    self.all_fields.deinit(self.allocator);
+    self.all.deinit(self.allocator);
+    self.refs.deinit(self.allocator);
 
     self.tokens.deinit(self.allocator);
     self.statements.deinit(self.allocator);
@@ -584,7 +624,8 @@ pub fn clone(self: *const Tree, allocator: std.mem.Allocator) !Tree {
     return .{
         .allocator = allocator,
         .source = lexer.Source{
-            .name = self.source.name,
+            .name = try allocator.dupe(u8, self.source.name),
+            .directory = try allocator.dupe(u8, self.source.directory),
             .code = "",
         },
         .imports = try self.imports.clone(allocator),
@@ -592,62 +633,78 @@ pub fn clone(self: *const Tree, allocator: std.mem.Allocator) !Tree {
         .tokens = try self.tokens.clone(allocator),
         .statements = try self.statements.clone(allocator),
 
-        .all_expressions = try self.all_expressions.clone(allocator),
-        .all_statements = try self.all_statements.clone(allocator),
-        .all_types = try self.all_types.clone(allocator),
-        .all_case_clauses = try self.all_case_clauses.clone(allocator),
-        .all_identifiers = try self.all_identifiers.clone(allocator),
-        .all_fields = try self.all_fields.clone(allocator),
+        .all = try self.all.clone(allocator),
+        .refs = try self.refs.clone(allocator),
     };
 }
 
+pub fn getAny(self: *Tree, index: AnyIndex) *Any {
+    return &self.all.items[@intFromEnum(index)];
+}
+
+pub fn createRef(self: *Tree, items: []const AnyIndex) !RefIndex {
+    const start = self.refs.items.len;
+    try self.refs.ensureUnusedCapacity(self.allocator, items.len + 1);
+    for (items) |item| {
+        self.refs.appendAssumeCapacity(item);
+    }
+    self.refs.appendAssumeCapacity(.none);
+    return @enumFromInt(start);
+}
+
+pub fn refToList(self: *Tree, index: RefIndex) ![]const AnyIndex {
+    if (index == .none) return &.{};
+    return std.mem.sliceTo(self.refs.items[@intFromEnum(index)..], .none);
+}
+
 fn createExpression(self: *Tree, e: Expression) !ExpressionIndex {
-    const index = self.all_expressions.items.len;
-    const set = try self.all_expressions.addOne(self.allocator);
-    set.* = e;
-    return index;
+    const index = self.all.items.len;
+    const set = try self.all.addOne(self.allocator);
+    set.* = .{ .expression = e };
+    return @enumFromInt(index);
 }
 
 pub fn getExpression(self: *Tree, index: ExpressionIndex) *Expression {
-    return &self.all_expressions.items[index];
+    return &self.all.items[@intFromEnum(index)].expression;
 }
 
 pub fn getExpressionConst(self: *const Tree, index: ExpressionIndex) *const Expression {
-    return &self.all_expressions.items[index];
+    return &self.all.items[@intFromEnum(index)].expression;
 }
 
 fn createStatement(self: *Tree, s: Statement) !StatementIndex {
-    const index = self.all_statements.items.len;
-    const set = try self.all_statements.addOne(self.allocator);
-    set.* = s;
-    return index;
+    const index = self.all.items.len;
+    const set = try self.all.addOne(self.allocator);
+    set.* = .{ .statement = s };
+    return @enumFromInt(index);
 }
 
 pub fn getStatement(self: *Tree, index: StatementIndex) *Statement {
-    return &self.all_statements.items[index];
+    return &self.all.items[@intFromEnum(index)].statement;
 }
 
 pub fn getStatementConst(self: *const Tree, index: StatementIndex) *const Statement {
-    return &self.all_statements.items[index];
+    return &self.all.items[@intFromEnum(index)].statement;
 }
 
 fn createType(self: *Tree, t: Type) !TypeIndex {
-    const index = self.all_types.items.len;
-    const set = try self.all_types.addOne(self.allocator);
-    set.* = t;
-    return index;
+    const index = self.all.items.len;
+    const set = try self.all.addOne(self.allocator);
+    set.* = .{ .type = t };
+    return @enumFromInt(index);
 }
 
 pub fn getType(self: *Tree, index: TypeIndex) *Type {
-    return &self.all_types.items[index];
+    return &self.all.items[@intFromEnum(index)].type;
 }
 
 pub fn getTypeConst(self: *const Tree, index: TypeIndex) *const Type {
-    return &self.all_types.items[index];
+    return &self.all.items[@intFromEnum(index)].type;
 }
 
+// std.ArrayList(ExpressionIndex)
 /// consumes `expressions`
-pub fn newTupleExpression(self: *Tree, expressions: std.ArrayList(ExpressionIndex)) !ExpressionIndex {
+pub fn newTupleExpression(self: *Tree, expressions: RefIndex) !ExpressionIndex {
     return try self.createExpression(.{ .tuple = .{
         .expressions = expressions,
     } });
@@ -719,7 +776,7 @@ pub fn newSelectorExpression(
 pub fn newCallExpression(
     self: *Tree,
     operand: ExpressionIndex,
-    arguments: std.ArrayList(FieldIndex),
+    arguments: RefIndex, // std.ArrayList(FieldIndex),
 ) !ExpressionIndex {
     return try self.createExpression(.{ .call = .{
         .operand = operand,
@@ -797,7 +854,7 @@ pub fn newLiteralExpression(
 pub fn newCompoundLiteralExpression(
     self: *Tree,
     ty: ?TypeIndex,
-    fields: std.ArrayList(FieldIndex),
+    fields: RefIndex, // std.ArrayList(FieldIndex),
 ) !ExpressionIndex {
     return try self.createExpression(.{ .compound_literal = .{
         .type = ty,
@@ -824,7 +881,7 @@ pub fn newUndefinedExpression(self: *Tree) !ExpressionIndex {
 
 pub fn newProcedureGroupExpression(
     self: *Tree,
-    expressions: std.ArrayList(ExpressionIndex),
+    expressions: RefIndex, // std.ArrayList(ExpressionIndex),
 ) !ExpressionIndex {
     return try self.createExpression(.{ .procedure_group = .{
         .expressions = expressions,
@@ -863,7 +920,7 @@ pub fn newExpressionStatement(
 pub fn newBlockStatement(
     self: *Tree,
     flags: BlockFlags,
-    statements: std.ArrayList(StatementIndex),
+    statements: RefIndex, // std.ArrayList(StatementIndex),
     label: ?IdentifierIndex,
 ) !StatementIndex {
     return try self.createStatement(.{ .block = .{
@@ -889,10 +946,11 @@ pub fn newAssignmentStatement(
 pub fn newDeclarationStatement(
     self: *Tree,
     ty: ?TypeIndex,
-    names: std.ArrayList(IdentifierIndex),
-    values: ?ExpressionIndex,
-    attributes: std.ArrayList(FieldIndex),
+    names: RefIndex, // std.ArrayList(IdentifierIndex),
+    values: ExpressionIndex,
+    attributes: RefIndex, // std.ArrayList(FieldIndex),
     using: bool,
+    constant: bool,
 ) !StatementIndex {
     return try self.createStatement(.{ .declaration = .{
         .type = ty,
@@ -900,6 +958,7 @@ pub fn newDeclarationStatement(
         .values = values,
         .attributes = attributes,
         .using = using,
+        .constant = constant,
     } });
 }
 
@@ -963,7 +1022,7 @@ pub fn newSwitchStatement(
     self: *Tree,
     _init: ?StatementIndex,
     condition: ?ExpressionIndex,
-    clauses: std.ArrayList(CaseClauseIndex),
+    clauses: RefIndex, // std.ArrayList(CaseClauseIndex),
     label: ?IdentifierIndex,
 ) !StatementIndex {
     return try self.createStatement(.{ .@"switch" = .{
@@ -998,7 +1057,7 @@ pub fn newForeignBlockStatement(
     self: *Tree,
     name: ?IdentifierIndex,
     body: StatementIndex,
-    attributes: std.ArrayList(FieldIndex),
+    attributes: RefIndex, // std.ArrayList(FieldIndex),
 ) !StatementIndex {
     return try self.createStatement(.{ .foreign_block = .{
         .name = name,
@@ -1011,7 +1070,7 @@ pub fn newForeignImportStatement(
     self: *Tree,
     name: []const u8,
     sources: std.ArrayList([]const u8),
-    attributes: std.ArrayList(FieldIndex),
+    attributes: RefIndex, // std.ArrayList(FieldIndex),
 ) !StatementIndex {
     return try self.createStatement(.{ .foreign_import = .{
         .name = name,
@@ -1044,50 +1103,67 @@ pub fn newIdentifier(
     contents: []const u8,
     poly: bool,
 ) !IdentifierIndex {
-    const index = self.all_identifiers.items.len;
-    const set = try self.all_identifiers.addOne(self.allocator);
-    set.* = Identifier{
+    const index = self.all.items.len;
+    const set = try self.all.addOne(self.allocator);
+    set.* = .{ .identifier = Identifier{
         .contents = contents,
         .poly = poly,
         .token = @intCast(self.tokens.items.len - 1),
-    };
-    return index;
+    } };
+    return @enumFromInt(index);
 }
 
 pub fn getIdentifier(self: *Tree, index: IdentifierIndex) *Identifier {
-    return &self.all_identifiers.items[index];
+    return &self.all.items[@intFromEnum(index)].identifier;
 }
 
 pub fn getIdentifierConst(self: *const Tree, index: IdentifierIndex) *const Identifier {
-    return &self.all_identifiers.items[index];
+    return &self.all.items[@intFromEnum(index)].identifier;
 }
 
 pub fn newCaseClause(
     self: *Tree,
     expression: ?ExpressionIndex,
-    statements: std.ArrayList(StatementIndex),
+    statements: RefIndex, // std.ArrayList(StatementIndex),
 ) !CaseClauseIndex {
-    const index = self.all_case_clauses.items.len;
-    const set = try self.all_case_clauses.addOne(self.allocator);
-    set.* = CaseClause{
+    const index = self.all.items.len;
+    const set = try self.all.addOne(self.allocator);
+    set.* = .{ .case_clause = CaseClause{
         .expression = expression,
         .statements = statements,
-    };
-    return index;
+    } };
+    return @enumFromInt(index);
 }
 
 pub fn getCaseClause(self: *Tree, index: CaseClauseIndex) *CaseClause {
-    return &self.all_case_clauses.items[index];
+    return &self.all.items[@intFromEnum(index)].case_clause;
 }
 
 pub fn getCaseClauseConst(self: *const Tree, index: CaseClauseIndex) *const CaseClause {
-    return &self.all_case_clauses.items[index];
+    return &self.all.items[@intFromEnum(index)].case_clause;
 }
 
 pub fn newType(
     self: *Tree,
 ) !TypeIndex {
     return try self.createType(.{});
+}
+
+pub fn newBuiltinType(
+    self: *Tree,
+    identifier: []const u8,
+    kind: BuiltinTypeKind,
+    size: u16,
+    alignof: u16,
+    endianess: Endianess,
+) !TypeIndex {
+    return try self.createType(.{ .derived = .{ .builtin = .{
+        .identifier = identifier,
+        .kind = kind,
+        .size = size,
+        .alignof = alignof,
+        .endianess = endianess,
+    } } });
 }
 
 pub fn newPointerType(
@@ -1171,7 +1247,7 @@ pub fn newDistinctType(
 pub fn newEnumType(
     self: *Tree,
     ty: ?TypeIndex,
-    fields: std.ArrayList(FieldIndex),
+    fields: RefIndex, // std.ArrayList(FieldIndex),
 ) !TypeIndex {
     return try self.createType(.{ .derived = .{ .@"enum" = .{ .type = ty, .fields = fields } } });
 }
@@ -1180,7 +1256,7 @@ pub fn newConcreteStructType(
     self: *Tree,
     flags: StructFlags,
     @"align": ?ExpressionIndex,
-    fields: std.ArrayList(FieldIndex),
+    fields: RefIndex, // std.ArrayList(FieldIndex),
     where_clauses: ?ExpressionIndex,
 ) !TypeIndex {
     return try self.createType(.{ .derived = .{ .@"struct" = .{
@@ -1196,9 +1272,9 @@ pub fn newGenericStructType(
     self: *Tree,
     flags: StructFlags,
     @"align": ?ExpressionIndex,
-    fields: std.ArrayList(FieldIndex),
+    fields: RefIndex, // std.ArrayList(FieldIndex),
     where_clauses: ?ExpressionIndex,
-    parameters: std.ArrayList(FieldIndex),
+    parameters: RefIndex, // std.ArrayList(FieldIndex),
 ) !TypeIndex {
     return try self.createType(.{ .derived = .{ .@"struct" = .{
         .kind = StructKind.generic,
@@ -1214,7 +1290,7 @@ pub fn newConcreteUnionType(
     self: *Tree,
     flags: UnionFlags,
     @"align": ?ExpressionIndex,
-    variants: std.ArrayList(FieldIndex),
+    variants: RefIndex, // std.ArrayList(FieldIndex),
     where_clauses: ?ExpressionIndex,
 ) !TypeIndex {
     return try self.createType(.{ .derived = .{ .@"union" = .{
@@ -1230,9 +1306,9 @@ pub fn newGenericUnionType(
     self: *Tree,
     flags: UnionFlags,
     @"align": ?ExpressionIndex,
-    variants: std.ArrayList(FieldIndex),
+    variants: RefIndex, // std.ArrayList(FieldIndex),
     where_clauses: ?ExpressionIndex,
-    parameters: std.ArrayList(FieldIndex),
+    parameters: RefIndex, // std.ArrayList(FieldIndex),
 ) !TypeIndex {
     return try self.createType(.{ .derived = .{ .@"union" = .{
         .kind = UnionKind.generic,
@@ -1270,8 +1346,8 @@ pub fn newConcreteProcedureType(
     self: *Tree,
     flags: ProcedureFlags,
     convention: CallingConvention,
-    params: std.ArrayList(FieldIndex),
-    results: std.ArrayList(FieldIndex),
+    params: RefIndex, // std.ArrayList(FieldIndex),
+    results: RefIndex, // std.ArrayList(FieldIndex),
 ) !TypeIndex {
     return try self.createType(.{ .derived = .{ .procedure = .{
         .kind = ProcedureKind.concrete,
@@ -1286,8 +1362,8 @@ pub fn newGenericProcedureType(
     self: *Tree,
     flags: ProcedureFlags,
     convention: CallingConvention,
-    params: std.ArrayList(FieldIndex),
-    results: std.ArrayList(FieldIndex),
+    params: RefIndex, // std.ArrayList(FieldIndex),
+    results: RefIndex, // std.ArrayList(FieldIndex),
 ) !TypeIndex {
     return try self.createType(.{ .derived = .{ .procedure = .{
         .kind = ProcedureKind.generic,
@@ -1306,25 +1382,27 @@ pub fn newField(
     tag: ?[]const u8,
     flags: FieldFlags,
 ) !FieldIndex {
-    const index = self.all_fields.items.len;
-    const set = try self.all_fields.addOne(self.allocator);
-    set.* = Field{
-        .type = ty,
-        .name = name,
-        .value = value,
-        .tag = tag,
-        .flags = flags,
-        .attributes = std.ArrayList(FieldIndex).init(self.allocator),
+    const index = self.all.items.len;
+    const set = try self.all.addOne(self.allocator);
+    set.* = .{
+        .field = Field{
+            .type = ty,
+            .name = name,
+            .value = value,
+            .tag = tag,
+            .flags = flags,
+            .attributes = RefIndex.none, // std.ArrayList(FieldIndex).init(self.allocator),
+        },
     };
-    return index;
+    return @enumFromInt(index);
 }
 
 pub fn getField(self: *Tree, index: FieldIndex) *Field {
-    return &self.all_fields.items[index];
+    return &self.all.items[@intFromEnum(index)].field;
 }
 
 pub fn getFieldConst(self: *const Tree, index: FieldIndex) *const Field {
-    return &self.all_fields.items[index];
+    return &self.all.items[@intFromEnum(index)].field;
 }
 
 pub fn recordToken(self: *Tree, token: lexer.Token) !void {

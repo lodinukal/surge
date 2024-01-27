@@ -42,46 +42,39 @@ pub const Project = struct {
         self: *Project,
         pathname: []const u8,
     ) !*Package {
+        var found = true;
+        _ = self.findPackage(pathname) catch {
+            found = false;
+        };
+        if (found) {
+            return error.AlreadyExists;
+        }
+
         self.mutex.lock();
         defer self.mutex.unlock();
-
-        for (self.packages.items) |package| {
-            if (std.mem.eql(u8, package.pathname, pathname)) {
-                self.context.err("package already exists: {s}", .{pathname});
-                return error.AlreadyExists;
-            }
-        }
 
         var package = try self.packages.addOne();
         try package.init(
             self,
-            pathname,
+            try self.context.allocator.dupe(u8, pathname),
         );
         return package;
     }
 
-    pub fn processBlocking(self: *Project) !void {
-        var index: usize = 0;
-        while (true) {
-            var package = &self.packages.items[index];
-            try package.processBlocking();
+    pub fn findPackage(
+        self: *Project,
+        pathname: []const u8,
+    ) !*Package {
+        self.mutex.lock();
+        defer self.mutex.unlock();
 
-            {
-                self.mutex.lock();
-                defer self.mutex.unlock();
-
-                index += 1;
-                if (index >= self.packages.items.len) {
-                    return;
-                }
+        for (self.packages.items) |*package| {
+            if (std.mem.eql(u8, package.pathname, pathname)) {
+                return package;
             }
         }
-    }
 
-    fn err(self: *Project, comptime msg: []const u8, args: anytype) void {
-        if (self.context) |ctx| {
-            ctx.err(null, msg, args);
-        }
+        return error.NotFound;
     }
 };
 
@@ -213,7 +206,7 @@ pub const Build = struct {
             const source = try std.mem.join(fba.allocator(), "/", &.{ path, file_name });
             self.wait_group.start();
             // try self.pool.spawn(worker, .{try self.addWork(package, source)});
-            try tryingWorker(try self.addWork(package, source));
+            try tryingWorker(try self.addWork(package, try self.context.allocator.dupe(u8, source)));
         }
     }
 
@@ -225,6 +218,10 @@ pub const Build = struct {
         }
         self.context.err("Cannot find collection `{s}`", .{collection});
         return error.NotFound;
+    }
+
+    pub fn findPackage(self: *Build, pathname: []const u8) !*Package {
+        return try self.project.findPackage(pathname);
     }
 
     fn addWork(self: *Build, package: *Package, name: []const u8) !*Work {
@@ -288,107 +285,39 @@ pub const Build = struct {
                     continue;
                 }
             }
-            const pathname = if (import_statement.collection.len == 0)
-                work.package.pathname
-            else
-                work.builder.findCollection(import_statement.collection) catch {
-                    work.builder.context.err("Cannot find collection `{s}`", .{import_statement.collection});
-                    return error.NotFound;
-                };
 
             var buf = std.mem.zeroes([512]u8);
             var fba = std.heap.FixedBufferAllocator.init(&buf);
-            const resolved_source = try std.mem.join(fba.allocator(), "/", &.{
-                pathname,
+            const resolved_source = try work.builder.resolveFullPathname(
+                fba.allocator(),
+                work.package.pathname,
+                import_statement.collection,
                 import_statement.pathname,
-            });
+            );
             try work.builder.addPackage(resolved_source);
         }
     }
+
+    pub fn resolveFullPathname(
+        self: *Build,
+        allocator: std.mem.Allocator,
+        base: []const u8,
+        collection: []const u8,
+        pathname: []const u8,
+    ) ![]const u8 {
+        const look_path = if (collection.len == 0)
+            base
+        else
+            self.findCollection(collection) catch {
+                self.context.err("Cannot find collection `{s}`", .{collection});
+                return error.NotFound;
+            };
+
+        const resolved_source = try std.mem.join(allocator, "/", &.{
+            look_path,
+            pathname,
+        });
+
+        return resolved_source;
+    }
 };
-
-test {
-    var p = util.LinearMemoryFileProvider{};
-    try p.init(std.heap.page_allocator);
-
-    const fp = p.fileProvider();
-
-    const root = fp.getRootNode();
-    const test_folder = try root.createDirectory("test");
-    _ = try test_folder.createFile("shader.rl",
-        \\using import "surge:shader";
-        \\PointLight :: struct {
-        \\  position: [3]f32,
-        \\  color: [3]f32,
-        \\}
-        \\
-        \\LightStorage :: struct {
-        \\  point_count: u32,
-        \\  point: []PointLight,
-        \\}
-        \\
-        \\@(storage, group = 0, binding = 0)
-        \\lights: LightStorage;
-        \\
-        \\@(group = 1, binding = 0) base_color_sampler: Sampler;
-        \\@(group = 1, binding = 1) base_color_texture: Texture_2D(f32);
-        \\
-        \\@(fragment)
-        \\fp_main :: proc(@(location=0) world_pos: [3]f32, 
-        \\                @(location=1) normal: [3]f32, 
-        \\                @(location=2) uv: [2]f32) -> (@(location=0) res: [4]f32) {
-        \\  base_color := sample(base_color_texture, base_color_sampler, uv);
-        \\  
-        \\  N := normalise(normal);
-        \\  surface_color: [3]f32;
-        \\  
-        \\  for i in 0..<lights.point_count {
-        \\    world_to_light := lights.point[i].position - world_pos;
-        \\    dist := magnitude(world_to_ight);
-        \\    dir := normalise(world_to_light);
-        \\    
-        \\    radiance := lights.point[i].color * (1 / pow(dist, 2));
-        \\    n_dot_l := max(dot(N, dir), 0);
-        \\    
-        \\    surface_color += base_color.rgb * radiance * n_dot_l;
-        \\  }
-        \\  res.rgb = surface_color;
-        \\}
-    );
-    const surge_collection = try test_folder.createDirectory("surge");
-    const shader_folder = try surge_collection.createDirectory("shader");
-    _ = try shader_folder.createFile("shader.rl",
-        \\Sampler :: struct {}
-        \\Texture_2d :: struct ($T: typeid) {}
-        \\sample :: proc(texture: $Texture_T/$Texture_Dim($Texture_U), sampler: Sampler, uv: [2]f32) -> $TextureU { }
-        \\magnitude :: proc(v: [3]f32) -> f32 { }
-        \\normalise :: proc(v: [3]f32) -> [3]f32 { }
-        \\dot :: proc(a: [3]f32, b: [3]f32) -> f32 { }
-        \\max :: proc(a: f32, b: f32) -> f32 { }
-        \\pow :: proc(a: f32, b: f32) -> f32 { }
-    );
-
-    const start = std.time.nanoTimestamp();
-    var build = Build{};
-    try build.init(
-        &.{
-            .err_handler = handle_err,
-            .file_provider = fp,
-            .allocator = std.heap.page_allocator,
-        },
-    );
-    defer build.deinit();
-
-    try build.addCollection("surge", "test/surge");
-    try build.addPackage("test");
-    build.wait();
-
-    const end = std.time.nanoTimestamp();
-    std.debug.print("time: {}\n", .{end - start});
-
-    std.testing.refAllDecls(@This());
-}
-
-pub fn handle_err(msg: []const u8) void {
-    std.log.warn("{s}", .{msg});
-}

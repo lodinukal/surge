@@ -7,6 +7,7 @@ pub const codepoint = u21;
 
 pub const Source = struct {
     name: []const u8,
+    directory: []const u8,
     code: []const u8,
 };
 
@@ -97,7 +98,10 @@ pub const Token = struct {
                 .or_return => "or_return",
                 .mul => "*",
             }}),
-            .keyword => |kw| try writer.print("<keyword>({s})", .{@tagName(kw)}),
+            .keyword => |kw| try writer.print("<keyword>({s})", .{if (kw == .custom)
+                value.string
+            else
+                @tagName(kw)}),
             .assignment => |a| try writer.print("<=>({s})", .{@tagName(a)}),
             .directive => |d| try writer.print("<#>({s})", .{@tagName(d)}),
             .attribute => try writer.print("<@>", .{}),
@@ -128,6 +132,7 @@ pub const Input = struct {
 /// use an arena or something to clean up
 pub const Lexer = struct {
     err_handler: ?*const fn (msg: []const u8) void = null,
+    custom_keywords: ?[]const []const u8 = null,
 
     input: Input = undefined,
     this_location: Location = .{},
@@ -413,7 +418,7 @@ pub const Lexer = struct {
             }
             token.string.len = self.here - old_here;
 
-            if (findKeyword(token.string)) |kw| {
+            if (findKeyword(token.string, self.custom_keywords)) |kw| {
                 token.un = .{ .keyword = kw };
             }
             if (findOperator(token.string)) |op| {
@@ -742,11 +747,14 @@ pub const Lexer = struct {
     }
 };
 
-fn findKeyword(string: []const u8) ?lexemes.KeywordKind {
+fn findKeyword(string: []const u8, custom_keywords: ?[]const []const u8) ?lexemes.KeywordKind {
     inline for (std.meta.fields(lexemes.KeywordKind)) |keyword| {
         const e = @field(lexemes.KeywordKind, keyword.name);
         if (std.mem.eql(u8, string, lexemes.keywords.get(e).match))
             return @field(lexemes.KeywordKind, keyword.name);
+    }
+    for (custom_keywords orelse &.{}) |keywords| {
+        if (std.mem.eql(u8, string, keywords)) return .custom;
     }
     return null;
 }

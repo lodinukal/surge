@@ -1,7 +1,7 @@
 const std = @import("std");
 
-pub const ExternAllocator = @import("extern_allocator.zig").ExternAllocator;
-pub const FailingAllocator = @import("FailingAllocator.zig");
+pub const ExternAllocator = @import("allocators/extern_allocator.zig").ExternAllocator;
+pub const FailingAllocator = @import("allocators/FailingAllocator.zig");
 
 pub fn ScratchSpace(comptime len: usize) type {
     return struct {

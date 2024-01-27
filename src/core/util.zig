@@ -581,6 +581,8 @@ pub const LinearMemoryFileProvider = struct {
     ) FileProvider.Error!FileProvider.Node {
         self.mutex.lock();
         defer self.mutex.unlock();
+        // will likely be invalidated when we alloc
+        // it doesnt happen when we use something like a page_allocator
         const parent_node = try self.getFileNodeActive(parent);
         if (parent_node.un != .directory) return error.IsNotDirectory;
 
@@ -589,17 +591,18 @@ pub const LinearMemoryFileProvider = struct {
         } else |_| {
             const new_node_index = try self.allocNode();
             const new_node = try self.getFileNode(new_node_index);
+            const parent_node_moved = try self.getFileNodeActive(parent);
             new_node.* = .{
                 .active = .{
                     .name = name,
                     .parent = parent,
-                    .next = parent_node.un.directory,
+                    .next = parent_node_moved.un.directory,
                     .un = .{
                         .directory = null,
                     },
                 },
             };
-            parent_node.un = .{ .directory = new_node_index };
+            parent_node_moved.un = .{ .directory = new_node_index };
             return new_node_index;
         }
     }
@@ -620,11 +623,12 @@ pub const LinearMemoryFileProvider = struct {
         } else |_| {
             const new_node_index = try self.allocNode();
             const new_node = try self.getFileNodeActive(new_node_index);
+            const parent_node_moved = try self.getFileNodeActive(parent);
             new_node.name = name;
             new_node.parent = parent;
-            new_node.next = parent_node.un.directory;
+            new_node.next = parent_node_moved.un.directory;
             new_node.un = .{ .file = contents };
-            parent_node.un.directory = new_node_index;
+            parent_node_moved.un.directory = new_node_index;
             return new_node_index;
         }
     }

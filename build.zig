@@ -65,14 +65,25 @@ pub fn build(b: *std.Build) !void {
     renderer.addImport("app", app);
     renderer.addImport("gpu", gpu);
 
-    const rlth = b.addModule("rlth", .{
+    const rl = b.addModule("rl", .{
         .root_source_file = .{
-            .path = "src/rlth/rlth.zig",
+            .path = "src/rl/rl.zig",
         },
         .target = target,
         .optimize = optimize,
     });
-    rlth.addImport("core", core);
+    rl.addImport("core", core);
+
+    // const rlshader = b.addModule("rlshader", .{
+    //     .root_source_file = .{
+    //         .path = "src/rlshader/rlshader.zig",
+    //     },
+    //     .target = target,
+    //     .optimize = optimize,
+    // });
+    // rlshader.addImport("core", core);
+    // rlshader.addImport("rl", rl);
+    // rlshader.addImport("gpu", gpu);
 
     const exe = b.addExecutable(.{
         .name = "surge",
@@ -88,7 +99,8 @@ pub fn build(b: *std.Build) !void {
     exe.root_module.addImport("gpu", gpu);
     exe.root_module.addImport("renderer", renderer);
     exe.root_module.addImport("stb", stb);
-    exe.root_module.addImport("rlth", rlth);
+    // exe.root_module.addImport("rlshader", rlshader);
+    exe.root_module.addImport("rl", rl);
     // exe.addSystemIncludePath("");
     // exe.linkLibC();
 

@@ -1,6 +1,6 @@
 pub const util = @import("util.zig");
 pub const math = @import("math.zig");
-pub const allocators = @import("allocators/allocators.zig");
+pub const allocators = @import("allocators.zig");
 
 const std = @import("std");
 
@@ -11,14 +11,12 @@ pub fn assert(ok: bool, comptime format: []const u8, args: anytype) noreturn {
     }
 }
 
-const lazy = @import("lazy.zig");
-pub const Lazy = lazy.Lazy;
+pub const Lazy = @import("lazy.zig").Lazy;
 
-const _rc = @import("rc.zig");
-pub const Rc = _rc.Rc;
-pub const Arc = _rc.Arc;
-pub const rc = _rc.rc;
-pub const arc = _rc.arc;
+pub const Rc = @import("rc.zig").Rc;
+pub const Arc = @import("rc.zig").Arc;
+pub const rc = @import("rc.zig").rc;
+pub const arc = @import("rc.zig").arc;
 
 pub inline fn clamp(x: anytype, min: @TypeOf(x), max: @TypeOf(x)) @TypeOf(x) {
     return @min(@max(x, min), max);

@@ -223,6 +223,7 @@ pub const KeywordKind = enum {
     @"asm",
     matrix,
     @"const",
+    custom,
 };
 pub const KeywordInfo = struct {
     match: []const u8,
@@ -259,6 +260,7 @@ pub const keywords = std.EnumArray(KeywordKind, KeywordInfo).init(.{
     .@"asm" = .{ .match = "asm", .asi = false },
     .matrix = .{ .match = "matrix", .asi = false },
     .@"const" = .{ .match = "const", .asi = false },
+    .custom = .{ .match = "", .asi = false },
 });
 
 // Direcitves
@@ -355,7 +357,7 @@ pub const AttributeTag = packed struct {
 };
 
 pub const CallingConvention = enum {
-    rlth,
+    rl,
     contextless,
     cdecl,
     stdcall,

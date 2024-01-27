@@ -1,8 +1,7 @@
 const std = @import("std");
 
 const Tree = @import("Tree.zig");
-
-const Type = @import("tree.zig").Type;
+const Type = Tree.Type;
 
 const lexer = @import("lexer.zig");
 const lexemes = @import("lexemes.zig");
@@ -81,6 +80,7 @@ pub const Error = error{
     ParseBodyBlock,
     ParseBlockStatement,
     ParseDirectiveForStatement,
+    ParseForeignBlockStatement,
 };
 
 pub fn parse(context: *const Context, tree: *Tree, source: []const u8) !void {
@@ -140,6 +140,7 @@ pub const Parser = struct {
 
         self.tree = tree;
         self.lexer.init(&self.peek_list, &tree.source);
+        self.lexer.custom_keywords = context.custom_keywords;
 
         self.this_token = lexer.NullToken;
         self.last_token = lexer.NullToken;
@@ -348,7 +349,7 @@ pub const Parser = struct {
         } else if (isKind(token, .@"const")) {
             _ = try self.advance();
             if (!self.acceptedKind(.identifier)) {
-                self.err("Expected identifier after `const`, got `{s}`", .{@tagName(self.this_token.un)});
+                self.err("Expected identifier after `$`, got `{s}`", .{@tagName(self.this_token.un)});
                 return error.ParseIdentifier;
             }
             token = self.this_token;
@@ -360,9 +361,97 @@ pub const Parser = struct {
         return try self.tree.newIdentifier(token.string, poly);
     }
 
+    const builtin_types = .{
+        .{ .bool, "bool", 1, .little },
+        .{ .bool, "b8", 1, .little },
+        .{ .bool, "b16", 2, .little },
+        .{ .bool, "b32", 4, .little },
+        .{ .bool, "b64", 8, .little },
+
+        .{ .sint, "i8", 1, .little },
+        .{ .sint, "i16", 2, .little },
+        .{ .sint, "i32", 4, .little },
+        .{ .sint, "i64", 8, .little },
+
+        .{ .sint, "i16le", 2, .little },
+        .{ .sint, "i32le", 4, .little },
+        .{ .sint, "i64le", 8, .little },
+
+        .{ .sint, "i16be", 2, .big },
+        .{ .sint, "i32be", 4, .big },
+        .{ .sint, "i64be", 8, .big },
+
+        .{ .uint, "u8", 1, .little },
+        .{ .uint, "u16", 2, .little },
+        .{ .uint, "u32", 4, .little },
+        .{ .uint, "u64", 8, .little },
+
+        .{ .uint, "u16le", 2, .little },
+        .{ .uint, "u32le", 4, .little },
+        .{ .uint, "u64le", 8, .little },
+
+        .{ .float, "f16", 2, .little },
+        .{ .float, "f32", 4, .little },
+        .{ .float, "f64", 8, .little },
+
+        .{ .float, "f16le", 2, .little },
+        .{ .float, "f32le", 4, .little },
+        .{ .float, "f64le", 8, .little },
+
+        .{ .float, "f16be", 2, .big },
+        .{ .float, "f32be", 4, .big },
+        .{ .float, "f64be", 8, .big },
+
+        .{ .string, "string", 0, .little },
+        .{ .cstring, "cstring", 0, .little },
+        .{ .pointer, "rawptr", 0, .little },
+        .{ .uintptr, "uintptr", 0, .little },
+    };
+
+    fn builtinType(self: *Parser, identifier: *const Tree.Identifier) !?Tree.TypeIndex {
+        inline for (builtin_types) |bt| {
+            const kind: Tree.BuiltinTypeKind = bt.@"0";
+            const name: []const u8 = bt.@"1";
+            const size: u32 = bt.@"2";
+            const endianness: Tree.Endianess = bt.@"3";
+
+            if (std.mem.eql(u8, name, identifier.contents)) {
+                return try self.tree.newBuiltinType(
+                    identifier.contents,
+                    kind,
+                    size,
+                    size,
+                    endianness,
+                );
+            }
+        }
+
+        for (self.context.custom_builtin_types orelse &.{}) |bt| {
+            if (std.mem.eql(u8, bt.identifier, identifier.contents)) {
+                return try self.tree.newBuiltinType(
+                    identifier.contents,
+                    bt.kind,
+                    bt.size,
+                    bt.alignof,
+                    bt.endianess,
+                );
+            }
+        }
+
+        return null;
+    }
+
     fn parseOperand(self: *Parser, lhs: bool) !?Tree.ExpressionIndex {
         switch (self.this_token.un) {
-            .identifier => return try self.parseIdentifierExpression(),
+            .identifier => {
+                const ident = try self.parseIdentifierExpression();
+                const expr = self.tree.getExpressionConst(ident);
+                const identifier = self.tree.getIdentifierConst(expr.identifier.identifier);
+                if (try self.builtinType(identifier)) |ty| {
+                    return try self.tree.newTypeExpression(ty);
+                }
+                return ident;
+            },
             .literal => return try self.parseLiteralExpression(),
             .lbrace => {
                 if (!lhs) {
@@ -543,7 +632,10 @@ pub const Parser = struct {
     }
 
     fn parseCompoundLiteralExpression(self: *Parser, ty: ?Tree.TypeIndex) !Tree.ExpressionIndex {
-        var fields = std.ArrayList(Tree.FieldIndex).init(self.allocator);
+        var buf = std.mem.zeroes([512]u8);
+        var fba = std.heap.FixedBufferAllocator.init(&buf);
+
+        var fields = std.ArrayList(Tree.AnyIndex).init(fba.allocator());
         const depth = self.expression_depth;
         self.expression_depth = 0;
 
@@ -555,10 +647,10 @@ pub const Parser = struct {
                 _ = try self.expectAssignment(.eq);
                 const value = self.parseValue() catch return error.ParseCompoundLiteralExpression;
                 const field = try self.tree.newField(null, name, value, null, Tree.FieldFlags{});
-                try fields.append(field);
+                try fields.append(Tree.AnyIndex.from(field));
             } else {
                 const field = try self.tree.newField(null, name, null, null, Tree.FieldFlags{});
-                try fields.append(field);
+                try fields.append(Tree.AnyIndex.from(field));
             }
             if (!self.acceptedSeparator()) break;
         }
@@ -566,7 +658,7 @@ pub const Parser = struct {
         _ = try self.expectClosing(.rbrace);
         self.expression_depth = depth;
 
-        return try self.tree.newCompoundLiteralExpression(ty, fields);
+        return try self.tree.newCompoundLiteralExpression(ty, try self.tree.createRef(fields.items));
     }
 
     fn parseVariableNameOrType(self: *Parser) Error!Tree.TypeIndex {
@@ -642,16 +734,19 @@ pub const Parser = struct {
             !isKind(self.this_token, .eof);
     }
 
-    fn parseFieldList(self: *Parser, is_struct: bool) !std.ArrayList(Tree.FieldIndex) {
-        var fields = std.ArrayList(Tree.FieldIndex).init(self.allocator);
-        if (isOperator(self.this_token, .rparen)) return fields;
+    fn parseFieldList(self: *Parser, is_struct: bool) !Tree.RefIndex {
+        var buf = std.mem.zeroes([1024]u8);
+        var fba = std.heap.FixedBufferAllocator.init(&buf);
+
+        var fields = std.ArrayList(Tree.AnyIndex).init(fba.allocator());
+        if (isOperator(self.this_token, .rparen)) return .none;
 
         const allow_newline = self.allow_newline;
         self.allow_newline = true;
 
-        var type_list = std.ArrayList(Tree.TypeIndex).init(self.allocator);
-        var attributes = std.ArrayList(std.ArrayList(Tree.FieldIndex)).init(self.allocator);
-        var field_flags = std.ArrayList(Tree.FieldFlags).init(self.allocator);
+        var type_list = std.ArrayList(Tree.TypeIndex).init(fba.allocator());
+        var attributes = std.ArrayList(Tree.RefIndex).init(fba.allocator());
+        var field_flags = std.ArrayList(Tree.FieldFlags).init(fba.allocator());
 
         while (self.parseContinue(is_struct)) {
             var f_type: ?Tree.TypeIndex = null;
@@ -696,29 +791,26 @@ pub const Parser = struct {
                 }
                 const field = try self.tree.newField(f_type, ident, default_value, tag, flags);
                 self.tree.getField(field).attributes = attributes.items[i];
-                try fields.append(field);
+                try fields.append(Tree.AnyIndex.from(field));
             }
 
             if (!self.acceptedSeparator()) {
-                self.allow_newline = allow_newline;
-                return fields;
+                break;
             }
         }
         self.allow_newline = allow_newline;
 
-        return fields;
+        return try self.tree.createRef(fields.items);
     }
 
-    fn parseProcedureResults(self: *Parser, no_return: *bool) !std.ArrayList(Tree.FieldIndex) {
-        var fields = std.ArrayList(Tree.FieldIndex).init(self.allocator);
+    fn parseProcedureResults(self: *Parser, no_return: *bool) !Tree.RefIndex {
         if (!self.acceptedOperator(.arrow)) {
-            return fields;
+            return .none;
         }
 
         if (self.acceptedOperator(.not)) {
             no_return.* = true;
-            // this won't allocate anything
-            return fields;
+            return .none;
         }
 
         // not a tuple
@@ -729,15 +821,13 @@ pub const Parser = struct {
             const ident = try self.tree.newIdentifier("_unnamed", false);
             const field = try self.tree.newField(ty, ident, null, null, Tree.FieldFlags{});
             self.tree.getField(field).attributes = attributes;
-            try fields.append(field);
-            return fields;
+            return try self.tree.createRef(&.{Tree.AnyIndex.from(field)});
         }
 
         // we have a tuple
         _ = try self.expectOperator(.lparen);
 
-        fields.deinit();
-        fields = try self.parseFieldList(false);
+        const fields = try self.parseFieldList(false);
         _ = try self.advancePossibleNewline();
         _ = try self.expectOperator(.rparen);
 
@@ -745,7 +835,7 @@ pub const Parser = struct {
     }
 
     fn parseProcedureType(self: *Parser) !Tree.TypeIndex {
-        var cc = Tree.CallingConvention.rlth;
+        var cc = Tree.CallingConvention.rl;
         if (isLiteral(self.this_token, .string)) {
             const token = try self.expectLiteral(.string);
             cc = std.meta.stringToEnum(Tree.CallingConvention, token.string) orelse {
@@ -760,8 +850,9 @@ pub const Parser = struct {
         _ = try self.expectOperator(.rparen);
 
         var is_generic = false;
-        for (params.items) |param| {
-            if (self.tree.getFieldConst(param).name) |n|
+        const params_list = try self.tree.refToList(params);
+        for (params_list) |param| {
+            if (self.tree.getFieldConst(param.to(Tree.FieldIndex)).name) |n|
                 if (self.tree.getIdentifierConst(n).poly) {
                     is_generic = true;
                     break;
@@ -857,7 +948,10 @@ pub const Parser = struct {
     }
 
     fn parseCallExpression(self: *Parser, operand: Tree.ExpressionIndex) !Tree.ExpressionIndex {
-        var arguments = std.ArrayList(Tree.FieldIndex).init(self.allocator);
+        var buf = std.mem.zeroes([512]u8);
+        var fba = std.heap.FixedBufferAllocator.init(&buf);
+
+        var arguments = std.ArrayList(Tree.AnyIndex).init(fba.allocator());
         const depth = self.expression_depth;
         const allow_newline = self.allow_newline;
         self.expression_depth = 0;
@@ -889,9 +983,9 @@ pub const Parser = struct {
                     return error.ParseCallExpression;
                 }
                 if (self.evaluateIdentifierExpression(argument)) |name| {
-                    try arguments.append(
+                    try arguments.append(Tree.AnyIndex.from(
                         try self.tree.newField(null, name, try self.parseValue(), null, Tree.FieldFlags{}),
-                    );
+                    ));
                 } else {
                     self.err("Expected identifier, got `{s}`", .{@tagName(self.tree.getExpression(argument).*)});
                 }
@@ -900,7 +994,9 @@ pub const Parser = struct {
                     self.err("Positional arguments not allowed after `..`", .{});
                     return error.ParseCallExpression;
                 }
-                try arguments.append(try self.tree.newField(null, null, argument, null, Tree.FieldFlags{}));
+                try arguments.append(Tree.AnyIndex.from(
+                    try self.tree.newField(null, null, argument, null, Tree.FieldFlags{}),
+                ));
             }
 
             if (has_ellipsis) {
@@ -915,7 +1011,7 @@ pub const Parser = struct {
         self.allow_newline = allow_newline;
         self.expression_depth = depth;
 
-        return try self.tree.newCallExpression(operand, arguments);
+        return try self.tree.newCallExpression(operand, try self.tree.createRef(arguments.items));
     }
 
     fn parseStatement(self: *Parser, block_flags: Tree.BlockFlags) Error!?Tree.StatementIndex {
@@ -1060,7 +1156,7 @@ pub const Parser = struct {
     fn parseAttributesStatementTail(
         self: *Parser,
         block_flags: Tree.BlockFlags,
-        attributes: std.ArrayList(Tree.FieldIndex),
+        attributes: Tree.RefIndex,
     ) !Tree.StatementIndex {
         _ = try self.advancePossibleNewline();
         const stmt = (try self.parseStatement(block_flags)) orelse {
@@ -1069,9 +1165,10 @@ pub const Parser = struct {
         };
         const got_stmt = self.tree.getStatement(stmt);
         switch (got_stmt.*) {
-            .declaration => |*dcl| dcl.attributes = attributes,
-            .foreign_block => |*fb| fb.attributes = attributes,
-            .foreign_import => |*fi| fi.attributes = attributes,
+            inline .declaration,
+            .foreign_block,
+            .foreign_import,
+            => |*b| b.attributes = attributes,
             else => {
                 self.err("Attributes can only be applied to declarations", .{});
                 return error.ParseAttributesForStatement;
@@ -1085,34 +1182,48 @@ pub const Parser = struct {
         return try self.parseAttributesStatementTail(block_flags, try self.parseAttributes());
     }
 
-    fn parseAttributes(self: *Parser) !std.ArrayList(Tree.FieldIndex) {
+    fn parseAttributes(self: *Parser) !Tree.RefIndex {
         _ = try self.expectKind(.attribute);
-        var attributes = std.ArrayList(Tree.FieldIndex).init(self.allocator);
+        var buf = std.mem.zeroes([512]u8);
+        var fba = std.heap.FixedBufferAllocator.init(&buf);
+
+        var attributes = std.ArrayList(Tree.AnyIndex).init(fba.allocator());
         if (isKind(self.this_token, .identifier)) {
             const ident = try self.parseIdentifier(false);
-            try attributes.append(try self.tree.newField(null, ident, null, null, Tree.FieldFlags{}));
+            const value: ?Tree.ExpressionIndex = blk: {
+                if (isOperator(self.this_token, .lparen)) {
+                    _ = try self.expectOperator(.lparen);
+                    const found = try self.parseValue();
+                    _ = try self.expectOperator(.rparen);
+                    break :blk found;
+                }
+                break :blk null;
+            };
+            try attributes.append(Tree.AnyIndex.from(
+                try self.tree.newField(null, ident, value, null, Tree.FieldFlags{}),
+            ));
         } else {
             _ = try self.expectOperator(.lparen);
             self.expression_depth += 1;
             while (!isOperator(self.this_token, .rparen) and !isKind(self.this_token, .eof)) {
                 const ident = try self.parseIdentifier(false);
-                try attributes.append(try self.tree.newField(null, ident, blk: {
+                try attributes.append(Tree.AnyIndex.from(try self.tree.newField(null, ident, blk: {
                     if (isAssignment(self.this_token, .eq)) {
                         _ = try self.expectAssignment(.eq);
                         break :blk try self.parseValue();
                     }
                     break :blk null;
-                }, null, Tree.FieldFlags{}));
+                }, null, Tree.FieldFlags{})));
                 if (!self.acceptedSeparator()) break;
             }
             self.expression_depth -= 1;
             _ = try self.expectOperator(.rparen);
         }
-        return attributes;
+        return try self.tree.createRef(attributes.items);
     }
 
-    fn parseSomeAttributes(self: *Parser) !std.ArrayList(Tree.FieldIndex) {
-        if (!isKind(self.this_token, .attribute)) return std.ArrayList(Tree.FieldIndex).init(self.allocator);
+    fn parseSomeAttributes(self: *Parser) !Tree.RefIndex {
+        if (!isKind(self.this_token, .attribute)) return .none;
         return try self.parseAttributes();
     }
 
@@ -1222,24 +1333,31 @@ pub const Parser = struct {
     }
 
     fn parseProcedureGroupExpression(self: *Parser) !Tree.ExpressionIndex {
-        var expressions = std.ArrayList(Tree.ExpressionIndex).init(self.allocator);
+        var buf = std.mem.zeroes([512]u8);
+        var fba = std.heap.FixedBufferAllocator.init(&buf);
+
+        var expressions = std.ArrayList(Tree.AnyIndex).init(fba.allocator());
         _ = try self.expectKind(.lbrace);
         while (!isKind(self.this_token, .rbrace) and !isKind(self.this_token, .eof)) {
-            try expressions.append(try self.parseExpression(false));
+            try expressions.append(Tree.AnyIndex.from(try self.parseExpression(false)));
             if (!self.acceptedSeparator()) break;
         }
         _ = try self.expectKind(.rbrace);
 
-        return try self.tree.newProcedureGroupExpression(expressions);
+        return try self.tree.newProcedureGroupExpression(
+            try self.tree.createRef(expressions.items),
+        );
     }
 
     fn parseStructTypeExpression(self: *Parser) !Tree.ExpressionIndex {
         _ = try self.expectKeyword(.@"struct");
-        var parameters = std.ArrayList(Tree.FieldIndex).init(self.allocator);
+        var parameters = Tree.RefIndex.none;
         // parapoly
+        var is_parapoly = false;
         if (self.acceptedOperator(.lparen)) {
             parameters = try self.parseFieldList(false);
             _ = try self.expectOperator(.rparen);
+            is_parapoly = true;
         }
 
         var alignment: ?Tree.ExpressionIndex = null;
@@ -1283,7 +1401,7 @@ pub const Parser = struct {
         const fields = try self.parseFieldList(true);
         _ = try self.expectKind(.rbrace);
 
-        const ty = try (if (parameters.items.len == 0)
+        const ty = try (if (!is_parapoly)
             self.tree.newConcreteStructType(flags, alignment, fields, where_clauses)
         else
             self.tree.newGenericStructType(flags, alignment, fields, where_clauses, parameters));
@@ -1293,11 +1411,13 @@ pub const Parser = struct {
     fn parseUnionTypeExpression(self: *Parser) !Tree.ExpressionIndex {
         _ = try self.expectKeyword(.@"union");
 
-        var parameters = std.ArrayList(Tree.FieldIndex).init(self.allocator);
+        var parameters = Tree.RefIndex.none;
         // parapoly
+        var is_parapoly = false;
         if (self.acceptedOperator(.lparen)) {
             parameters = try self.parseFieldList(false);
             _ = try self.expectOperator(.rparen);
+            is_parapoly = true;
         }
 
         var flags = Tree.UnionFlags{};
@@ -1341,7 +1461,7 @@ pub const Parser = struct {
         const variants = try self.parseFieldList(true);
         _ = try self.expectKind(.rbrace);
 
-        const ty = try (if (parameters.items.len == 0)
+        const ty = try (if (!is_parapoly)
             self.tree.newConcreteUnionType(flags, alignment, variants, where_clauses)
         else
             self.tree.newGenericUnionType(flags, alignment, variants, where_clauses, parameters));
@@ -1359,7 +1479,10 @@ pub const Parser = struct {
 
         _ = try self.advancePossibleNewline();
 
-        var fields = std.ArrayList(Tree.FieldIndex).init(self.allocator);
+        var buf = std.mem.zeroes([512]u8);
+        var fba = std.heap.FixedBufferAllocator.init(&buf);
+
+        var fields = std.ArrayList(Tree.AnyIndex).init(fba.allocator());
         _ = try self.expectKind(.lbrace);
         while (!isKind(self.this_token, .rbrace) and !isKind(self.this_token, .eof)) {
             const name = try self.parseValue();
@@ -1375,12 +1498,18 @@ pub const Parser = struct {
                 value = try self.parseValue();
             }
 
-            try fields.append(try self.tree.newField(null, got_name.identifier.identifier, value, null, Tree.FieldFlags{}));
+            try fields.append(Tree.AnyIndex.from(try self.tree.newField(
+                null,
+                got_name.identifier.identifier,
+                value,
+                null,
+                Tree.FieldFlags{},
+            )));
             if (!self.acceptedSeparator()) break;
         }
         _ = try self.expectKind(.rbrace);
 
-        const ty = try self.tree.newEnumType(base_ty, fields);
+        const ty = try self.tree.newEnumType(base_ty, try self.tree.createRef(fields.items));
         return try self.tree.newTypeExpression(ty);
     }
 
@@ -1621,23 +1750,29 @@ pub const Parser = struct {
         const allow_newline = self.allow_newline;
         self.allow_newline = true;
 
-        var expressions = std.ArrayList(Tree.ExpressionIndex).init(self.allocator);
+        var buf = std.mem.zeroes([512]u8);
+        var fba = std.heap.FixedBufferAllocator.init(&buf);
+
+        var expressions = std.ArrayList(Tree.AnyIndex).init(fba.allocator());
         while (true) {
-            try expressions.append(try self.parseExpression(lhs));
+            try expressions.append(Tree.AnyIndex.from(try self.parseExpression(lhs)));
             if (!isOperator(self.this_token, .comma) or isKind(self.this_token, .eof)) break;
             _ = try self.advance();
         }
 
         self.allow_newline = allow_newline;
-        return try self.tree.newTupleExpression(expressions);
+        return try self.tree.newTupleExpression(try self.tree.createRef(expressions.items));
     }
 
     fn parseLhsTupleExpression(self: *Parser) !Tree.ExpressionIndex {
         return try self.parseTupleExpression(true);
     }
 
-    fn parseStatementList(self: *Parser, block_flags: Tree.BlockFlags) !std.ArrayList(Tree.StatementIndex) {
-        var statements = std.ArrayList(Tree.StatementIndex).init(self.allocator);
+    fn parseStatementList(self: *Parser, block_flags: Tree.BlockFlags) !Tree.RefIndex {
+        var buf = std.mem.zeroes([512]u8);
+        var fba = std.heap.FixedBufferAllocator.init(&buf);
+
+        var statements = std.ArrayList(Tree.AnyIndex).init(fba.allocator());
 
         while (!isKeyword(self.this_token, .case) and
             !isKind(self.this_token, .rbrace) and
@@ -1645,12 +1780,12 @@ pub const Parser = struct {
         {
             if (try self.parseStatement(block_flags)) |statement| {
                 if (self.tree.getStatementConst(statement).* != .empty) {
-                    try statements.append(statement);
+                    try statements.append(Tree.AnyIndex.from(statement));
                 }
             }
         }
 
-        return statements;
+        return try self.tree.createRef(statements.items);
     }
 
     fn parseBlockStatement(self: *Parser, block_flags: Tree.BlockFlags, when: bool) !Tree.StatementIndex {
@@ -1664,20 +1799,22 @@ pub const Parser = struct {
         return try self.parseBody(block_flags);
     }
 
-    fn parseDeclarationStatementTail(self: *Parser, names: std.ArrayList(Tree.IdentifierIndex), is_using: bool) !Tree.StatementIndex {
+    fn parseDeclarationStatementTail(self: *Parser, names: Tree.RefIndex, is_using: bool) !Tree.StatementIndex {
         var values: ?Tree.ExpressionIndex = null;
         const ty = try self.parseTypeOrIdentifier();
         const token = self.this_token;
         var constant = false;
 
-        const n_names = names.items.len;
+        const names_list = try self.tree.refToList(names);
+        const n_names = names_list.len;
         if (isAssignment(token, .eq) or isOperator(token, .colon)) {
             const seperator = try self.advance();
             constant = isOperator(seperator, .colon);
             _ = try self.advancePossibleNewline();
             values = try self.parseRhsTupleExpression();
             const got_values = self.tree.getExpressionConst(values.?);
-            const n_values = got_values.tuple.expressions.items.len;
+            const values_list = try self.tree.refToList(got_values.tuple.expressions);
+            const n_values = values_list.len;
             if (n_values > n_names) {
                 self.err("Too many values for declaration, expected `{}`, got `{}`", .{ n_names, n_values });
                 return error.ParseDeclarationStatementTail;
@@ -1690,7 +1827,11 @@ pub const Parser = struct {
             }
         }
 
-        const n_values = if (values) |v| self.tree.getExpressionConst(v).tuple.expressions.items.len else 0;
+        const tuple_expressions = if (values) |v|
+            self.tree.getExpressionConst(v).tuple.expressions
+        else
+            Tree.RefIndex.none;
+        const n_values = (try self.tree.refToList(tuple_expressions)).len;
         if (ty == null) {
             if (constant and n_values == 0) {
                 self.err("Expected type for constant declaration", .{});
@@ -1715,37 +1856,51 @@ pub const Parser = struct {
         }
 
         if (ty != null and n_values == 0) {
-            var expressions = std.ArrayList(Tree.ExpressionIndex).init(self.allocator);
+            var buf = std.mem.zeroes([512]u8);
+            var fba = std.heap.FixedBufferAllocator.init(&buf);
+
+            var expressions = std.ArrayList(Tree.AnyIndex).init(fba.allocator());
             for (0..n_names) |_| {
-                try expressions.append(try self.tree.newCompoundLiteralExpression(
+                try expressions.append(Tree.AnyIndex.from(try self.tree.newCompoundLiteralExpression(
                     ty,
-                    std.ArrayList(Tree.FieldIndex).init(self.allocator),
-                ));
+                    Tree.RefIndex.none,
+                )));
             }
-            values = try self.tree.newTupleExpression(expressions);
+            values = try self.tree.newTupleExpression(try self.tree.createRef(expressions.items));
         }
 
         return try self.tree.newDeclarationStatement(
             ty,
             names,
-            values,
-            std.ArrayList(Tree.FieldIndex).init(self.allocator),
+            values.?,
+            Tree.RefIndex.none,
             is_using,
+            constant,
         );
     }
 
     fn parseDeclarationStatement(self: *Parser, lhs: Tree.ExpressionIndex, is_using: bool) !Tree.StatementIndex {
-        var names = std.ArrayList(Tree.IdentifierIndex).init(self.allocator);
-        for (self.tree.getExpressionConst(lhs).tuple.expressions.items) |expr| {
-            if (self.evaluateIdentifierExpression(expr)) |ident| {
-                try names.append(ident);
+        var buf = std.mem.zeroes([512]u8);
+        var fba = std.heap.FixedBufferAllocator.init(&buf);
+        var names = std.ArrayList(Tree.AnyIndex).init(fba.allocator());
+        const names_list = try self.tree.refToList(
+            self.tree.getExpressionConst(lhs).tuple.expressions,
+        );
+        for (names_list) |expr| {
+            if (self.evaluateIdentifierExpression(expr.to(Tree.ExpressionIndex))) |ident| {
+                try names.append(Tree.AnyIndex.from(ident));
             } else {
-                self.err("Expected identifier, got `{s}`", .{@tagName(self.tree.getExpressionConst(expr).*)});
+                self.err("Expected identifier, got `{s}`", .{
+                    @tagName(self.tree.getExpressionConst(expr.to(Tree.ExpressionIndex)).*),
+                });
                 return error.ParseDeclarationStatement;
             }
         }
 
-        return try self.parseDeclarationStatementTail(names, is_using);
+        return try self.parseDeclarationStatementTail(
+            try self.tree.createRef(names.items),
+            is_using,
+        );
     }
 
     fn parseAssignmentStatement(self: *Parser, lhs: Tree.ExpressionIndex) !Tree.StatementIndex {
@@ -1762,7 +1917,9 @@ pub const Parser = struct {
 
         _ = try self.advance();
         const rhs = try self.parseRhsTupleExpression();
-        if (self.tree.getExpressionConst(rhs).tuple.expressions.items.len == 0) {
+        const got_rhs = self.tree.getExpressionConst(rhs);
+        const expression_items = try self.tree.refToList(got_rhs.tuple.expressions);
+        if (expression_items.len == 0) {
             self.err("Missing right-hand side of assignment", .{});
             return error.ParseAssignmentStatement;
         }
@@ -1792,15 +1949,16 @@ pub const Parser = struct {
                     _ = try self.advance();
 
                     const got_lhs = self.tree.getExpressionConst(lhs);
-                    if (allow_label and got_lhs.tuple.expressions.items.len == 1) {
+                    const lhs_items = try self.tree.refToList(got_lhs.tuple.expressions);
+                    if (allow_label and lhs_items.len == 1) {
                         const token = self.this_token;
                         if (isKind(token, .lbrace) or
                             isKeyword(token, .@"if") or
                             isKeyword(token, .@"for") or
                             isKeyword(token, .@"switch"))
                         {
-                            const name = got_lhs.tuple.expressions.items[0];
-                            const got_name = self.tree.getExpressionConst(name);
+                            const name = lhs_items[0];
+                            const got_name = self.tree.getExpressionConst(name.to(Tree.ExpressionIndex));
                             if (got_name.* != .identifier) {
                                 self.err("Expected identifier for label, got `{s}`", .{@tagName(got_name.*)});
                                 return error.ParseSimpleStatement;
@@ -1813,10 +1971,11 @@ pub const Parser = struct {
                             };
                             const got_statement = self.tree.getStatement(statement);
                             switch (got_statement.*) {
-                                .block => |*blk| blk.label = label,
-                                .@"if" => |*i| i.label = label,
-                                .@"for" => |*f| f.label = label,
-                                .@"switch" => |*s| s.label = label,
+                                inline .block,
+                                .@"if",
+                                .@"for",
+                                .@"switch",
+                                => |*s| s.label = label,
                                 else => {
                                     self.err("Cannot apply block `{s}` to `{s}`", .{ got_label.contents, @tagName(got_statement.*) });
                                     return error.ParseSimpleStatement;
@@ -1834,12 +1993,13 @@ pub const Parser = struct {
         }
 
         const expressions = self.tree.getExpressionConst(lhs).tuple.expressions;
-        if (expressions.items.len == 0 or expressions.items.len > 1) {
-            self.err("Expected single expression for declaration, got `{}`", .{expressions.items.len});
+        const got_expressions = try self.tree.refToList(expressions);
+        if (got_expressions.len == 0 or got_expressions.len > 1) {
+            self.err("Expected single expression for declaration, got `{}`", .{got_expressions.len});
             return error.ParseSimpleStatement;
         }
 
-        return try self.tree.newExpressionStatement(expressions.items[0]);
+        return try self.tree.newExpressionStatement(got_expressions[0].to(Tree.ExpressionIndex));
     }
 
     fn parseImportStatement(self: *Parser, is_using: bool) !Tree.StatementIndex {
@@ -1878,9 +2038,11 @@ pub const Parser = struct {
             self.err("Expected regular statement, got `{s}`", .{@tagName(got_statement.*)});
             return error.ConvertStatementToBody;
         }
-        var statements = std.ArrayList(Tree.StatementIndex).init(self.allocator);
-        try statements.append(statement);
-        return try self.tree.newBlockStatement(block_flags, statements, null);
+        return try self.tree.newBlockStatement(
+            block_flags,
+            try self.tree.createRef(&.{Tree.AnyIndex.from(statement)}),
+            null,
+        );
     }
 
     fn convertStatementToExpression(self: *Parser, statement: ?Tree.StatementIndex) !?Tree.ExpressionIndex {
@@ -1952,10 +2114,13 @@ pub const Parser = struct {
         if (isKeyword(self.this_token, .@"else")) {
             _ = try self.expectKeyword(.@"else");
             if (isKeyword(self.this_token, .@"if")) {
-                const statement = try self.parseIfStatement(block_flags);
-                var statements = std.ArrayList(Tree.StatementIndex).init(self.allocator);
-                try statements.append(statement);
-                elif = try self.tree.newBlockStatement(block_flags, statements, null);
+                elif = try self.tree.newBlockStatement(
+                    block_flags,
+                    try self.tree.createRef(&.{
+                        Tree.AnyIndex.from(try self.parseIfStatement(block_flags)),
+                    }),
+                    null,
+                );
             } else if (isKind(self.this_token, .lbrace)) {
                 elif = try self.parseBlockStatement(block_flags, false);
             } else if (isKeyword(self.this_token, .do)) {
@@ -2005,10 +2170,11 @@ pub const Parser = struct {
         if (isKeyword(self.this_token, .@"else")) {
             _ = try self.expectKeyword(.@"else");
             if (isKeyword(self.this_token, .when)) {
-                const statement = try self.parseWhenStatement();
-                var statements = std.ArrayList(Tree.StatementIndex).init(self.allocator);
-                try statements.append(statement);
-                elif = try self.tree.newBlockStatement(flags, statements, null);
+                elif = try self.tree.newBlockStatement(
+                    flags,
+                    try self.tree.createRef(&.{Tree.AnyIndex.from(try self.parseWhenStatement())}),
+                    null,
+                );
             } else if (isKeyword(self.this_token, .do)) {
                 _ = try self.expectKeyword(.do);
                 elif = try self.parseDoBody(flags);
@@ -2139,15 +2305,24 @@ pub const Parser = struct {
             const got_c = self.tree.getExpressionConst(c);
             break :blk (got_c.* == .binary and got_c.binary.operation == .in);
         } else false;
-        var clauses = std.ArrayList(Tree.CaseClauseIndex).init(self.allocator);
+        var buf = std.mem.zeroes([512]u8);
+        var fba = std.heap.FixedBufferAllocator.init(&buf);
+        var clauses = std.ArrayList(Tree.AnyIndex).init(fba.allocator());
         _ = try self.advancePossibleNewline();
         _ = try self.expectKind(.lbrace);
         while (isKeyword(self.this_token, .case)) {
-            try clauses.append(try self.parseCaseClause(block_flags, is_type_switch));
+            try clauses.append(Tree.AnyIndex.from(
+                try self.parseCaseClause(block_flags, is_type_switch),
+            ));
         }
         _ = try self.expectKind(.rbrace);
 
-        return try self.tree.newSwitchStatement(init_stmt, condition, clauses, null);
+        return try self.tree.newSwitchStatement(
+            init_stmt,
+            condition,
+            try self.tree.createRef(clauses.items),
+            null,
+        );
     }
 
     fn parseDeferStatement(self: *Parser, block_flags: Tree.BlockFlags) !Tree.StatementIndex {
@@ -2166,16 +2341,21 @@ pub const Parser = struct {
             return error.ParseReturnStatement;
         }
 
-        var results = std.ArrayList(Tree.ExpressionIndex).init(self.allocator);
+        var buf = std.mem.zeroes([512]u8);
+        var fba = std.heap.FixedBufferAllocator.init(&buf);
+
+        var results = std.ArrayList(Tree.AnyIndex).init(fba.allocator());
         while (!isKind(self.this_token, .semicolon) and !isKind(self.this_token, .rbrace) and !isKind(self.this_token, .eof)) {
-            try results.append(try self.parseExpression(false));
+            try results.append(Tree.AnyIndex.from(try self.parseExpression(false)));
             if (!isOperator(self.this_token, .comma) or isKind(self.this_token, .eof)) break;
             _ = try self.advance();
         }
 
         try self.expectSemicolon();
 
-        return try self.tree.newReturnStatement(try self.tree.newTupleExpression(results));
+        return try self.tree.newReturnStatement(try self.tree.newTupleExpression(
+            try self.tree.createRef(results.items),
+        ));
     }
 
     fn parseBasicSimpleStatement(self: *Parser, block_flags: Tree.BlockFlags) !Tree.StatementIndex {
@@ -2190,16 +2370,26 @@ pub const Parser = struct {
             name = try self.parseIdentifier(false);
         }
 
-        var statements = std.ArrayList(Tree.StatementIndex).init(self.allocator);
+        var buf = std.mem.zeroes([512]u8);
+        var fba = std.heap.FixedBufferAllocator.init(&buf);
+
+        var statements = std.ArrayList(Tree.AnyIndex).init(fba.allocator());
         _ = try self.advancePossibleNewlineWithin();
         _ = try self.expectKind(.lbrace);
         while (!isKind(self.this_token, .rbrace) and !isKind(self.this_token, .eof)) {
-            try statements.append((try self.parseStatement(Tree.BlockFlags{})).?);
+            try statements.append(Tree.AnyIndex.from((try self.parseStatement(Tree.BlockFlags{})) orelse {
+                self.err("Expected statement in foreign block", .{});
+                return error.ParseForeignBlockStatement;
+            }));
         }
         _ = try self.expectKind(.rbrace);
 
-        const block = try self.tree.newBlockStatement(Tree.BlockFlags{}, statements, null);
-        const statement = try self.tree.newForeignBlockStatement(name, block, std.ArrayList(Tree.FieldIndex).init(self.allocator));
+        const block = try self.tree.newBlockStatement(
+            Tree.BlockFlags{},
+            try self.tree.createRef(statements.items),
+            null,
+        );
+        const statement = try self.tree.newForeignBlockStatement(name, block, Tree.RefIndex.none);
         _ = try self.expectSemicolon();
 
         return statement;
@@ -2227,7 +2417,7 @@ pub const Parser = struct {
         return try self.tree.newForeignImportStatement(
             if (name) |n| n.string else "",
             sources,
-            std.ArrayList(Tree.FieldIndex).init(self.allocator),
+            Tree.RefIndex.none,
         );
     }
 
