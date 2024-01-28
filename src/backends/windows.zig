@@ -48,7 +48,7 @@ const WindowsApplication = struct {
 
     pub fn pumpEvents(self: *WindowsApplication) !void {
         _ = self;
-        var msg: win32.ui.windows_and_messaging.MSG = undefined;
+        var msg = std.mem.zeroes(win32.ui.windows_and_messaging.MSG);
         while (result: {
             const x = win32.ui.windows_and_messaging.PeekMessageW(
                 &msg,
@@ -72,6 +72,16 @@ const WindowsApplication = struct {
             _ = win32.ui.windows_and_messaging.TranslateMessage(&msg);
             _ = win32.ui.windows_and_messaging.DispatchMessageW(&msg);
         }
+        // while (win32.ui.windows_and_messaging.PeekMessageW(
+        //     &msg,
+        //     null,
+        //     0,
+        //     0,
+        //     win32.ui.windows_and_messaging.PM_REMOVE,
+        // ) == TRUE) {
+        //     _ = win32.ui.windows_and_messaging.TranslateMessage(&msg);
+        //     _ = win32.ui.windows_and_messaging.DispatchMessageW(&msg);
+        // }
     }
 };
 
@@ -448,7 +458,7 @@ const WindowsWindow = struct {
         };
 
         switch (msg) {
-            win32.ui.windows_and_messaging.WM_CLOSE => {
+            win32.ui.windows_and_messaging.WM_QUIT, win32.ui.windows_and_messaging.WM_CLOSE => {
                 window.setShouldClose(true);
             },
             win32.ui.windows_and_messaging.WM_KEYDOWN => {

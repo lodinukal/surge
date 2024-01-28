@@ -5,6 +5,8 @@ const Window = @import("app").Window;
 
 const Self = @This();
 
+inited: bool = false,
+
 // whole
 allocator: std.mem.Allocator,
 
@@ -78,8 +80,8 @@ pub fn init(self: *Self, allocator: std.mem.Allocator, window: *Window, backend:
 
     const window_size = window.getContentSize();
     const swapchain = try device.createSwapChain(allocator, surface, &.{
-        .height = window_size[0],
-        .width = window_size[1],
+        .width = window_size[0],
+        .height = window_size[1],
         .present_mode = .mailbox,
         .format = .bgra8_unorm,
         .usage = .{
@@ -91,6 +93,7 @@ pub fn init(self: *Self, allocator: std.mem.Allocator, window: *Window, backend:
     var views: [3]?*const gpu.TextureView = .{ null, null, null };
     const view_count = try swapchain.getTextureViews(&views);
     self.* = .{
+        .inited = true,
         .allocator = allocator,
         .instance = instance,
         .surface = surface,
@@ -115,6 +118,8 @@ pub fn init(self: *Self, allocator: std.mem.Allocator, window: *Window, backend:
 }
 
 pub fn deinit(self: *Self) void {
+    if (!self.inited) return;
+
     self.cleanupSwapchainDependentResources(true);
 
     self.swapchain.destroy();

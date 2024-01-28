@@ -5,11 +5,21 @@ pub const Context = @import("Context.zig");
 
 pub const parse = @import("parser.zig").parse;
 pub const Ir = @import("Ir.zig");
-pub const Scanner = @import("Scanner.zig");
+// pub const Scanner = @import("Scanner.zig");
+pub const Passes = @import("Passes.zig");
 pub const Ast = @import("Ast.zig");
 pub const Build = @import("project.zig").Build;
 
 test {
+    try tes();
+    // var va = Typechecker{};
+    // try va.init(context, &build);
+    // defer va.deinit();
+
+    // try va.scanPackageRoot(&build.project.packages.items[0]);
+}
+
+pub fn tes() !void {
     var p = util.LinearMemoryFileProvider{};
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     try p.init(gpa.allocator());
@@ -48,12 +58,10 @@ test {
         \\                @location(2) uv: [2]f32) -> (@location(0) res: [4]f32) {
         \\  base_color := sample(base_color_texture, base_color_sampler, uv);
         \\
-        \\  Hash :: proc (brown: bool) {
-        \\      return !brown;
-        \\  }
-        \\
         \\  N := normalise(normal);
         \\  surface_color: [3]f32;
+        \\
+        \\  if x { x + 1; }
         \\
         \\  for i in 0..<lights.point_count {
         \\    world_to_light := lights.point[i].position - world_pos;
@@ -120,25 +128,18 @@ test {
         std.debug.print("{s}\n", .{px.pathname});
     }
 
-    var scanner = Scanner{};
-    try scanner.init(context, &build);
-    defer scanner.deinit();
+    var passes = Passes.init(gpa.allocator(), &build);
+    defer passes.deinit();
 
-    try scanner.scanRoot();
+    try passes.scanPackages();
 
     var ir = try Ir.init(gpa.allocator());
     defer ir.deinit();
 
-    try scanner.putIr(&ir);
+    // try passes.putIr(&ir);
 
     const end = std.time.nanoTimestamp();
     std.debug.print("time: {}\n", .{end - start});
-
-    // var va = Typechecker{};
-    // try va.init(context, &build);
-    // defer va.deinit();
-
-    // try va.scanPackageRoot(&build.project.packages.items[0]);
 }
 
 pub fn handle_err(msg: []const u8) void {

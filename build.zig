@@ -22,6 +22,13 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = optimize,
     });
+
+    const tracy_dep = b.dependency("tracy", .{
+        .no_exit = true,
+    });
+    const tracy = tracy_dep.module("tracy");
+    _ = tracy; // autofix
+
     const app = b.addModule("app", .{
         .root_source_file = .{
             .path = "src/app/app.zig",
