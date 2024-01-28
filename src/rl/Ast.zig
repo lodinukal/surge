@@ -333,7 +333,7 @@ pub const Statement = union(StatementKind) {
 pub const EmptyStatement = struct {};
 
 pub const ImportStatement = struct {
-    name: ?[]const u8,
+    name: []const u8,
     collection: []const u8,
     pathname: []const u8,
     using: bool,
@@ -575,7 +575,7 @@ pub const CaseClause = struct {
     statements: RefIndex, // std.ArrayList(StatementIndex),
 };
 
-const Tree = @This();
+const Ast = @This();
 
 allocator: std.mem.Allocator = undefined,
 
@@ -589,8 +589,8 @@ statements: std.ArrayListUnmanaged(StatementIndex) = undefined,
 all: std.ArrayListUnmanaged(Any) = undefined,
 refs: std.ArrayListUnmanaged(AnyIndex) = undefined,
 
-pub fn init(allocator: std.mem.Allocator, name: []const u8) !Tree {
-    var self: Tree = .{
+pub fn init(allocator: std.mem.Allocator, name: []const u8) !Ast {
+    var self: Ast = .{
         .allocator = allocator,
         .source = lexer.Source{
             .name = name,
@@ -611,7 +611,7 @@ pub fn init(allocator: std.mem.Allocator, name: []const u8) !Tree {
     return self;
 }
 
-pub fn deinit(self: *Tree) void {
+pub fn deinit(self: *Ast) void {
     self.all.deinit(self.allocator);
     self.refs.deinit(self.allocator);
 
@@ -620,7 +620,7 @@ pub fn deinit(self: *Tree) void {
     self.imports.deinit(self.allocator);
 }
 
-pub fn clone(self: *const Tree, allocator: std.mem.Allocator) !Tree {
+pub fn clone(self: *const Ast, allocator: std.mem.Allocator) !Ast {
     return .{
         .allocator = allocator,
         .source = lexer.Source{
@@ -638,11 +638,11 @@ pub fn clone(self: *const Tree, allocator: std.mem.Allocator) !Tree {
     };
 }
 
-pub fn getAny(self: *Tree, index: AnyIndex) *Any {
+pub fn getAny(self: *Ast, index: AnyIndex) *Any {
     return &self.all.items[@intFromEnum(index)];
 }
 
-pub fn createRef(self: *Tree, items: []const AnyIndex) !RefIndex {
+pub fn createRef(self: *Ast, items: []const AnyIndex) !RefIndex {
     const start = self.refs.items.len;
     try self.refs.ensureUnusedCapacity(self.allocator, items.len + 1);
     for (items) |item| {
@@ -652,66 +652,71 @@ pub fn createRef(self: *Tree, items: []const AnyIndex) !RefIndex {
     return @enumFromInt(start);
 }
 
-pub fn refToList(self: *Tree, index: RefIndex) ![]const AnyIndex {
+pub fn refToList(self: *Ast, index: RefIndex) ![]const AnyIndex {
     if (index == .none) return &.{};
     return std.mem.sliceTo(self.refs.items[@intFromEnum(index)..], .none);
 }
 
-fn createExpression(self: *Tree, e: Expression) !ExpressionIndex {
+fn createExpression(self: *Ast, e: Expression) !ExpressionIndex {
     const index = self.all.items.len;
     const set = try self.all.addOne(self.allocator);
     set.* = .{ .expression = e };
     return @enumFromInt(index);
 }
 
-pub fn getExpression(self: *Tree, index: ExpressionIndex) *Expression {
+pub fn getExpression(self: *Ast, index: ExpressionIndex) *Expression {
     return &self.all.items[@intFromEnum(index)].expression;
 }
 
-pub fn getExpressionConst(self: *const Tree, index: ExpressionIndex) *const Expression {
+pub fn getExpressionConst(self: *const Ast, index: ExpressionIndex) *const Expression {
     return &self.all.items[@intFromEnum(index)].expression;
 }
 
-fn createStatement(self: *Tree, s: Statement) !StatementIndex {
+fn createStatement(self: *Ast, s: Statement) !StatementIndex {
     const index = self.all.items.len;
     const set = try self.all.addOne(self.allocator);
     set.* = .{ .statement = s };
     return @enumFromInt(index);
 }
 
-pub fn getStatement(self: *Tree, index: StatementIndex) *Statement {
+pub fn getStatement(self: *Ast, index: StatementIndex) *Statement {
     return &self.all.items[@intFromEnum(index)].statement;
 }
 
-pub fn getStatementConst(self: *const Tree, index: StatementIndex) *const Statement {
+pub fn getStatementConst(self: *const Ast, index: StatementIndex) *const Statement {
     return &self.all.items[@intFromEnum(index)].statement;
 }
 
-fn createType(self: *Tree, t: Type) !TypeIndex {
+fn createType(self: *Ast, t: Type) !TypeIndex {
     const index = self.all.items.len;
     const set = try self.all.addOne(self.allocator);
     set.* = .{ .type = t };
     return @enumFromInt(index);
 }
 
-pub fn getType(self: *Tree, index: TypeIndex) *Type {
+pub fn cloneType(self: *Ast, index: TypeIndex) !TypeIndex {
+    const t = self.all.items[@intFromEnum(index)].type;
+    return try self.createType(t);
+}
+
+pub fn getType(self: *Ast, index: TypeIndex) *Type {
     return &self.all.items[@intFromEnum(index)].type;
 }
 
-pub fn getTypeConst(self: *const Tree, index: TypeIndex) *const Type {
+pub fn getTypeConst(self: *const Ast, index: TypeIndex) *const Type {
     return &self.all.items[@intFromEnum(index)].type;
 }
 
 // std.ArrayList(ExpressionIndex)
 /// consumes `expressions`
-pub fn newTupleExpression(self: *Tree, expressions: RefIndex) !ExpressionIndex {
+pub fn newTupleExpression(self: *Ast, expressions: RefIndex) !ExpressionIndex {
     return try self.createExpression(.{ .tuple = .{
         .expressions = expressions,
     } });
 }
 
 pub fn newUnaryExpression(
-    self: *Tree,
+    self: *Ast,
     operation: lexemes.OperatorKind,
     operand: ExpressionIndex,
 ) !ExpressionIndex {
@@ -722,7 +727,7 @@ pub fn newUnaryExpression(
 }
 
 pub fn newBinaryExpression(
-    self: *Tree,
+    self: *Ast,
     operation: lexemes.OperatorKind,
     lhs: ExpressionIndex,
     rhs: ExpressionIndex,
@@ -735,7 +740,7 @@ pub fn newBinaryExpression(
 }
 
 pub fn newTernaryExpression(
-    self: *Tree,
+    self: *Ast,
     operation: lexemes.KeywordKind,
     on_true: ExpressionIndex,
     condition: ExpressionIndex,
@@ -750,7 +755,7 @@ pub fn newTernaryExpression(
 }
 
 pub fn newCastExpression(
-    self: *Tree,
+    self: *Ast,
     operation: lexemes.KeywordKind,
     ty: TypeIndex,
     expression: ExpressionIndex,
@@ -763,7 +768,7 @@ pub fn newCastExpression(
 }
 
 pub fn newSelectorExpression(
-    self: *Tree,
+    self: *Ast,
     operand: ?ExpressionIndex,
     field: IdentifierIndex,
 ) !ExpressionIndex {
@@ -774,7 +779,7 @@ pub fn newSelectorExpression(
 }
 
 pub fn newCallExpression(
-    self: *Tree,
+    self: *Ast,
     operand: ExpressionIndex,
     arguments: RefIndex, // std.ArrayList(FieldIndex),
 ) !ExpressionIndex {
@@ -785,7 +790,7 @@ pub fn newCallExpression(
 }
 
 pub fn newUnwrapExpression(
-    self: *Tree,
+    self: *Ast,
     operand: ExpressionIndex,
     item: ?IdentifierIndex,
 ) !ExpressionIndex {
@@ -796,7 +801,7 @@ pub fn newUnwrapExpression(
 }
 
 pub fn newProcedureExpression(
-    self: *Tree,
+    self: *Ast,
     ty: TypeIndex,
     where_clauses: ?ExpressionIndex,
     body: ?StatementIndex,
@@ -808,14 +813,14 @@ pub fn newProcedureExpression(
     } });
 }
 
-pub fn newTypeExpression(self: *Tree, ty: TypeIndex) !ExpressionIndex {
+pub fn newTypeExpression(self: *Ast, ty: TypeIndex) !ExpressionIndex {
     return try self.createExpression(.{ .type = .{
         .type = ty,
     } });
 }
 
 pub fn newIndexExpression(
-    self: *Tree,
+    self: *Ast,
     operand: ExpressionIndex,
     lhs: ?ExpressionIndex,
     rhs: ?ExpressionIndex,
@@ -828,7 +833,7 @@ pub fn newIndexExpression(
 }
 
 pub fn newSliceExpression(
-    self: *Tree,
+    self: *Ast,
     operand: ExpressionIndex,
     lhs: ExpressionIndex,
     rhs: ExpressionIndex,
@@ -841,7 +846,7 @@ pub fn newSliceExpression(
 }
 
 pub fn newLiteralExpression(
-    self: *Tree,
+    self: *Ast,
     kind: lexemes.LiteralKind,
     value: []const u8,
 ) !ExpressionIndex {
@@ -852,7 +857,7 @@ pub fn newLiteralExpression(
 }
 
 pub fn newCompoundLiteralExpression(
-    self: *Tree,
+    self: *Ast,
     ty: ?TypeIndex,
     fields: RefIndex, // std.ArrayList(FieldIndex),
 ) !ExpressionIndex {
@@ -863,7 +868,7 @@ pub fn newCompoundLiteralExpression(
 }
 
 pub fn newIdentifierExpression(
-    self: *Tree,
+    self: *Ast,
     identifier: IdentifierIndex,
 ) !ExpressionIndex {
     return try self.createExpression(.{ .identifier = .{
@@ -871,16 +876,16 @@ pub fn newIdentifierExpression(
     } });
 }
 
-pub fn newContextExpression(self: *Tree) !ExpressionIndex {
+pub fn newContextExpression(self: *Ast) !ExpressionIndex {
     return try self.createExpression(.context);
 }
 
-pub fn newUndefinedExpression(self: *Tree) !ExpressionIndex {
+pub fn newUndefinedExpression(self: *Ast) !ExpressionIndex {
     return try self.createExpression(.undefined);
 }
 
 pub fn newProcedureGroupExpression(
-    self: *Tree,
+    self: *Ast,
     expressions: RefIndex, // std.ArrayList(ExpressionIndex),
 ) !ExpressionIndex {
     return try self.createExpression(.{ .procedure_group = .{
@@ -888,12 +893,12 @@ pub fn newProcedureGroupExpression(
     } });
 }
 
-pub fn newEmptyStatement(self: *Tree) !StatementIndex {
+pub fn newEmptyStatement(self: *Ast) !StatementIndex {
     return try self.createStatement(.empty);
 }
 
 pub fn newImportStatement(
-    self: *Tree,
+    self: *Ast,
     name: []const u8,
     collection: []const u8,
     pathname: []const u8,
@@ -909,7 +914,7 @@ pub fn newImportStatement(
 }
 
 pub fn newExpressionStatement(
-    self: *Tree,
+    self: *Ast,
     expression: ExpressionIndex,
 ) !StatementIndex {
     return try self.createStatement(.{ .expression = .{
@@ -918,7 +923,7 @@ pub fn newExpressionStatement(
 }
 
 pub fn newBlockStatement(
-    self: *Tree,
+    self: *Ast,
     flags: BlockFlags,
     statements: RefIndex, // std.ArrayList(StatementIndex),
     label: ?IdentifierIndex,
@@ -931,7 +936,7 @@ pub fn newBlockStatement(
 }
 
 pub fn newAssignmentStatement(
-    self: *Tree,
+    self: *Ast,
     assignment: lexemes.AssignmentKind,
     lhs: ExpressionIndex,
     rhs: ExpressionIndex,
@@ -944,7 +949,7 @@ pub fn newAssignmentStatement(
 }
 
 pub fn newDeclarationStatement(
-    self: *Tree,
+    self: *Ast,
     ty: ?TypeIndex,
     names: RefIndex, // std.ArrayList(IdentifierIndex),
     values: ExpressionIndex,
@@ -963,7 +968,7 @@ pub fn newDeclarationStatement(
 }
 
 pub fn newIfStatement(
-    self: *Tree,
+    self: *Ast,
     _init: ?StatementIndex,
     condition: ExpressionIndex,
     body: StatementIndex,
@@ -980,7 +985,7 @@ pub fn newIfStatement(
 }
 
 pub fn newWhenStatement(
-    self: *Tree,
+    self: *Ast,
     condition: ExpressionIndex,
     body: StatementIndex,
     elif: ?StatementIndex,
@@ -993,7 +998,7 @@ pub fn newWhenStatement(
 }
 
 pub fn newReturnStatement(
-    self: *Tree,
+    self: *Ast,
     expression: ExpressionIndex,
 ) !StatementIndex {
     return try self.createStatement(.{ .@"return" = .{
@@ -1002,7 +1007,7 @@ pub fn newReturnStatement(
 }
 
 pub fn newForStatement(
-    self: *Tree,
+    self: *Ast,
     _init: ?StatementIndex,
     condition: ?ExpressionIndex,
     body: StatementIndex,
@@ -1019,7 +1024,7 @@ pub fn newForStatement(
 }
 
 pub fn newSwitchStatement(
-    self: *Tree,
+    self: *Ast,
     _init: ?StatementIndex,
     condition: ?ExpressionIndex,
     clauses: RefIndex, // std.ArrayList(CaseClauseIndex),
@@ -1034,7 +1039,7 @@ pub fn newSwitchStatement(
 }
 
 pub fn newDeferStatement(
-    self: *Tree,
+    self: *Ast,
     statement: StatementIndex,
 ) !StatementIndex {
     return try self.createStatement(.{ .@"defer" = .{
@@ -1043,7 +1048,7 @@ pub fn newDeferStatement(
 }
 
 pub fn newBranchStatement(
-    self: *Tree,
+    self: *Ast,
     branch: lexemes.KeywordKind,
     label: ?IdentifierIndex,
 ) !StatementIndex {
@@ -1054,7 +1059,7 @@ pub fn newBranchStatement(
 }
 
 pub fn newForeignBlockStatement(
-    self: *Tree,
+    self: *Ast,
     name: ?IdentifierIndex,
     body: StatementIndex,
     attributes: RefIndex, // std.ArrayList(FieldIndex),
@@ -1067,7 +1072,7 @@ pub fn newForeignBlockStatement(
 }
 
 pub fn newForeignImportStatement(
-    self: *Tree,
+    self: *Ast,
     name: []const u8,
     sources: std.ArrayList([]const u8),
     attributes: RefIndex, // std.ArrayList(FieldIndex),
@@ -1080,7 +1085,7 @@ pub fn newForeignImportStatement(
 }
 
 pub fn newUsingStatement(
-    self: *Tree,
+    self: *Ast,
     list: ExpressionIndex,
 ) !StatementIndex {
     return try self.createStatement(.{ .using = .{
@@ -1089,7 +1094,7 @@ pub fn newUsingStatement(
 }
 
 pub fn newPackageStatement(
-    self: *Tree,
+    self: *Ast,
     name: []const u8,
 ) !StatementIndex {
     return try self.createStatement(.{ .package = .{
@@ -1099,7 +1104,7 @@ pub fn newPackageStatement(
 }
 
 pub fn newIdentifier(
-    self: *Tree,
+    self: *Ast,
     contents: []const u8,
     poly: bool,
 ) !IdentifierIndex {
@@ -1113,16 +1118,16 @@ pub fn newIdentifier(
     return @enumFromInt(index);
 }
 
-pub fn getIdentifier(self: *Tree, index: IdentifierIndex) *Identifier {
+pub fn getIdentifier(self: *Ast, index: IdentifierIndex) *Identifier {
     return &self.all.items[@intFromEnum(index)].identifier;
 }
 
-pub fn getIdentifierConst(self: *const Tree, index: IdentifierIndex) *const Identifier {
+pub fn getIdentifierConst(self: *const Ast, index: IdentifierIndex) *const Identifier {
     return &self.all.items[@intFromEnum(index)].identifier;
 }
 
 pub fn newCaseClause(
-    self: *Tree,
+    self: *Ast,
     expression: ?ExpressionIndex,
     statements: RefIndex, // std.ArrayList(StatementIndex),
 ) !CaseClauseIndex {
@@ -1135,22 +1140,22 @@ pub fn newCaseClause(
     return @enumFromInt(index);
 }
 
-pub fn getCaseClause(self: *Tree, index: CaseClauseIndex) *CaseClause {
+pub fn getCaseClause(self: *Ast, index: CaseClauseIndex) *CaseClause {
     return &self.all.items[@intFromEnum(index)].case_clause;
 }
 
-pub fn getCaseClauseConst(self: *const Tree, index: CaseClauseIndex) *const CaseClause {
+pub fn getCaseClauseConst(self: *const Ast, index: CaseClauseIndex) *const CaseClause {
     return &self.all.items[@intFromEnum(index)].case_clause;
 }
 
 pub fn newType(
-    self: *Tree,
+    self: *Ast,
 ) !TypeIndex {
     return try self.createType(.{});
 }
 
 pub fn newBuiltinType(
-    self: *Tree,
+    self: *Ast,
     identifier: []const u8,
     kind: BuiltinTypeKind,
     size: u16,
@@ -1167,7 +1172,7 @@ pub fn newBuiltinType(
 }
 
 pub fn newPointerType(
-    self: *Tree,
+    self: *Ast,
     ty: TypeIndex,
     is_const: bool,
 ) !TypeIndex {
@@ -1175,7 +1180,7 @@ pub fn newPointerType(
 }
 
 pub fn newMultiPointerType(
-    self: *Tree,
+    self: *Ast,
     ty: TypeIndex,
     is_const: bool,
 ) !TypeIndex {
@@ -1183,7 +1188,7 @@ pub fn newMultiPointerType(
 }
 
 pub fn newSliceType(
-    self: *Tree,
+    self: *Ast,
     ty: TypeIndex,
     is_const: bool,
 ) !TypeIndex {
@@ -1191,7 +1196,7 @@ pub fn newSliceType(
 }
 
 pub fn newArrayType(
-    self: *Tree,
+    self: *Ast,
     ty: TypeIndex,
     count: ?ExpressionIndex,
 ) !TypeIndex {
@@ -1199,14 +1204,14 @@ pub fn newArrayType(
 }
 
 pub fn newDynamicArrayType(
-    self: *Tree,
+    self: *Ast,
     ty: TypeIndex,
 ) !TypeIndex {
     return try self.createType(.{ .derived = .{ .dynamic_array = .{ .type = ty } } });
 }
 
 pub fn newBitSetType(
-    self: *Tree,
+    self: *Ast,
     underlying: ?TypeIndex,
     expression: ExpressionIndex,
 ) !TypeIndex {
@@ -1214,14 +1219,14 @@ pub fn newBitSetType(
 }
 
 pub fn newTypeidType(
-    self: *Tree,
+    self: *Ast,
     specialisation: ?TypeIndex,
 ) !TypeIndex {
     return try self.createType(.{ .derived = .{ .typeid = .{ .specialisation = specialisation } } });
 }
 
 pub fn newMapType(
-    self: *Tree,
+    self: *Ast,
     key: TypeIndex,
     value: TypeIndex,
 ) !TypeIndex {
@@ -1229,7 +1234,7 @@ pub fn newMapType(
 }
 
 pub fn newMatrixType(
-    self: *Tree,
+    self: *Ast,
     rows: ExpressionIndex,
     columns: ExpressionIndex,
     ty: TypeIndex,
@@ -1238,14 +1243,14 @@ pub fn newMatrixType(
 }
 
 pub fn newDistinctType(
-    self: *Tree,
+    self: *Ast,
     ty: TypeIndex,
 ) !TypeIndex {
     return try self.createType(.{ .derived = .{ .distinct = .{ .type = ty } } });
 }
 
 pub fn newEnumType(
-    self: *Tree,
+    self: *Ast,
     ty: ?TypeIndex,
     fields: RefIndex, // std.ArrayList(FieldIndex),
 ) !TypeIndex {
@@ -1253,7 +1258,7 @@ pub fn newEnumType(
 }
 
 pub fn newConcreteStructType(
-    self: *Tree,
+    self: *Ast,
     flags: StructFlags,
     @"align": ?ExpressionIndex,
     fields: RefIndex, // std.ArrayList(FieldIndex),
@@ -1269,7 +1274,7 @@ pub fn newConcreteStructType(
 }
 
 pub fn newGenericStructType(
-    self: *Tree,
+    self: *Ast,
     flags: StructFlags,
     @"align": ?ExpressionIndex,
     fields: RefIndex, // std.ArrayList(FieldIndex),
@@ -1283,11 +1288,11 @@ pub fn newGenericStructType(
         .fields = fields,
         .where_clauses = where_clauses,
         .parameters = parameters,
-    } } });
+    } }, .poly = true });
 }
 
 pub fn newConcreteUnionType(
-    self: *Tree,
+    self: *Ast,
     flags: UnionFlags,
     @"align": ?ExpressionIndex,
     variants: RefIndex, // std.ArrayList(FieldIndex),
@@ -1303,7 +1308,7 @@ pub fn newConcreteUnionType(
 }
 
 pub fn newGenericUnionType(
-    self: *Tree,
+    self: *Ast,
     flags: UnionFlags,
     @"align": ?ExpressionIndex,
     variants: RefIndex, // std.ArrayList(FieldIndex),
@@ -1317,11 +1322,11 @@ pub fn newGenericUnionType(
         .variants = variants,
         .where_clauses = where_clauses,
         .parameters = parameters,
-    } } });
+    } }, .poly = true });
 }
 
 pub fn newPolyType(
-    self: *Tree,
+    self: *Ast,
     base_type: TypeIndex,
     specialisation: ?TypeIndex,
 ) !TypeIndex {
@@ -1334,7 +1339,7 @@ pub fn newPolyType(
 }
 
 pub fn newExpressionType(
-    self: *Tree,
+    self: *Ast,
     expression: ExpressionIndex,
 ) !TypeIndex {
     return try self.createType(.{ .derived = .{ .expression = .{
@@ -1343,7 +1348,7 @@ pub fn newExpressionType(
 }
 
 pub fn newConcreteProcedureType(
-    self: *Tree,
+    self: *Ast,
     flags: ProcedureFlags,
     convention: CallingConvention,
     params: RefIndex, // std.ArrayList(FieldIndex),
@@ -1359,7 +1364,7 @@ pub fn newConcreteProcedureType(
 }
 
 pub fn newGenericProcedureType(
-    self: *Tree,
+    self: *Ast,
     flags: ProcedureFlags,
     convention: CallingConvention,
     params: RefIndex, // std.ArrayList(FieldIndex),
@@ -1375,7 +1380,7 @@ pub fn newGenericProcedureType(
 }
 
 pub fn newField(
-    self: *Tree,
+    self: *Ast,
     ty: ?TypeIndex,
     name: ?IdentifierIndex,
     value: ?ExpressionIndex,
@@ -1397,19 +1402,19 @@ pub fn newField(
     return @enumFromInt(index);
 }
 
-pub fn getField(self: *Tree, index: FieldIndex) *Field {
+pub fn getField(self: *Ast, index: FieldIndex) *Field {
     return &self.all.items[@intFromEnum(index)].field;
 }
 
-pub fn getFieldConst(self: *const Tree, index: FieldIndex) *const Field {
+pub fn getFieldConst(self: *const Ast, index: FieldIndex) *const Field {
     return &self.all.items[@intFromEnum(index)].field;
 }
 
-pub fn recordToken(self: *Tree, token: lexer.Token) !void {
+pub fn recordToken(self: *Ast, token: lexer.Token) !void {
     try self.tokens.append(self.allocator, token);
 }
 
-pub fn addImport(self: *Tree, statement: StatementIndex) !void {
+pub fn addImport(self: *Ast, statement: StatementIndex) !void {
     try self.imports.append(self.allocator, statement);
 }
 

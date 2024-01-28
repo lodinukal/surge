@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const Tree = @import("Tree.zig");
+const Ast = @import("Ast.zig");
 const parser = @import("parser.zig");
 
 const Context = @import("Context.zig");
@@ -83,7 +83,7 @@ pub const Package = struct {
 
     pathname: []const u8 = "",
     mutex: std.Thread.Mutex = .{},
-    trees: std.ArrayList(Tree) = undefined,
+    asts: std.ArrayList(Ast) = undefined,
 
     pub fn init(
         self: *Package,
@@ -93,27 +93,27 @@ pub const Package = struct {
         self.parent_project = parent_project;
         self.pathname = pathname;
         self.mutex = .{};
-        self.trees = std.ArrayList(Tree).init(parent_project.context.allocator);
+        self.asts = std.ArrayList(Ast).init(parent_project.context.allocator);
     }
 
     pub fn deinit(self: *Package) void {
         self.mutex.lock();
         defer self.mutex.unlock();
-        for (self.trees.items) |*t| {
+        for (self.asts.items) |*t| {
             t.deinit();
         }
-        self.trees.deinit();
+        self.asts.deinit();
     }
 
-    pub fn addTree(self: *Package, name: []const u8) !*Tree {
+    pub fn addAst(self: *Package, name: []const u8) !*Ast {
         self.mutex.lock();
         defer self.mutex.unlock();
-        const tree = try self.trees.addOne();
-        tree.* = try Tree.init(
+        const ast = try self.asts.addOne();
+        ast.* = try Ast.init(
             self.parent_project.context.allocator,
             name,
         );
-        return tree;
+        return ast;
     }
 };
 
@@ -132,7 +132,7 @@ pub const Build = struct {
         builder: *Build,
         package: *const Package,
         pathname: []const u8,
-        tree: *Tree,
+        ast: *Ast,
         err: bool,
     };
 
@@ -230,7 +230,7 @@ pub const Build = struct {
         const work = try self.work_list.addOne();
         work.builder = self;
         work.err = false;
-        work.tree = try package.addTree(name);
+        work.ast = try package.addAst(name);
         work.package = package;
         work.pathname = name;
         return work;
@@ -254,12 +254,12 @@ pub const Build = struct {
             .file,
         );
         const source = (try file_node.read()) orelse "";
-        try parser.parse(work.builder.context, work.tree, source);
+        try parser.parse(work.builder.context, work.ast, source);
 
-        if (work.tree.statements.items.len == 0) {
+        if (work.ast.statements.items.len == 0) {
             return;
         }
-        const first_stmt = work.tree.getStatementConst(work.tree.statements.items[0]);
+        const first_stmt = work.ast.getStatementConst(work.ast.statements.items[0]);
         const package_name: ?[]const u8 = if (first_stmt.* == .package) first_stmt.package.name else null;
         if (package_name) |name| {
             if (std.mem.eql(u8, name, "_")) {
@@ -276,8 +276,8 @@ pub const Build = struct {
             }
         }
 
-        for (work.tree.imports.items) |import| {
-            const import_statement = work.tree.getStatementConst(import).import;
+        for (work.ast.imports.items) |import| {
+            const import_statement = work.ast.getStatementConst(import).import;
             if (std.mem.eql(u8, import_statement.collection, "core")) {
                 if (std.mem.eql(u8, import_statement.pathname, "intrinsics") or
                     std.mem.eql(u8, import_statement.pathname, "builtin"))

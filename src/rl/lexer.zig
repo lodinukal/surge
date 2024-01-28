@@ -14,6 +14,8 @@ pub const Source = struct {
 pub const Location = struct {
     column: i32 = 0,
     line: i32 = 0,
+    /// update in conjuction with the column and line
+    offset: usize = 0,
 };
 
 pub const Token = struct {
@@ -36,6 +38,16 @@ pub const Token = struct {
         rbrace,
         undefined,
     },
+
+    pub const invalid = Token{
+        .location = Location{
+            .column = 0,
+            .line = 0,
+            .offset = 0,
+        },
+        .string = "",
+        .un = .invalid,
+    };
 
     pub fn format(
         value: @This(),
@@ -113,14 +125,6 @@ pub const Token = struct {
         }
     }
 };
-pub const NullToken = Token{
-    .location = Location{
-        .column = 0,
-        .line = 0,
-    },
-    .string = "",
-    .un = .invalid,
-};
 
 pub const Input = struct {
     source: *const Source,
@@ -152,10 +156,12 @@ pub const Lexer = struct {
             .this_location = Location{
                 .column = 0,
                 .line = 0,
+                .offset = 0,
             },
             .last_location = Location{
                 .column = 0,
                 .line = 0,
+                .offset = 0,
             },
             .here = 0,
             .codepoint = 0,
@@ -231,6 +237,7 @@ pub const Lexer = struct {
             self.here = input.end;
             self.codepoint = 0;
         }
+        self.this_location.offset = self.here;
         return self.codepoint;
     }
 
@@ -306,6 +313,7 @@ pub const Lexer = struct {
                 token.un = .{ .literal = .float };
                 token.string = self.input.source.code[self.here - 1 ..][0..2];
                 token.location.column -= 1;
+                token.location.offset -= 1;
                 self.scan(10);
                 break :blk;
             }
@@ -727,7 +735,11 @@ pub const Lexer = struct {
             },
             else => unreachable,
         }
-        return NullToken;
+        return Token{
+            .location = self.last_location,
+            .string = "",
+            .un = .invalid,
+        };
     }
 
     pub fn rawNext(self: *Lexer) Token {

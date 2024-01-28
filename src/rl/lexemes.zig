@@ -112,6 +112,7 @@ pub const OperatorKind = enum {
     cmpand,
     cmpeq,
     noteq,
+    // number only
     lt,
     gt,
     lteq,
@@ -128,6 +129,17 @@ pub const OperatorKind = enum {
     andnot,
     shl,
     shr,
+
+    pub inline fn isForNumber(op: OperatorKind) bool {
+        return @intFromEnum(op) >= @intFromEnum(OperatorKind.lt);
+    }
+
+    pub inline fn isForBoolean(op: OperatorKind) bool {
+        return switch (op) {
+            .cmpor, .cmpand, .cmpeq, .noteq => true,
+            else => false,
+        };
+    }
 };
 pub const OperatorInfo = struct {
     name: []const u8,
