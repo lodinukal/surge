@@ -120,6 +120,8 @@ pub fn init(self: *Self, allocator: std.mem.Allocator, window: *Window, backend:
 pub fn deinit(self: *Self) void {
     if (!self.inited) return;
 
+    self.queue.waitIdle() catch @panic("queue.waitIdle failed");
+
     self.cleanupSwapchainDependentResources(true);
 
     self.swapchain.destroy();

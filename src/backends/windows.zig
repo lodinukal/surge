@@ -55,7 +55,7 @@ const WindowsApplication = struct {
                 null,
                 0,
                 0,
-                win32.ui.windows_and_messaging.PM_REMOVE,
+                .REMOVE,
             );
             if (x == 0) break :result false;
             if (x != -1) break :result true;
@@ -69,6 +69,9 @@ const WindowsApplication = struct {
                 )),
             }
         }) {
+            if (msg.message == win32.ui.windows_and_messaging.WM_QUIT) {
+                return;
+            }
             _ = win32.ui.windows_and_messaging.TranslateMessage(&msg);
             _ = win32.ui.windows_and_messaging.DispatchMessageW(&msg);
         }
@@ -457,9 +460,11 @@ const WindowsWindow = struct {
             ));
         };
 
+        var done: ?u32 = null;
         switch (msg) {
             win32.ui.windows_and_messaging.WM_QUIT, win32.ui.windows_and_messaging.WM_CLOSE => {
                 window.setShouldClose(true);
+                done = 0;
             },
             win32.ui.windows_and_messaging.WM_KEYDOWN => {
                 if (wparam == @intFromEnum(win32.ui.input.keyboard_and_mouse.VIRTUAL_KEY.F)) {
@@ -471,12 +476,14 @@ const WindowsWindow = struct {
                 const y: i32 = @intCast(HIWORD(@bitCast(lparam)));
                 window.modified_state.descriptor.position = .{ x, y };
                 window.descriptor.position = .{ x, y };
+                done = 0;
             },
             win32.ui.windows_and_messaging.WM_SIZE => {
                 const width = LOWORD(@bitCast(lparam));
                 const height = HIWORD(@bitCast(lparam));
                 window.modified_state.descriptor.size = .{ width, height };
                 window.descriptor.size = .{ width, height };
+                done = 0;
             },
             else => {},
         }
@@ -492,6 +499,10 @@ const WindowsWindow = struct {
             wparam,
             lparam,
         );
+
+        if (done) |code| {
+            return code;
+        }
 
         return win32.ui.windows_and_messaging.DefWindowProcW(wnd, msg, wparam, lparam);
     }
