@@ -10,7 +10,6 @@ const Ir = @import("Ir.zig");
 /// We have to perform a few passes
 ///  scan:
 ///  scanPackages: obtain all symbols within the packages (starting from the root package)
-///  scanProcs: obtain all symbols within procs
 ///  scanBlocks: descend procs and obtain all symbols within blocks
 ///
 ///  resolveSymbols: we should have all the symbols now, so we can resolve them
@@ -176,6 +175,7 @@ pub fn newScope(self: *Passes, tag: Scope.Tag) !ScopeIndex {
 // passes
 pub fn scan(self: *Passes) !void {
     try self.scanPackages();
+    try self.constructTypeGraph();
 }
 
 /// this goes through all the packages contained in build and gets any symbols
@@ -230,9 +230,9 @@ fn scanPackage(self: *Passes, scope: ScopeIndex) !void {
                             },
                         });
                         switch (ast.getAny(ast_value_index).expression) {
-                            .procedure => |procedure_expression| {
-                                try self.scanProcedure(scope, ast, procedure_expression);
-                            },
+                            // .procedure => |procedure_expression| {
+                            //     try self.scanProcedure(scope, ast, procedure_expression);
+                            // },
                             else => {},
                         }
                         // std.debug.print("   put symbol {s} as {s}\n", .{
@@ -305,4 +305,15 @@ fn scanBlock(
     _ = scope; // autofix
     _ = ast; // autofix
     _ = block; // autofix
+}
+
+fn getTypeOf() !void {
+    //
+}
+
+fn constructTypeGraph(
+    self: *Passes,
+) !void {
+    _ = self;
+    //
 }
