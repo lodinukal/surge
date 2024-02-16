@@ -7,7 +7,8 @@ const d3d = win32.graphics.direct3d;
 const d3d12 = win32.graphics.direct3d12;
 const dxgi = win32.graphics.dxgi;
 const hlsl = win32.graphics.hlsl;
-const dxc = d3d.dxc;
+
+const dxc = @import("mach-dxcompiler");
 
 const gpu_allocator = gpu.allocator;
 
@@ -1452,7 +1453,7 @@ pub const D3D12Device = struct {
     mem_allocator: D3D12Allocator = undefined,
     // mem_allocator_arena: std.heap.ArenaAllocator,
 
-    shader_compiler: ?*D3D12ShaderCompiler = null,
+    shader_compiler: D3D12ShaderCompiler,
     shader_arena: std.heap.ArenaAllocator = undefined,
 
     pub fn create(allocator: std.mem.Allocator, physical_device: *D3D12PhysicalDevice, desc: *const gpu.Device.Descriptor) gpu.Device.Error!*D3D12Device {
@@ -1474,6 +1475,8 @@ pub const D3D12Device = struct {
             .dsv_pool = undefined,
             .srv_uav_pool = undefined,
             .sampler_pool = undefined,
+
+            .shader_compiler = D3D12ShaderCompiler.init(),
 
             // .mem_allocator_arena = std.heap.ArenaAllocator.init(allocator),
         };
@@ -1602,11 +1605,6 @@ pub const D3D12Device = struct {
         // TODO: conditionally enable the shader compiler through options
 
         self.shader_arena = std.heap.ArenaAllocator.init(allocator);
-        self.shader_compiler = D3D12ShaderCompiler.create(
-            self.allocator,
-            self.shader_arena.allocator(),
-        ) catch
-            return gpu.Device.Error.DeviceFailedToCreate;
 
         return self;
     }
@@ -1617,10 +1615,8 @@ pub const D3D12Device = struct {
         }
         self.queue.waitIdle();
 
-        if (self.shader_compiler) |sc| {
-            sc.destroy();
-            self.shader_arena.deinit();
-        }
+        self.shader_compiler.deinit();
+        self.shader_arena.deinit();
 
         self.queue.deinit();
 
@@ -4158,69 +4154,21 @@ pub const D3D12ShaderModule = struct {
 
     // internal
     pub fn compile(self: *D3D12ShaderModule, unit: *Unit, entry: []const u8, target: []const u8) !void {
-        const compile_result = try self.device.shader_compiler.?.compile(&D3D12ShaderCompiler.Options{
+        unit.bytecode = try self.device.shader_compiler.compile(&D3D12ShaderCompiler.Options{
             .entry = entry,
             .target = target,
             .hlsl = self.code,
+            .result_allocator = unit.allocator,
         });
-        defer {
-            var proxy: ?*dxc.IDxcResult = null;
-            d3dcommon.releaseIUnknown(dxc.IDxcResult, &proxy);
-        }
-
-        var errors: ?*dxc.IDxcBlobUtf8 = null;
-        const hr = compile_result.IDxcResult_GetOutput(
-            dxc.DXC_OUT_KIND.ERRORS,
-            dxc.IID_IDxcBlobUtf8,
-            @ptrCast(&errors),
-            null,
-        );
-        if (!d3dcommon.checkHResult(hr)) return gpu.ShaderModule.Error.ShaderModuleFailedToCompile;
-
-        if (errors) |errs| {
-            defer d3dcommon.releaseIUnknown(dxc.IDxcBlobUtf8, &errors);
-            const error_len = errs.IDxcBlobUtf8_GetStringLength();
-            if (error_len > 0) {
-                unit.err = try unit.allocator.dupe(u8, @ptrCast(errs.IDxcBlobUtf8_GetStringPointer().?[0..error_len]));
-                return gpu.ShaderModule.Error.ShaderModuleFailedToCompile;
-            }
-        }
-
-        var bytecode: ?*dxc.IDxcBlob = null;
-        const bytecode_hr = compile_result.IDxcResult_GetOutput(
-            dxc.DXC_OUT_KIND.OBJECT,
-            dxc.IID_IDxcBlob,
-            @ptrCast(&bytecode),
-            null,
-        );
-        if (!d3dcommon.checkHResult(bytecode_hr)) return gpu.ShaderModule.Error.ShaderModuleFailedToCompile;
-
-        if (bytecode) |bc| {
-            defer d3dcommon.releaseIUnknown(dxc.IDxcBlob, &bytecode);
-
-            const bytecode_len = bc.IDxcBlob_GetBufferSize();
-            if (bytecode_len > 0) {
-                unit.bytecode = try unit.allocator.dupe(u8, @as(
-                    [*]u8,
-                    @ptrCast(bc.IDxcBlob_GetBufferPointer().?),
-                )[0..bytecode_len]);
-            }
-        }
     }
 };
 
 pub const D3D12ShaderCompiler = struct {
-    allocator: std.mem.Allocator,
-    lib: ?std.DynLib = null,
-    createInstance: ?dxc.DxcCreateInstanceProc = null,
+    compiler: dxc.Compiler,
 
-    compiler: ?*dxc.IDxcCompiler3 = null,
-    utils: ?*dxc.IDxcUtils = null,
-    com_allocator: ?*winappimpl.ComAllocator = null,
-
-    pub fn create(allocator: std.mem.Allocator, child_allocator: std.mem.Allocator) !*D3D12ShaderCompiler {
+    pub fn create(allocator: std.mem.Allocator) !*D3D12ShaderCompiler {
         const self = try allocator.create(D3D12ShaderCompiler);
-        try self.init(allocator, child_allocator);
+        try self.init(allocator);
         return self;
     }
 
@@ -4229,63 +4177,14 @@ pub const D3D12ShaderCompiler = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn init(self: *D3D12ShaderCompiler, allocator: std.mem.Allocator, child_allocator: std.mem.Allocator) !void {
-        self.* = .{
-            .allocator = allocator,
+    pub fn init() D3D12ShaderCompiler {
+        return .{
+            .compiler = dxc.Compiler.init(),
         };
-
-        if (self.com_allocator == null) {
-            self.com_allocator = try winappimpl.ComAllocator.create(allocator, child_allocator);
-        }
-
-        if (self.lib == null) {
-            self.lib = std.DynLib.open("dxcompiler.dll") catch {
-                @panic("failed to load dxcompiler.dll");
-            };
-            self.createInstance = self.lib.?.lookup(
-                dxc.DxcCreateInstanceProc,
-                "DxcCreateInstance",
-            ).?;
-        }
-
-        if (self.utils == null) {
-            const hr = self.createInstance.?(
-                // self.com_allocator.?.getCom(),
-                &dxc.CLSID_DxcLibrary,
-                dxc.IID_IDxcUtils,
-                @ptrCast(&self.utils),
-            );
-            if (!d3dcommon.checkHResult(hr)) return error.FailedToCreateShaderCompiler;
-        }
-
-        if (self.compiler == null) {
-            const hr = self.createInstance.?(
-                // self.com_allocator.?.getCom(),
-                &dxc.CLSID_DxcCompiler,
-                dxc.IID_IDxcCompiler3,
-                @ptrCast(&self.compiler),
-            );
-            if (!d3dcommon.checkHResult(hr)) return error.FailedToCreateShaderCompiler;
-        }
     }
 
     pub fn deinit(self: *D3D12ShaderCompiler) void {
-        d3dcommon.releaseIUnknown(dxc.IDxcCompiler3, &self.compiler);
-        if (self.compiler != null) std.log.warn("IDxcCompiler3 should have been destroyed", .{});
-
-        d3dcommon.releaseIUnknown(dxc.IDxcUtils, &self.utils);
-        if (self.utils != null) std.log.warn("IDxcUtils should have been destroyed", .{});
-
-        if (self.com_allocator) |ca| {
-            const count = ca.deref();
-            if (count != 0) std.log.warn("ComAllocator should have been destroyed", .{});
-            self.com_allocator = null;
-        }
-
-        if (self.lib) |*lib| {
-            lib.close();
-            self.lib = null;
-        }
+        self.compiler.deinit();
     }
 
     pub const Options = struct {
@@ -4294,64 +4193,46 @@ pub const D3D12ShaderCompiler = struct {
         debug: bool = true,
         defines: ?[]const []const u8 = null,
         hlsl: []const u8,
+        result_allocator: std.mem.Allocator,
     };
 
-    pub fn compile(self: *D3D12ShaderCompiler, options: *const Options) !*dxc.IDxcResult {
+    pub fn compile(self: *D3D12ShaderCompiler, options: *const Options) ![]const u8 {
         var scratch = ScratchSpace(4096){};
         const temp_allocator = scratch.init().allocator();
 
-        var args = std.ArrayList([]const u8).init(temp_allocator);
+        var args = std.ArrayList([*:0]const u8).init(temp_allocator);
         defer args.deinit();
 
         args.append("-E") catch unreachable;
-        args.append(options.entry) catch unreachable;
+        args.append(temp_allocator.dupeZ(u8, options.entry) catch unreachable) catch unreachable;
 
         args.append(
             "-T",
         ) catch unreachable;
-        args.append(options.target) catch unreachable;
+        args.append(temp_allocator.dupeZ(u8, options.target) catch unreachable) catch unreachable;
 
-        args.append(dxc.DXC_ARG_WARNINGS_ARE_ERRORS) catch unreachable;
+        args.append("-WX") catch unreachable;
         if (options.debug) {
-            args.append(dxc.DXC_ARG_DEBUG) catch unreachable;
+            args.append("-Zi") catch unreachable;
         }
 
         if (options.defines) |defines| {
             for (defines) |define| {
                 args.append("-D") catch unreachable;
-                args.append(define) catch unreachable;
+                args.append(temp_allocator.dupeZ(u8, define) catch unreachable) catch unreachable;
             }
         }
 
-        var source_buffer: dxc.DxcBuffer = undefined;
-        source_buffer.Ptr = @ptrCast(options.hlsl.ptr);
-        source_buffer.Size = @intCast(options.hlsl.len);
-        source_buffer.Encoding = @intFromEnum(dxc.DXC_CP_ACP);
-
-        var converted_args = std.ArrayList(
-            [*:0]align(1) const u16,
-        ).initCapacity(
-            temp_allocator,
-            args.items.len,
-        ) catch unreachable;
-
-        for (args.items) |arg| {
-            if (winappimpl.convertToUtf16WithAllocator(temp_allocator, arg)) |utf16|
-                converted_args.append(@ptrCast(@alignCast(utf16))) catch unreachable;
+        const result = self.compiler.compile(options.hlsl, args.items);
+        if (result.getError()) |err| {
+            defer err.deinit();
+            return gpu.ShaderModule.Error.ShaderModuleFailedToCompile;
         }
 
-        var result: ?*dxc.IDxcResult = null;
-        const compile_hr = self.compiler.?.IDxcCompiler3_Compile(
-            &source_buffer,
-            converted_args.items.ptr,
-            @intCast(converted_args.items.len),
-            null,
-            dxc.IID_IDxcResult,
-            @ptrCast(&result),
-        );
-        if (!d3dcommon.checkHResult(compile_hr)) return gpu.ShaderModule.Error.ShaderModuleFailedToCompile;
+        const object = result.getObject();
+        defer object.deinit();
 
-        return result.?;
+        return try options.result_allocator.dupe(u8, object.getBytes());
     }
 };
 

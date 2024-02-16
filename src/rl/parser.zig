@@ -103,8 +103,8 @@ pub fn parse(context: *const Context, ast: *Ast, source: []const u8) !void {
 }
 
 pub const precedence = blk: {
-    comptime var list = std.EnumArray(lexemes.OperatorKind, i32).initFill(0);
-    comptime var ops = lexemes.operators;
+    var list = std.EnumArray(lexemes.OperatorKind, i32).initFill(0);
+    var ops = lexemes.operators;
     var it = ops.iterator();
     while (it.next()) |op| {
         list.set(op.key, op.value.precedence);

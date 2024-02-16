@@ -11,6 +11,10 @@
         //     .url = "https://pkg.machengine.org/mach-sysgpu/e5682c4d05ab8f50defdf821be431eb7ead75111.tar.gz",
         //     .hash = "1220e011b9bb9e642b0a0434f7a30617cc12e2c8ea05af50d889f079ec531dc04512",
         // },
+        .mach_dxcompiler = .{
+            .url = "https://pkg.machengine.org/mach-dxcompiler/fdbd7a0913bafbe1c124bf7262af998f189a6f74.tar.gz",
+            .hash = "1220a11f8a3c94997a964ece0e0e187a248dc230cbc63814aa039e78b1e2e55acb3d",
+        },
     },
     .paths = .{"src"},
 }

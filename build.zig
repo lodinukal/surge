@@ -205,8 +205,13 @@ pub fn build(b: *std.Build) !void {
         d3d12.root_module.addImport("win32", win32);
         b.getInstallStep().dependOn(&b.addInstallArtifact(d3d12, .{ .dest_dir = .{ .override = .bin } }).step);
 
-        b.installBinFile("thirdparty/dxc/x64/dxil.dll", "dxil.dll");
-        b.installBinFile("thirdparty/dxc/x64/dxcompiler.dll", "dxcompiler.dll");
+        const dxcompiler_dep = b.dependency("mach_dxcompiler", .{
+            .target = target,
+            .optimize = std.builtin.OptimizeMode.ReleaseFast, // use an optimized compiler
+            .from_source = false, // use a prebuilt binary
+        });
+        const dxcompiler_mod = dxcompiler_dep.module("mach-dxcompiler");
+        d3d12.root_module.addImport("mach-dxcompiler", dxcompiler_mod);
 
         inline for (.{ exe, unit_tests }) |t| {
 
